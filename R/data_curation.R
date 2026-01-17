@@ -276,9 +276,11 @@
 #' @return A single character string representing the combined shortened name.
 #' 
 #' @examples
+#' \dontrun{
 #' .generateDBname(c("90371", "Bacillus subtilis"))
 #' .generateDBname(c("12345", "Escherichia coli", "Lactobacillus"))
-#' 
+#' }
+#'
 .generateDBname <- function(user_bacs) {
   db_parts <- c()
   

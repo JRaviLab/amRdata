@@ -15,7 +15,7 @@
 A tibble with:
 \describe{
 \item{genome_id}{Character column of normalized genome IDs.}
-\item{\if{html}{\out{<gene columns>}}}{Integer counts per gene (0 if absent, ≥1 if present,
+\item{\if{html}{\out{<gene columns>}}}{Integer counts per gene (0 if absent, >=1 if present,
 counting semicolon-separated entries).}
 }
 (writing table into DuckDB).
@@ -26,6 +26,6 @@ reshapes it into a genome-by-gene count matrix, and writes the result to DuckDB
 as a table named \code{"gene_count"}. Returns the reshaped tibble for immediate use.
 \itemize{
 \item Converts presence strings to \strong{counts} by splitting semicolon-delimited entries:
-empty → \code{0}, \code{"A;B;C"} → \code{3}.
+empty -> \code{0}, \code{"A;B;C"} -> \code{3}.
 }
 }

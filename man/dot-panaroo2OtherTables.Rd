@@ -7,10 +7,10 @@
 .panaroo2OtherTables(panaroo_output_path, duckdb_path)
 }
 \arguments{
-\item{panaroo_output_path}{Character scalar. Base directory containing Panaroo outputs.
+\item{panaroo_output_path}{\link{character} Base directory containing Panaroo outputs.
 Normalized via \code{normalizePath()}.}
 
-\item{duckdb_path}{Character scalar. Path to the DuckDB database file to open
+\item{duckdb_path}{\link{character} Path to the DuckDB database file to open
 (e.g., created earlier via \code{\link[=generateDBname]{generateDBname()}}).}
 }
 \value{
