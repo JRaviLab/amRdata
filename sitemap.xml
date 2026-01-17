@@ -11,7 +11,10 @@
 <url><loc>/reference/CDHIT2duckdb.html</loc></url>
 <url><loc>/reference/buildMatrices.html</loc></url>
 <url><loc>/reference/checkInterProData.html</loc></url>
+<url><loc>/reference/class_abbr.html</loc></url>
 <url><loc>/reference/cleanData.html</loc></url>
+<url><loc>/reference/clean_drug.html</loc></url>
+<url><loc>/reference/cleaned_bvbrc_countries.html</loc></url>
 <url><loc>/reference/clusterNames.html</loc></url>
 <url><loc>/reference/domainFromIPR.html</loc></url>
 <url><loc>/reference/dot-buildDBpath.html</loc></url>
@@ -31,6 +34,8 @@
 <url><loc>/reference/dot-retrieveCustomQuery.html</loc></url>
 <url><loc>/reference/dot-retrieveQueryIDs.html</loc></url>
 <url><loc>/reference/dot-updateBVBRCdata.html</loc></url>
+<url><loc>/reference/drug_abbr.html</loc></url>
+<url><loc>/reference/drug_class.html</loc></url>
 <url><loc>/reference/filterGenomes.html</loc></url>
 <url><loc>/reference/genomeList.html</loc></url>
 <url><loc>/reference/getGenomeIDs.html</loc></url>

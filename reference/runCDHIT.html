@@ -66,7 +66,7 @@ generated input and clustered output FASTA.</p>
     <div id="ref-usage">
     <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">runCDHIT</span><span class="op">(</span></span>
 <span>  <span class="va">duckdb_path</span>,</span>
-<span>  <span class="va">output_dir</span>,</span>
+<span>  <span class="va">output_path</span>,</span>
 <span>  output_prefix <span class="op">=</span> <span class="st">"cdhit_out"</span>,</span>
 <span>  identity <span class="op">=</span> <span class="fl">0.9</span>,</span>
 <span>  word_length <span class="op">=</span> <span class="fl">5</span>,</span>
@@ -86,10 +86,15 @@ named <code>"files"</code> containing at least the column <code>faa_path</code> 
 relative paths to protein FASTA files.</p></dd>
 
 
+<dt id="arg-output-path">output_path<a class="anchor" aria-label="anchor" href="#arg-output-path"></a></dt>
+<dd><p>Character scalar. Directory where concatenated input and the
+clustered output FASTA will be written. Created if it does not exist.</p></dd>
+
+
 <dt id="arg-output-prefix">output_prefix<a class="anchor" aria-label="anchor" href="#arg-output-prefix"></a></dt>
 <dd><p>Character scalar. Prefix for output files. Defaults to
-<code>"cdhit_out"</code>. The function will create:</p><ul><li><p><code>&lt;output_dir&gt;/&lt;output_prefix&gt;_input.fa</code></p></li>
-<li><p><code>&lt;output_dir&gt;/&lt;output_prefix&gt;_proteins</code></p></li>
+<code>"cdhit_out"</code>. The function will create:</p><ul><li><p><code>&lt;output_path&gt;/&lt;output_prefix&gt;_input.fa</code></p></li>
+<li><p><code>&lt;output_path&gt;/&lt;output_prefix&gt;_proteins</code></p></li>
 </ul></dd>
 
 
@@ -117,11 +122,6 @@ Defaults to <code>0</code>.</p></dd>
 <dd><p>Character vector. Extra CD-HIT flags appended at the end
 (e.g., <code>c("-g","1")</code> to use the most similar sequences as cluster representatives).</p></dd>
 
-
-<dt id="arg-output-path">output_path<a class="anchor" aria-label="anchor" href="#arg-output-path"></a></dt>
-<dd><p>Character scalar. Directory where concatenated input and the
-clustered output FASTA will be written. Created if it does not exist.</p></dd>
-
 </dl></div>
     <div id="value">
     <h2>Value</h2>
@@ -138,9 +138,9 @@ clustered output FASTA will be written. Created if it does not exist.</p></dd>
     <p>The function:</p><ul><li><p>Connects to a DuckDB database and reads the table <code>"files"</code>.</p></li>
 <li><p>Filters rows to ensure no <code>"NA"</code> string values and pulls <code>faa_path</code>.</p></li>
 <li><p>Concatenates all <code>*.faa</code> files into a single input FASTA:
-<code>&lt;output_dir&gt;/&lt;output_prefix&gt;_input.fa</code>.</p></li>
+<code>&lt;output_path&gt;/&lt;output_prefix&gt;_input.fa</code>.</p></li>
 <li><p>Runs CD-HIT via Docker with the specified parameters and writes clustered
-proteins to <code>&lt;output_dir&gt;/&lt;output_prefix&gt;_proteins</code>.</p></li>
+proteins to <code>&lt;output_path&gt;/&lt;output_prefix&gt;_proteins</code>.</p></li>
 <li><p>Verifies successful output and returns paths to input/output FASTA files.</p></li>
 </ul></div>
 
