@@ -60,25 +60,25 @@
 #' Update BV-BRC metadata in DuckDB
 #'
 #' Fetches bacterial genome metadata from BV-BRC using the BV-BRC CLI and stores
-#' it in a DuckDB database under `data/bvbrc/bvbrcData.duckdb` within `base_dir`.
+#' it in a DuckDB database under `data/bvbrc/bvbrcData.duckdb` within `base_path`.
 #' If the table exists and is older than `max_age_days`, it refreshes; otherwise,
 #' loads the existing table. BV-BRC column names are preserved exactly.
 #'
-#' @param base_dir Character. Project root. The DuckDB database is created at
-#'   `file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")`.
+#' @param base_path Character. Project root. The DuckDB database is created at
+#'   `file.path(base_path, "data", "bvbrc", "bvbrcData.duckdb")`.
 #' @param max_age_days Integer. Refresh the table if older than this many days. Default: 30.
 #' @param image Character. Docker image used by `.fetchBVBRCdata()`. Default: `"danylmb/bvbrc:5.3"`.
 #' @param verbose Logical. If TRUE, prints informative messages. Default: TRUE.
 #'
 #' @return A tibble containing BV-BRC bacterial genome metadata.
 #' @export
-.updateBVBRCdata <- function(base_dir = ".",
+.updateBVBRCdata <- function(base_path = ".",
                              max_age_days = 30L,
                              image = "danylmb/bvbrc:5.3",
                              verbose = TRUE) {
-  # base_dir as project root
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  data_dir <- file.path(base_dir, "data")
+  # base_path as project root
+  base_path <- normalizePath(base_path, mustWork = FALSE)
+  data_dir <- file.path(base_path, "data")
   bvbrc_dir <- file.path(data_dir, "bvbrc")
   logs_dir  <- file.path(data_dir, "logs")
   
@@ -173,17 +173,17 @@
 #' Numeric inputs are treated as taxon IDs; character inputs are matched as
 #' case-insensitive substrings against `genome.species`.
 #'
-#' @param base_dir Character. Project root. BV-BRC cache is expected at
-#'   `file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")`.
+#' @param base_path Character. Project root. BV-BRC cache is expected at
+#'   `file.path(base_path, "data", "bvbrc", "bvbrcData.duckdb")`.
 #' @param user_bacs Character vector. Mixed inputs of taxon IDs and/or species strings.
 #'
 #' @return A tibble with columns `genome.taxon_id` and `genome.species`, or NULL with a message.
-.retrieveCustomQuery <- function(base_dir = ".",
+.retrieveCustomQuery <- function(base_path = ".",
                                  user_bacs = c("90371", "Bacillus subtilis")) {
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
+  base_path <- normalizePath(base_path, mustWork = FALSE)
   
-  # Ensure global BV-BRC metadata exists/updated at <base_dir>/data/bvbrc/...
-  bvbrc_bacs <- .updateBVBRCdata(base_dir = base_dir)
+  # Ensure global BV-BRC metadata exists/updated at <base_path>/data/bvbrc/...
+  bvbrc_bacs <- .updateBVBRCdata(base_path = base_path)
   
   bac_input_data <- tibble::tibble(
     genome.taxon_id = character(),
@@ -307,19 +307,19 @@
 #' Build a DuckDB path for a user-bacs selection
 #'
 #' Places the per-selection DB at:
-#'   <base_dir>/data/<bug_dir>/<abbrev>.duckdb
+#'   <base_path>/data/<bug_dir>/<abbrev>.duckdb
 #' where <bug_dir> is derived from full user_bacs input and <abbrev> from
 #' .generateDBname(user_bacs). This function no longer enforces overwrite checks.
 #'
-#' @param base_dir Character. Project root.
+#' @param base_path Character. Project root.
 #' @param user_bacs Character vector. The same vector used for DB naming.
 #' @param overwrite Logical. Ignored (kept for backward compatibility).
 #'
 #' @return A list with `db_dir` and `db_path`.
 #' @keywords internal
-.buildDBpath <- function(base_dir, user_bacs, overwrite = FALSE) {
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  data_dir <- file.path(base_dir, "data")
+.buildDBpath <- function(base_path, user_bacs, overwrite = FALSE) {
+  base_path <- normalizePath(base_path, mustWork = FALSE)
+  data_dir <- file.path(base_path, "data")
   
   # Directory from full names (order-sensitive by design)
   full_joined <- paste(user_bacs, collapse = "__")
@@ -341,11 +341,11 @@
 #' Retrieve genome IDs from BV-BRC and store them in DuckDB
 #'
 #' Executes BV-BRC CLI queries in Docker and writes the results to a DuckDB at:
-#'   <base_dir>/data/<bug_dir>/<abbrev>.duckdb
+#'   <base_path>/data/<bug_dir>/<abbrev>.duckdb
 #' where <bug_dir> derives from full `user_bacs`, and <abbrev> from `.generateDBname()`.
 #' BV-BRC column names are preserved.
 #'
-#' @param base_dir Character. Project root directory.
+#' @param base_path Character. Project root directory.
 #' @param query_type Character. One of "genome_name", "species", or "taxon_id".
 #' @param query_value Character or NULL. If NULL, it will be inferred from `user_bacs`
 #'   based on `query_type` (first element for species/genome_name, first numeric for taxon_id).
@@ -359,7 +359,7 @@
 #'   - count_result: Integer (count query result)
 #'   - duckdbConnection: DBI connection to the DuckDB file
 #'   - table_name: "bac_data"
-getGenomeIDs <- function(base_dir = ".",
+getGenomeIDs <- function(base_path = ".",
                          query_type = c("genome_name", "species", "taxon_id"),
                          query_value = NULL,
                          user_bacs,
@@ -414,7 +414,7 @@ getGenomeIDs <- function(base_dir = ".",
     )
   
   # Per-bug DB path
-  paths   <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
+  paths   <- .buildDBpath(base_path = base_path, user_bacs = user_bacs, overwrite = overwrite)
   db_path <- paths$db_path
   
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
@@ -429,23 +429,23 @@ getGenomeIDs <- function(base_dir = ".",
 #'
 #' Resolves user-provided taxa to taxon IDs, queries BV-BRC per unique taxon ID,
 #' and returns distinct genome IDs. Uses a per-selection DuckDB located under:
-#'   <base_dir>/data/<bug_dir>/<abbrev>.duckdb
+#'   <base_path>/data/<bug_dir>/<abbrev>.duckdb
 #' BV-BRC column names are preserved.
 #'
-#' @param base_dir Character. Project root directory. Default ".".
+#' @param base_path Character. Project root directory. Default ".".
 #' @param user_bacs Character vector. Mixed inputs of taxon IDs and/or species names.
 #' @param overwrite Logical. If FALSE and the DuckDB already exists for this selection, abort. Default: FALSE.
 #' @param verbose Logical.
 #'
 #' @return A numeric vector of distinct `genome.genome_id`, or NULL if none found.
-.retrieveQueryIDs <- function(base_dir = ".",
+.retrieveQueryIDs <- function(base_path = ".",
                               user_bacs,
                               overwrite = FALSE,
                               verbose = TRUE) {
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
+  base_path <- normalizePath(base_path, mustWork = FALSE)
   
   if (isTRUE(verbose)) message("Resolving input taxa.")
-  bac_input_data <- .retrieveCustomQuery(base_dir = base_dir, user_bacs = user_bacs)
+  bac_input_data <- .retrieveCustomQuery(base_path = base_path, user_bacs = user_bacs)
   
   if (is.null(bac_input_data) || nrow(bac_input_data) == 0) {
     message("No valid input provided or no matches found.")
@@ -453,7 +453,7 @@ getGenomeIDs <- function(base_dir = ".",
   }
   
   # Resolve per-bug DB path (non-enforcing)
-  paths   <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
+  paths   <- .buildDBpath(base_path = base_path, user_bacs = user_bacs, overwrite = overwrite)
   db_path <- paths$db_path
   
   bac_data  <- tibble::tibble()
@@ -466,7 +466,7 @@ getGenomeIDs <- function(base_dir = ".",
     if (isTRUE(verbose)) message("Taxon ", i, "/", length(taxon_ids), ": ", tax)
     
     res <- getGenomeIDs(
-      base_dir    = base_dir,
+      base_path    = base_path,
       query_type  = "taxon_id",
       query_value = as.character(tax),
       user_bacs   = user_bacs,
@@ -510,7 +510,7 @@ getGenomeIDs <- function(base_dir = ".",
 #'   `"--required antibiotic"` or `"--in antibiotic,drug1,drug2"`.
 #' @param drug_fields A string specifying the drug fields (attributes) to include in the output. 
 #'   This corresponds to the attributes retrieved by the `p3-get-genome-drugs` tool.
-#' @param path A string representing the file path to a directory where temporary files and data will be stored. 
+#' @param base_path A string representing the file path to a directory where temporary files and data will be stored. 
 #' @param image Character. Docker image. Default "danylmb/bvbrc:5.3".
 #' @param verbose Logical. If TRUE, prints concise messages.
 #' 
@@ -537,14 +537,14 @@ getGenomeIDs <- function(base_dir = ".",
 #' }
 #'
 #' @export
-.extractAMRtable <- function(base_dir,
+.extractAMRtable <- function(base_path,
                              batch_genome_IDs,
                              abx_filter,
                              drug_fields,
                              image = "danylmb/bvbrc:5.3",
                              verbose = TRUE) {
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  data_dir <- file.path(base_dir, "data")
+  base_path <- normalizePath(base_path, mustWork = FALSE)
+  data_dir <- file.path(base_path, "data")
   tmp_dir  <- file.path(data_dir, "tmp")
   dir.create(tmp_dir, recursive = TRUE, showWarnings = FALSE)
   
@@ -595,7 +595,7 @@ getGenomeIDs <- function(base_dir = ".",
 
 #' This function retrieves metadata for the given genome IDs.
 #'
-#' @param base_dir Character. Project root.
+#' @param base_path Character. Project root.
 #' @param batch_genome_IDs Vector of genome IDs.
 #' @param filter_type Character. Either "AMR" or "microTraits" (sets data fields).
 #' @param amr_fields Character. Attributes (comma-separated) for AMR metadata.
@@ -605,15 +605,15 @@ getGenomeIDs <- function(base_dir = ".",
 #'
 #' @return A character vector containing the retrieved genome data.
 #'
-.extractGenomeData <- function(base_dir,
+.extractGenomeData <- function(base_path,
                                batch_genome_IDs,
                                filter_type,
                                amr_fields,
                                microtrait_fields,
                                image = "danylmb/bvbrc:5.3",
                                verbose = TRUE) {
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  data_dir <- file.path(base_dir, "data")
+  base_path <- normalizePath(base_path, mustWork = FALSE)
+  data_dir <- file.path(base_path, "data")
   tmp_dir  <- file.path(data_dir, "tmp")
   dir.create(tmp_dir, recursive = TRUE, showWarnings = FALSE)
   
@@ -663,7 +663,7 @@ getGenomeIDs <- function(base_dir = ".",
 #'
 #' Queries BV-BRC for AMR or microtrait metadata for genomes corresponding to user inputs.
 #' Results are written to a per-selection DuckDB at:
-#'   <base_dir>/data/<bug_dir>/<abbrev>.duckdb
+#'   <base_path>/data/<bug_dir>/<abbrev>.duckdb
 #' Tables written:
 #'   - amr_phenotype
 #'   - genome_data
@@ -671,7 +671,7 @@ getGenomeIDs <- function(base_dir = ".",
 #'
 #' @param user_bacs Character vector. Mixed taxon IDs and/or species strings (used for naming).
 #' @param filter_type Character. "AMR" or "microTraits". Default "AMR".
-#' @param base_dir Character. Project root. Default "results/" in legacy scripts; now default ".".
+#' @param base_path Character. Project root. Default "results/" in legacy scripts; now default ".".
 #' @param abx Character or vector. Antibiotic filter. "All" for all antibiotics, else names.
 #' @param overwrite Logical. If FALSE and DuckDB exists already, abort. Default FALSE.
 #' @param image Character. Docker image. Default "danylmb/bvbrc:5.3".
@@ -682,15 +682,15 @@ getGenomeIDs <- function(base_dir = ".",
 #'   - table_name: "metadata"
 retrieveMetadata <- function(user_bacs,
                              filter_type = "AMR",
-                             base_dir = ".",
+                             base_path = ".",
                              abx = "All",
                              overwrite = FALSE,
                              image = "danylmb/bvbrc:5.3",
                              verbose = TRUE) {
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
+  base_path <- normalizePath(base_path, mustWork = FALSE)
   
   if (isTRUE(verbose)) message("Resolving genome IDs for user inputs.")
-  genome_ids <- .retrieveQueryIDs(base_dir = base_dir, user_bacs = user_bacs,
+  genome_ids <- .retrieveQueryIDs(base_path = base_path, user_bacs = user_bacs,
                                   overwrite = overwrite, verbose = verbose)
   if (length(genome_ids) == 0) {
     message("No genome IDs available for the specified inputs.")
@@ -759,7 +759,7 @@ retrieveMetadata <- function(user_bacs,
       ".extractAMRtable", ".extractGenomeData",
       "abx_filter", "drug_fields",
       "filter_type", "amr_fields", "microtrait_fields",
-      "base_dir", "image"
+      "base_path", "image"
     ),
     envir = environment()
   )
@@ -768,7 +768,7 @@ retrieveMetadata <- function(user_bacs,
   if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
   batch_drug_data <- parallel::parLapply(cluster, genome_batches, function(batch) {
     .extractAMRtable(
-      base_dir          = base_dir,
+      base_path          = base_path,
       batch_genome_IDs  = batch,
       abx_filter        = abx_filter,
       drug_fields       = drug_fields,
@@ -792,7 +792,7 @@ retrieveMetadata <- function(user_bacs,
   if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
   batch_genome_data <- parallel::parLapply(cluster, genome_batches, function(batch) {
     .extractGenomeData(
-      base_dir          = base_dir,
+      base_path          = base_path,
       batch_genome_IDs  = batch,
       filter_type       = filter_type,
       amr_fields        = amr_fields,
@@ -815,10 +815,10 @@ retrieveMetadata <- function(user_bacs,
     dplyr::mutate(`genome.genome_id` = as.character(`genome.genome_id`))
   
   # Per-bug DB path (reuse; no enforcement)
-  paths   <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
+  paths   <- .buildDBpath(base_path = base_path, user_bacs = user_bacs, overwrite = overwrite)
   db_path <- paths$db_path
   
-  logs_dir <- file.path(base_dir, "data", "logs")
+  logs_dir <- file.path(base_path, "data", "logs")
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
   cat(sprintf("[%s] Writing metadata DuckDB: %s\n", Sys.time(), db_path),
       file = file.path(logs_dir, "bvbrc.log"), append = TRUE)
@@ -848,20 +848,20 @@ retrieveMetadata <- function(user_bacs,
 #' Filter genomes by AMR phenotype and metadata, and store results in DuckDB
 #'
 #' Reads the per-selection DuckDB at:
-#'   <base_dir>/data/<bug_dir>/<abbrev>.duckdb
+#'   <base_path>/data/<bug_dir>/<abbrev>.duckdb
 #' Expects a table "metadata" (from retrieveMetadata). Filters to lab-tested evidence,
-#' genome_quality == "Good", and resistant_phenotype in {Resistant, Susceptible, Intermediate}.
+#' genome_quality == "Good", and resistant_phenotype in (Resistant, Susceptible, Intermediate).
 #'
-#' @param base_dir Character. Project root.
+#' @param base_path Character. Project root.
 #' @param user_bacs Character vector. Used to locate the per-selection DuckDB.
 #' @param verbose Logical. If TRUE, prints messages.
 #'
 #' @return A list with: duckdbConnection and table_name = "filtered"
-filterGenomes <- function(base_dir = ".",
+filterGenomes <- function(base_path = ".",
                           user_bacs,
                           verbose = TRUE) {
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  paths    <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
+  base_path <- normalizePath(base_path, mustWork = FALSE)
+  paths    <- .buildDBpath(base_path = base_path, user_bacs = user_bacs)
   db_path  <- paths$db_path
   
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
@@ -914,24 +914,24 @@ filterGenomes <- function(base_dir = ".",
 #' Download genome files (PATRIC.GFF, FNA, PATRIC.FAA) for filtered BV-BRC genomes
 #'
 #' Uses filterGenomes() to get filtered metadata, then downloads to:
-#'   <base_dir>/data/<bug_dir>/genomes/
+#'   <base_path>/data/<bug_dir>/genomes/
 #'
-#' @param base_dir Character. Project root.
+#' @param base_path Character. Project root.
 #' @param user_bacs Character vector. Used to locate the DuckDB and output directory.
 #' @param verbose Logical. If TRUE, prints messages.
 #'
 #' @return Character vector of genome IDs with all expected files successfully downloaded.
-retrieveGenomes <- function(base_dir = ".",
+retrieveGenomes <- function(base_path = ".",
                             user_bacs,
                             verbose = TRUE) {
   
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  paths    <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
+  base_path <- normalizePath(base_path, mustWork = FALSE)
+  paths    <- .buildDBpath(base_path = base_path, user_bacs = user_bacs)
   db_path  <- paths$db_path
   
   # Ensure filtered table exists
   if (isTRUE(verbose)) message("Filtering genomes before download.")
-  filtered_output <- filterGenomes(base_dir = base_dir, user_bacs = user_bacs, verbose = verbose)
+  filtered_output <- filterGenomes(base_path = base_path, user_bacs = user_bacs, verbose = verbose)
   if (is.null(filtered_output)) {
     message("No filtered metadata available.")
     return(character())
@@ -950,7 +950,7 @@ retrieveGenomes <- function(base_dir = ".",
   dir.create(genome_path, recursive = TRUE, showWarnings = FALSE)
   
   # Simple log
-  logs_dir <- file.path(base_dir, "data", "logs")
+  logs_dir <- file.path(base_path, "data", "logs")
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
   log_file <- file.path(logs_dir, "genome_downloads.log")
   
@@ -1002,22 +1002,22 @@ retrieveGenomes <- function(base_dir = ".",
 
 #' Build a table of local genome file paths and write to DuckDB
 #'
-#' Scans <base_dir>/data/<bug_dir>/genomes for *.PATRIC.gff, *.fna, *.PATRIC.faa,
+#' Scans <base_path>/data/<bug_dir>/genomes for *.PATRIC.gff, *.fna, *.PATRIC.faa,
 #' verifies size > 100 bytes, assembles rows per genome, and writes to the per-bug
 #' DuckDB table "files". This writes a Panaroo input file at:
-#'   <base_dir>/data/<bug_dir>/<abbrev>.txt
+#'   <base_path>/data/<bug_dir>/<abbrev>.txt
 #'
-#' @param base_dir Character. Project root.
+#' @param base_path Character. Project root.
 #' @param user_bacs Character vector. Used to locate per-bug directories and DB.
 #' @param verbose Logical. If TRUE, prints messages.
 #'
 #' @return A list with duckdbConnection and table_name = "files".
-genomeList <- function(base_dir = ".",
+genomeList <- function(base_path = ".",
                        user_bacs,
                        verbose = TRUE) {
   
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  paths    <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
+  base_path <- normalizePath(base_path, mustWork = FALSE)
+  paths    <- .buildDBpath(base_path = base_path, user_bacs = user_bacs)
   db_path  <- paths$db_path
   bug_dir  <- dirname(db_path)
   

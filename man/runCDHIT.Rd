@@ -6,7 +6,7 @@
 \usage{
 runCDHIT(
   duckdb_path,
-  output_dir,
+  output_path,
   output_prefix = "cdhit_out",
   identity = 0.9,
   word_length = 5,
@@ -20,11 +20,14 @@ runCDHIT(
 named \code{"files"} containing at least the column \code{faa_path} with absolute or
 relative paths to protein FASTA files.}
 
+\item{output_path}{Character scalar. Directory where concatenated input and the
+clustered output FASTA will be written. Created if it does not exist.}
+
 \item{output_prefix}{Character scalar. Prefix for output files. Defaults to
 \code{"cdhit_out"}. The function will create:
 \itemize{
-\item \code{<output_dir>/<output_prefix>_input.fa}
-\item \code{<output_dir>/<output_prefix>_proteins}
+\item \code{<output_path>/<output_prefix>_input.fa}
+\item \code{<output_path>/<output_prefix>_proteins}
 }}
 
 \item{identity}{Numeric. Sequence identity threshold for clustering (CD-HIT \code{-c}).
@@ -41,9 +44,6 @@ Defaults to \code{0}.}
 
 \item{extra_args}{Character vector. Extra CD-HIT flags appended at the end
 (e.g., \code{c("-g","1")} to use the most similar sequences as cluster representatives).}
-
-\item{output_path}{Character scalar. Directory where concatenated input and the
-clustered output FASTA will be written. Created if it does not exist.}
 }
 \value{
 A list with:
@@ -63,9 +63,9 @@ The function:
 \item Connects to a DuckDB database and reads the table \code{"files"}.
 \item Filters rows to ensure no \code{"NA"} string values and pulls \code{faa_path}.
 \item Concatenates all \verb{*.faa} files into a single input FASTA:
-\verb{<output_dir>/<output_prefix>_input.fa}.
+\verb{<output_path>/<output_prefix>_input.fa}.
 \item Runs CD-HIT via Docker with the specified parameters and writes clustered
-proteins to \verb{<output_dir>/<output_prefix>_proteins}.
+proteins to \verb{<output_path>/<output_prefix>_proteins}.
 \item Verifies successful output and returns paths to input/output FASTA files.
 }
 }

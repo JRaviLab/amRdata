@@ -6,7 +6,7 @@
 \usage{
 CDHIT2duckdb(
   duckdb_path,
-  output_dir,
+  output_path,
   output_prefix = "cdhit_out",
   identity = 0.9,
   word_length = 5,
@@ -18,7 +18,7 @@ CDHIT2duckdb(
 \arguments{
 \item{duckdb_path}{Character scalar. Path to the DuckDB database file.}
 
-\item{output_dir}{Character scalar. Directory where CD-HIT outputs will be written.}
+\item{output_path}{Character scalar. Directory where CD-HIT outputs will be written.}
 
 \item{output_prefix}{Character scalar. Prefix for CD-HIT output files. Defaults to
 \code{"cdhit_out"}.}
@@ -54,5 +54,17 @@ multiple tables into a DuckDB database:
 \item \code{protein_count}: genome-by-protein-cluster count matrix.
 \item \code{protein_names}: mapping of cluster IDs to representative protein names.
 \item \code{protein_cluster_seq}: clustered protein sequences (AA) with IDs.
+}
+}
+\examples{
+\dontrun{
+# Cluster proteins and write results to DuckDB
+CDHIT2duckdb(
+  duckdb_path = "example.duckdb",
+  output_path = "trial",
+  identity = 0.9,
+  word_length = 5,
+  threads = 8
+)
 }
 }

@@ -5,15 +5,15 @@
 \title{Update BV-BRC metadata in DuckDB}
 \usage{
 .updateBVBRCdata(
-  base_dir = ".",
+  base_path = ".",
   max_age_days = 30L,
   image = "danylmb/bvbrc:5.3",
   verbose = TRUE
 )
 }
 \arguments{
-\item{base_dir}{Character. Project root. The DuckDB database is created at
-\code{file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")}.}
+\item{base_path}{Character. Project root. The DuckDB database is created at
+\code{file.path(base_path, "data", "bvbrc", "bvbrcData.duckdb")}.}
 
 \item{max_age_days}{Integer. Refresh the table if older than this many days. Default: 30.}
 
@@ -26,7 +26,7 @@ A tibble containing BV-BRC bacterial genome metadata.
 }
 \description{
 Fetches bacterial genome metadata from BV-BRC using the BV-BRC CLI and stores
-it in a DuckDB database under \code{data/bvbrc/bvbrcData.duckdb} within \code{base_dir}.
+it in a DuckDB database under \code{data/bvbrc/bvbrcData.duckdb} within \code{base_path}.
 If the table exists and is older than \code{max_age_days}, it refreshes; otherwise,
 loads the existing table. BV-BRC column names are preserved exactly.
 }

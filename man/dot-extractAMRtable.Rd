@@ -5,7 +5,7 @@
 \title{Extract AMR Data Table}
 \usage{
 .extractAMRtable(
-  base_dir,
+  base_path,
   batch_genome_IDs,
   abx_filter,
   drug_fields,
@@ -14,6 +14,8 @@
 )
 }
 \arguments{
+\item{base_path}{A string representing the file path to a directory where temporary files and data will be stored.}
+
 \item{batch_genome_IDs}{A character vector containing genome IDs to query.}
 
 \item{abx_filter}{A string specifying the antibiotic filter criteria. This can be in the form
@@ -25,8 +27,6 @@ This corresponds to the attributes retrieved by the \code{p3-get-genome-drugs} t
 \item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 
 \item{verbose}{Logical. If TRUE, prints concise messages.}
-
-\item{path}{A string representing the file path to a directory where temporary files and data will be stored.}
 }
 \value{
 A character vector with the output data from \code{p3-get-genome-drugs}, typically in tabular format.

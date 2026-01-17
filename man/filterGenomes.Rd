@@ -4,10 +4,10 @@
 \alias{filterGenomes}
 \title{Filter genomes by AMR phenotype and metadata, and store results in DuckDB}
 \usage{
-filterGenomes(base_dir = ".", user_bacs, verbose = TRUE)
+filterGenomes(base_path = ".", user_bacs, verbose = TRUE)
 }
 \arguments{
-\item{base_dir}{Character. Project root.}
+\item{base_path}{Character. Project root.}
 
 \item{user_bacs}{Character vector. Used to locate the per-selection DuckDB.}
 
@@ -18,7 +18,7 @@ A list with: duckdbConnection and table_name = "filtered"
 }
 \description{
 Reads the per-selection DuckDB at:
-<base_dir>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.duckdb
+<base_path>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.duckdb
 Expects a table "metadata" (from retrieveMetadata). Filters to lab-tested evidence,
-genome_quality == "Good", and resistant_phenotype in {Resistant, Susceptible, Intermediate}.
+genome_quality == "Good", and resistant_phenotype in (Resistant, Susceptible, Intermediate).
 }

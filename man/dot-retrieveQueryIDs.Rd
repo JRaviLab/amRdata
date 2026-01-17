@@ -4,10 +4,15 @@
 \alias{.retrieveQueryIDs}
 \title{Retrieve genome IDs for each taxon via BV-BRC and DuckDB}
 \usage{
-.retrieveQueryIDs(base_dir = ".", user_bacs, overwrite = FALSE, verbose = TRUE)
+.retrieveQueryIDs(
+  base_path = ".",
+  user_bacs,
+  overwrite = FALSE,
+  verbose = TRUE
+)
 }
 \arguments{
-\item{base_dir}{Character. Project root directory. Default ".".}
+\item{base_path}{Character. Project root directory. Default ".".}
 
 \item{user_bacs}{Character vector. Mixed inputs of taxon IDs and/or species names.}
 
@@ -21,6 +26,6 @@ A numeric vector of distinct \code{genome.genome_id}, or NULL if none found.
 \description{
 Resolves user-provided taxa to taxon IDs, queries BV-BRC per unique taxon ID,
 and returns distinct genome IDs. Uses a per-selection DuckDB located under:
-<base_dir>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.duckdb
+<base_path>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.duckdb
 BV-BRC column names are preserved.
 }

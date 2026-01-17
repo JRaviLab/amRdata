@@ -4,10 +4,10 @@
 \alias{retrieveGenomes}
 \title{Download genome files (PATRIC.GFF, FNA, PATRIC.FAA) for filtered BV-BRC genomes}
 \usage{
-retrieveGenomes(base_dir = ".", user_bacs, verbose = TRUE)
+retrieveGenomes(base_path = ".", user_bacs, verbose = TRUE)
 }
 \arguments{
-\item{base_dir}{Character. Project root.}
+\item{base_path}{Character. Project root.}
 
 \item{user_bacs}{Character vector. Used to locate the DuckDB and output directory.}
 
@@ -18,5 +18,5 @@ Character vector of genome IDs with all expected files successfully downloaded.
 }
 \description{
 Uses filterGenomes() to get filtered metadata, then downloads to:
-<base_dir>/data/<bug_dir>/genomes/
+<base_path>/data/<bug_dir>/genomes/
 }

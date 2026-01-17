@@ -2,8 +2,8 @@
 
 export(.extractAMRtable)
 export(.getDfIPRColNames)
-export(.process_chunk)
 export(.updateBVBRCdata)
+export(CDHIT2duckdb)
 export(buildMatrices)
 export(clusterNames)
 export(parseProteinClusters)

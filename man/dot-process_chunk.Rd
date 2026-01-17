@@ -2,7 +2,7 @@
 % Please edit documentation in R/data_processing.R
 \name{.process_chunk}
 \alias{.process_chunk}
-\title{Title}
+\title{Process a chunk of sequences through InterProScan}
 \usage{
 .process_chunk(
   chunk,
@@ -16,8 +16,31 @@
 )
 }
 \arguments{
-\item{chunk_id}{}
+\item{chunk}{Character vector of sequences to process.}
+
+\item{path}{Character. Path to the working directory.}
+
+\item{ipr_data_path}{Character. Path to InterProScan data directory.}
+
+\item{out_file_base}{Character. Base name for output files.}
+
+\item{appl}{Character. InterProScan applications to run.}
+
+\item{chunk_id}{Integer. Identifier for this chunk.}
+
+\item{threads}{Integer. Number of threads to use.}
+
+\item{file_format}{Character. Output file format.}
+}
+\value{
+Data frame with InterProScan results.
 }
 \description{
-Title
+Process a chunk of sequences through InterProScan
 }
+\examples{
+\dontrun{
+.process_chunk(chunk, path, ipr_data_path, out_file_base, appl, chunk_id, threads, file_format)
+}
+}
+\keyword{internal}

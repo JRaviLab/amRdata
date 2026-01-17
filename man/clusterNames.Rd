@@ -2,13 +2,23 @@
 % Please edit documentation in R/data_processing.R
 \name{clusterNames}
 \alias{clusterNames}
-\title{Title}
+\title{Get cluster names from CD-HIT output}
 \usage{
 clusterNames(cluster_map, cluster_fasta)
 }
 \arguments{
-\item{cluster_map}{}
+\item{cluster_map}{Data frame mapping sequences to clusters.}
+
+\item{cluster_fasta}{Path to the CD-HIT output FASTA file.}
+}
+\value{
+A data frame with cluster names.
 }
 \description{
-Title
+Get cluster names from CD-HIT output
+}
+\examples{
+\dontrun{
+clusterNames(cluster_map, "path/to/clusters.fasta")
+}
 }

@@ -7,7 +7,7 @@
 retrieveMetadata(
   user_bacs,
   filter_type = "AMR",
-  base_dir = ".",
+  base_path = ".",
   abx = "All",
   overwrite = FALSE,
   image = "danylmb/bvbrc:5.3",
@@ -19,7 +19,7 @@ retrieveMetadata(
 
 \item{filter_type}{Character. "AMR" or "microTraits". Default "AMR".}
 
-\item{base_dir}{Character. Project root. Default "results/" in legacy scripts; now default ".".}
+\item{base_path}{Character. Project root. Default "results/" in legacy scripts; now default ".".}
 
 \item{abx}{Character or vector. Antibiotic filter. "All" for all antibiotics, else names.}
 
@@ -39,7 +39,7 @@ A list with:
 \description{
 Queries BV-BRC for AMR or microtrait metadata for genomes corresponding to user inputs.
 Results are written to a per-selection DuckDB at:
-<base_dir>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.duckdb
+<base_path>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.duckdb
 Tables written:
 \itemize{
 \item amr_phenotype

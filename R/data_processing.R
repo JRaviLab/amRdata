@@ -480,9 +480,9 @@ panaroo2duckdb <- function(panaroo_output_path, duckdb_path){
 #' - Connects to a DuckDB database and reads the table `"files"`.
 #' - Filters rows to ensure no `"NA"` string values and pulls `faa_path`.
 #' - Concatenates all `*.faa` files into a single input FASTA:
-#'   `<output_dir>/<output_prefix>_input.fa`.
+#'   `<output_path>/<output_prefix>_input.fa`.
 #' - Runs CD-HIT via Docker with the specified parameters and writes clustered
-#'   proteins to `<output_dir>/<output_prefix>_proteins`.
+#'   proteins to `<output_path>/<output_prefix>_proteins`.
 #' - Verifies successful output and returns paths to input/output FASTA files.
 #'
 #' @param duckdb_path Character scalar. Path to the DuckDB database with a table
@@ -493,8 +493,8 @@ panaroo2duckdb <- function(panaroo_output_path, duckdb_path){
 #' @param output_prefix Character scalar. Prefix for output files. Defaults to
 #'   `"cdhit_out"`. The function will create:
 #'   \itemize{
-#'     \item \code{<output_dir>/<output_prefix>_input.fa}
-#'     \item \code{<output_dir>/<output_prefix>_proteins}
+#'     \item \code{<output_path>/<output_prefix>_input.fa}
+#'     \item \code{<output_path>/<output_prefix>_proteins}
 #'   }
 #' @param identity Numeric. Sequence identity threshold for clustering (CD-HIT `-c`).
 #'   Defaults to `0.9`.
@@ -527,7 +527,7 @@ panaroo2duckdb <- function(panaroo_output_path, duckdb_path){
 #'   extra_args    = c("-g", "1")
 #' )
 runCDHIT <- function(duckdb_path,
-                     output_dir,
+                     output_path,
                      output_prefix = "cdhit_out",
                      identity = 0.9,       # -c
                      word_length = 5,      # -n
@@ -536,12 +536,12 @@ runCDHIT <- function(duckdb_path,
                      extra_args = c("-g", "1")) {
 
   duckdb_path <- normalizePath(duckdb_path)
-  if (missing(output_dir) || output_dir %in% c(".", "results", "results/")) {
-    output_dir <- dirname(duckdb_path)  # e.g., ./results/<bug>
+  if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
+    output_path <- dirname(duckdb_path)  # e.g., ./results/<bug>
   }
-  output_dir <- normalizePath(output_dir)
-  if (!dir.exists(output_dir)) {
-    dir.create(output_dir, recursive = TRUE)
+  output_path <- normalizePath(output_path)
+  if (!dir.exists(output_path)) {
+    dir.create(output_path, recursive = TRUE)
   }
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
@@ -556,7 +556,7 @@ runCDHIT <- function(duckdb_path,
   }
 
   # Create concatenated input FASTA
-  cdhit_input_faa <- file.path(output_dir, paste0(output_prefix, "_input.fa"))
+  cdhit_input_faa <- file.path(output_path, paste0(output_prefix, "_input.fa"))
   file_conn <- file(cdhit_input_faa, "w")
   for (file in cdhit_input_files) {
     cat(readLines(file), file = file_conn, sep = "\n")
@@ -564,11 +564,11 @@ runCDHIT <- function(duckdb_path,
   close(file_conn)
 
   # Define output paths
-  clustered_faa <- file.path(output_dir, paste0(output_prefix, "_proteins"))
+  clustered_faa <- file.path(output_path, paste0(output_prefix, "_proteins"))
 
   # Build cd-hit command with all required defaults
-  cmd_args <- c("run", "-v", paste0(output_dir, ":", output_dir),
-                "-w ", output_dir, "weizhongli1987/cdhit:4.8.1 ",
+  cmd_args <- c("run", "-v", paste0(output_path, ":", output_path),
+                "-w ", output_path, "weizhongli1987/cdhit:4.8.1 ",
                 "cd-hit",
                 "-i", shQuote(cdhit_input_faa),
                 "-o", shQuote(clustered_faa),
@@ -600,17 +600,21 @@ runCDHIT <- function(duckdb_path,
   ))
 }
 
-# This takes in a CD-HIT output file (with the -d 0 parameter!), finds the
-# clusters, extracts the lines that represent individual sequences in the
-# cluster, and designates which genomes have which clusters for the next step
-#' parseProteinClusters
+#' Parse CD-HIT protein cluster output
 #'
-#' @param clustered_faa
+#' Takes a CD-HIT output file (with the -d 0 parameter), finds the clusters,
+#' extracts the lines that represent individual sequences in the cluster,
+#' and designates which genomes have which clusters.
 #'
-#' @return
+#' @param clustered_faa Character. Path to the CD-HIT clustered FASTA output file.
+#'
+#' @return A data.table mapping cluster IDs to genome IDs.
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' cluster_map <- parseProteinClusters("path/to/cdhit_proteins")
+#' }
 parseProteinClusters <- function(clustered_faa) {
   lines <- data.table::fread(paste0(clustered_faa, ".clstr"), sep = "\n", header = FALSE)$V1
   cluster_ids <- grep("^>Cluster", lines) # This IDs the distinct clusters
@@ -646,17 +650,20 @@ parseProteinClusters <- function(clustered_faa) {
 }
 
 
-# With the map, build count and P/A matrices for which bugs have what
-# For the moment, saves as TSV, but can/should be modified to shove data into
-# DuckDB instead, presumably
-#' Title
+#' Build genome-by-cluster count matrix
 #'
-#' @param cluster_map
+#' Takes a cluster map and builds a count matrix showing which genomes
+#' have which protein clusters.
 #'
-#' @return
+#' @param cluster_map A data.table with columns `cluster` and `genome_id`.
+#'
+#' @return A data frame with genome IDs as rows and cluster IDs as columns.
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' cluster_count <- buildMatrices(cluster_map)
+#' }
 buildMatrices <- function(cluster_map) {
   cluster_map[, count := 1]
   cluster_count <- reshape2::dcast(cluster_map, genome_id ~ cluster, value.var = "count", fun.aggregate = sum, fill = 0)
@@ -664,14 +671,18 @@ buildMatrices <- function(cluster_map) {
   return(cluster_count)
 }
 
-#' Title
+#' Get cluster names from CD-HIT output
 #'
-#' @param cluster_map
+#' @param cluster_map Data frame mapping sequences to clusters.
+#' @param cluster_fasta Path to the CD-HIT output FASTA file.
 #'
-#' @return
+#' @return A data frame with cluster names.
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' clusterNames(cluster_map, "path/to/clusters.fasta")
+#' }
 clusterNames <- function(cluster_map, cluster_fasta) {
 
   cluster_map_unique <- cluster_map |>
@@ -709,7 +720,7 @@ clusterNames <- function(cluster_map, cluster_fasta) {
 #' }
 #'
 #' @param duckdb_path Character scalar. Path to the DuckDB database file.
-#' @param output_dir Character scalar. Directory where CD-HIT outputs will be written.
+#' @param output_path Character scalar. Directory where CD-HIT outputs will be written.
 #' @param output_prefix Character scalar. Prefix for CD-HIT output files. Defaults to
 #'   \code{"cdhit_out"}.
 #' @param identity Numeric. Sequence identity threshold for clustering (\code{-c}).
@@ -736,13 +747,15 @@ clusterNames <- function(cluster_map, cluster_fasta) {
 #' # Cluster proteins and write results to DuckDB
 #' CDHIT2duckdb(
 #'   duckdb_path = "example.duckdb",
-#'   output_dir = "trial",
+#'   output_path = "trial",
 #'   identity = 0.9,
 #'   word_length = 5,
 #'   threads = 8
 #' )
+#' }
+#' @export
 CDHIT2duckdb <- function(duckdb_path,
-                         output_dir,
+                         output_path,
                          output_prefix = "cdhit_out",
                          identity = 0.9,
                          word_length = 5,
@@ -752,12 +765,12 @@ CDHIT2duckdb <- function(duckdb_path,
 
   duckdb_path <- normalizePath(duckdb_path)
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  if (missing(output_dir) || output_dir %in% c(".", "results", "results/")) {
-    output_dir <- dirname(duckdb_path)  # e.g., ./results/<bug>
+  if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
+    output_path <- dirname(duckdb_path)  # e.g., ./results/<bug>
   }
-  output_dir <- normalizePath(output_dir)
+  output_path <- normalizePath(output_path)
   cdhit_outputs <- runCDHIT(duckdb_path,
-                            output_dir,
+                            output_path,
                             output_prefix = output_prefix,
                             identity = identity,
                             word_length = word_length,
@@ -958,19 +971,24 @@ checkInterProData <- function(
 }
 
 # Function to process a chunk of sequences
-#' Title
+#' Process a chunk of sequences through InterProScan
 #'
-#' @param chunk
-#' @param ipr_path
-#' @param ipr_data_path
-#' @param out_file_base
-#' @param appl
-#' @param chunk_id
+#' @param chunk Character vector of sequences to process.
+#' @param path Character. Path to the working directory.
+#' @param ipr_data_path Character. Path to InterProScan data directory.
+#' @param out_file_base Character. Base name for output files.
+#' @param appl Character. InterProScan applications to run.
+#' @param chunk_id Integer. Identifier for this chunk.
+#' @param threads Integer. Number of threads to use.
+#' @param file_format Character. Output file format.
 #'
-#' @return
-#' @export
+#' @return Data frame with InterProScan results.
+#' @keywords internal
 #'
 #' @examples
+#' \dontrun{
+#' .process_chunk(chunk, path, ipr_data_path, out_file_base, appl, chunk_id, threads, file_format)
+#' }
 .process_chunk <- function(chunk,
                           path,
                           ipr_data_path = "inst/extdata/interpro/data",

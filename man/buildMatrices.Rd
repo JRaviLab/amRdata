@@ -2,13 +2,22 @@
 % Please edit documentation in R/data_processing.R
 \name{buildMatrices}
 \alias{buildMatrices}
-\title{Title}
+\title{Build genome-by-cluster count matrix}
 \usage{
 buildMatrices(cluster_map)
 }
 \arguments{
-\item{cluster_map}{}
+\item{cluster_map}{A data.table with columns \code{cluster} and \code{genome_id}.}
+}
+\value{
+A data frame with genome IDs as rows and cluster IDs as columns.
 }
 \description{
-Title
+Takes a cluster map and builds a count matrix showing which genomes
+have which protein clusters.
+}
+\examples{
+\dontrun{
+cluster_count <- buildMatrices(cluster_map)
+}
 }
