@@ -1,0 +1,288 @@
+raw_country	n	raw_entry	clean_name	iso3_code	short_name	category	is_valid_country	is_geographic_feature	is_multiple_countries	is_historical	is_subnational	is_territory	requires_review	data_quality_tier	cleaning_notes
+NA	191049	NA	NA	NA	NA	missing	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	low	No country data
+Azores	1	Azores	Portugal	PRT	PRT	subnational	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	medium	Autonomous region of Portugal
+Helgoland	5	Helgoland	Germany	DEU	DEU	subnational	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	medium	German island
+Logachev	1	Logachev	Hydrothermal vent	NA	NA	geological	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Mid-Atlantic Ridge vent field
+Mid-Atlantic Ridge	2	Mid-Atlantic Ridge	Mid-Atlantic Ridge	NA	NA	geological	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Underwater mountain range
+Pacific Ocean	1	Pacific Ocean	Pacific Ocean	NA	NA	ocean	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+off west coast	3	off west coast	Unknown coast	NA	NA	vague	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	low	Unspecified coastal location
+seashore	1	seashore	Coastal environment	NA	NA	vague	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	low	Unspecified seashore
+station Kabeltonne	1	station Kabeltonne	Sampling station	NA	NA	sampling_site	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Research station
+2019-11-29	1	2019-11-29	NA	NA	NA	unmatched	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	low	Could not match to ISO 3166-1 standard
+Adriatic Sea	1	Adriatic Sea	Adriatic Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Afghanistan	131	Afghanistan	Afghanistan	AFG	AFG	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Albania	7	Albania	Albania	ALB	ALB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Algeria	299	Algeria	Algeria	DZA	DZA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+American Samoa	5	American Samoa	American Samoa	ASM	ASM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Angola	17	Angola	Angola	AGO	AGO	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Antarctic Ocean	2	Antarctic Ocean	Southern Ocean	NA	NA	ocean	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Alternative name
+Antarctica	5611	Antarctica	Antarctica	ATA	ATA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Antigua	3	Antigua	Antigua & Barbuda	ATG	ATG	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Arabian Sea	1	Arabian Sea	Arabian Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Arctic Ocean	82	Arctic Ocean	Arctic Ocean	NA	NA	ocean	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Argentina	1629	Argentina	Argentina	ARG	ARG	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Armenia	56	Armenia	Armenia	ARM	ARM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Atlantic Ocean	787	Atlantic Ocean	Atlantic Ocean	NA	NA	ocean	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Australia	25387	Australia	Australia	AUS	AUS	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Austria	3348	Austria	Austria	AUT	AUT	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Azerbaijan	26	Azerbaijan	Azerbaijan	AZE	AZE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Bahamas	64	Bahamas	Bahamas	BHS	BHS	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Bahrain	8	Bahrain	Bahrain	BHR	BHR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Baltic Sea	14	Baltic Sea	Baltic Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Bangladesh	2676	Bangladesh	Bangladesh	BGD	BGD	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Barbados	78	Barbados	Barbados	BRB	BRB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Belarus	346	Belarus	Belarus	BLR	BLR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Belgium	2682	Belgium	Belgium	BEL	BEL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Belize	234	Belize	Belize	BLZ	BLZ	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Benin	36	Benin	Benin	BEN	BEN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Bermuda	11	Bermuda	Bermuda	BMU	BMU	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Bhutan	83	Bhutan	Bhutan	BTN	BTN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Black Sea	2	Black Sea	Black Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Bolivia	154	Bolivia	Bolivia	BOL	BOL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Bosnia and Herzegovina	8	Bosnia and Herzegovina	Bosnia & Herzegovina	BIH	BIH	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Botswana	111	Botswana	Botswana	BWA	BWA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Brazil	11142	Brazil	Brazil	BRA	BRA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Brunei	2	Brunei	Brunei	BRN	BRN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Bulgaria	971	Bulgaria	Bulgaria	BGR	BGR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Burkina Faso	206	Burkina Faso	Burkina Faso	BFA	BFA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Burma	8	Burma	Myanmar (Burma)	MMR	MMR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Historical name for Myanmar
+Burundi	7	Burundi	Burundi	BDI	BDI	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Cambodia	606	Cambodia	Cambodia	KHM	KHM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Cameroon	621	Cameroon	Cameroon	CMR	CMR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Canada	31995	Canada	Canada	CAN	CAN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Cape Verde	115	Cape Verde	Cape Verde	CPV	CPV	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Caribbean Sea	2	Caribbean Sea	Caribbean Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Cayman Islands	8	Cayman Islands	Cayman Islands	CYM	CYM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Central African Republic	69	Central African Republic	Central African Republic	CAF	CAF	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Chad	18	Chad	Chad	TCD	TCD	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Chile	3357	Chile	Chile	CHL	CHL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+China	131324	China	China	CHN	CHN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Christmas Island	55	Christmas Island	Christmas Island	CXR	CXR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Chukchi Sea	1	Chukchi Sea	Chukchi Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Colombia	1802	Colombia	Colombia	COL	COL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Comoros	56	Comoros	Comoros	COM	COM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Control	1	Control	NA	NA	NA	unmatched	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	low	Could not match to ISO 3166-1 standard
+Cook Islands	1	Cook Islands	Cook Islands	COK	COK	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Costa Rica	1177	Costa Rica	Costa Rica	CRI	CRI	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Cote d'Ivoire	44	Cote d'Ivoire	Côte d’Ivoire	CIV	CIV	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Cote dIvoire	5	Cote dIvoire	Côte d'Ivoire	CIV	CIV	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Spelling variant
+Croatia	360	Croatia	Croatia	HRV	HRV	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Cuba	129	Cuba	Cuba	CUB	CUB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Curacao	3	Curacao	Curaçao	CUW	CUW	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Cyprus	25	Cyprus	Cyprus	CYP	CYP	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Czech Republic	8363	Czech Republic	Czechia	CZE	CZE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Czechoslovakia	20	Czechoslovakia	Czechoslovakia	NA	Czechoslovakia	historical	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	medium	Split 1993 into CZ/SK
+Dagestan	1	Dagestan	Russia	RUS	RUS	subnational	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	medium	Republic within Russia
+Democratic Republic of the Congo	1198	Democratic Republic of the Congo	Congo - Kinshasa	COD	COD	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Denmark	22934	Denmark	Denmark	DNK	DNK	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Djibouti	34	Djibouti	Djibouti	DJI	DJI	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Dominica	31	Dominica	Dominica	DMA	DMA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Dominican Republic	37	Dominican Republic	Dominican Republic	DOM	DOM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Ecuador	731	Ecuador	Ecuador	ECU	ECU	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Egypt	899	Egypt	Egypt	EGY	EGY	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+El Salvador	21	El Salvador	El Salvador	SLV	SLV	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+England	1106	England	United Kingdom	GBR	GBR	subnational	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	medium	Part of UK
+England and Wales	30	England and Wales	United Kingdom	GBR	GBR	subnational	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	medium	Part of UK
+Equatorial Guinea	2	Equatorial Guinea	Equatorial Guinea	GNQ	GNQ	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Eritrea	21	Eritrea	Eritrea	ERI	ERI	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Estonia	551	Estonia	Estonia	EST	EST	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Ethiopia	2123	Ethiopia	Ethiopia	ETH	ETH	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Europe	1	Europe	Europe	NA	NA	continent	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	low	Continental designation
+Faroe Islands	3	Faroe Islands	Faroe Islands	FRO	FRO	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Fiji	896	Fiji	Fiji	FJI	FJI	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Finland	4135	Finland	Finland	FIN	FIN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+France	14638	France	France	FRA	FRA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+France, USA	1	France, USA	Multiple countries	NA	NA	multiple	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	TRUE	medium	France and USA
+French Guiana	390	French Guiana	French Guiana	GUF	GUF	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+French Polynesia	83	French Polynesia	French Polynesia	PYF	PYF	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Gabon	314	Gabon	Gabon	GAB	GAB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Gambia	466	Gambia	Gambia	GMB	GMB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Gaza Strip	37	Gaza Strip	Palestine	PSE	PSE	territory	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	medium	Palestinian Territory
+Georgia	314	Georgia	Georgia	GEO	GEO	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Germany	26543	Germany	Germany	DEU	DEU	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Ghana	1198	Ghana	Ghana	GHA	GHA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Greece	1086	Greece	Greece	GRC	GRC	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Greenland	350	Greenland	Greenland	GRL	GRL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Grenada	15	Grenada	Grenada	GRD	GRD	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Guadeloupe	224	Guadeloupe	Guadeloupe	GLP	GLP	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Guam	41	Guam	Guam	GUM	GUM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Guatemala	148	Guatemala	Guatemala	GTM	GTM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Guinea	64	Guinea	Guinea	GIN	GIN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Guinea-Bissau	75	Guinea-Bissau	Guinea-Bissau	GNB	GNB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Guyana	9	Guyana	Guyana	GUY	GUY	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Haiti	154	Haiti	Haiti	HTI	HTI	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Honduras	92	Honduras	Honduras	HND	HND	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Hong Kong	2981	Hong Kong	Hong Kong SAR China	HKG	HKG	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Hong kong	15	Hong kong	Hong Kong	HKG	HKG	territory	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	medium	SAR of China
+Hungary	619	Hungary	Hungary	HUN	HUN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Iceland	253	Iceland	Iceland	ISL	ISL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+India	12139	India	India	IND	IND	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+India, Nepal	1	India, Nepal	Multiple countries	NA	NA	multiple	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	TRUE	medium	India and Nepal
+India, South Africa	1	India, South Africa	Multiple countries	NA	NA	multiple	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	TRUE	medium	India and South Africa
+Indian Ocean	204	Indian Ocean	Indian Ocean	NA	NA	ocean	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Indonesia	951	Indonesia	Indonesia	IDN	IDN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Indonesia/Thailand	1	Indonesia/Thailand	Multiple countries	NA	NA	multiple	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	TRUE	medium	Indonesia and Thailand
+Iran	1997	Iran	Iran	IRN	IRN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Iraq	144	Iraq	Iraq	IRQ	IRQ	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Ireland	3278	Ireland	Ireland	IRL	IRL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Israel	3759	Israel	Israel	ISR	ISR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Italy	7454	Italy	Italy	ITA	ITA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Jamaica	37	Jamaica	Jamaica	JAM	JAM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Japan	19259	Japan	Japan	JPN	JPN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Jersey	99	Jersey	Jersey	JEY	JEY	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Jordan	85	Jordan	Jordan	JOR	JOR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Kazakhstan	219	Kazakhstan	Kazakhstan	KAZ	KAZ	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Kenya	3464	Kenya	Kenya	KEN	KEN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Kenya/Tanzania	1	Kenya/Tanzania	Multiple countries	NA	NA	multiple	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	TRUE	medium	Kenya and Tanzania
+Kiribati	13	Kiribati	Kiribati	KIR	KIR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Korea	104	Korea	South Korea	KOR	KOR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Assumed South Korea
+Kuwait	91	Kuwait	Kuwait	KWT	KWT	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Kyrgyzstan	140	Kyrgyzstan	Kyrgyzstan	KGZ	KGZ	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+La Reunion	11	La Reunion	Réunion	REU	REU	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Laos	207	Laos	Laos	LAO	LAO	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Laos, Thailand, Cambodia	2	Laos, Thailand, Cambodia	Multiple countries	NA	NA	multiple	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	TRUE	medium	Laos, Thailand, and Cambodia
+Latvia	157	Latvia	Latvia	LVA	LVA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Lebanon	1377	Lebanon	Lebanon	LBN	LBN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Lesotho	2	Lesotho	Lesotho	LSO	LSO	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Liberia	2	Liberia	Liberia	LBR	LBR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Libya	31	Libya	Libya	LBY	LBY	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Liechtenstein	5	Liechtenstein	Liechtenstein	LIE	LIE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Lithuania	892	Lithuania	Lithuania	LTU	LTU	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Luxembourg	312	Luxembourg	Luxembourg	LUX	LUX	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Macau	2	Macau	Macao SAR China	MAC	MAC	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Macedonia	3	Macedonia	North Macedonia	MKD	MKD	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Madagascar	240	Madagascar	Madagascar	MDG	MDG	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Mainland France	92	Mainland France	France	FRA	FRA	subnational	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	medium	Metropolitan France
+Malawi	701	Malawi	Malawi	MWI	MWI	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Malaysia	2966	Malaysia	Malaysia	MYS	MYS	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Maldives	2	Maldives	Maldives	MDV	MDV	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Mali	299	Mali	Mali	MLI	MLI	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Malta	44	Malta	Malta	MLT	MLT	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Martinique	14	Martinique	Martinique	MTQ	MTQ	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Mauritania	10	Mauritania	Mauritania	MRT	MRT	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Mauritius	78	Mauritius	Mauritius	MUS	MUS	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Mayotte	115	Mayotte	Mayotte	MYT	MYT	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Mediterranean Sea	17	Mediterranean Sea	Mediterranean Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Mexico	4036	Mexico	Mexico	MEX	MEX	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Micronesia	26	Micronesia	Federated States of Micronesia	FSM	FSM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Assumed FSM - most common usage in databases
+Moldova	113	Moldova	Moldova	MDA	MDA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Mongolia	170	Mongolia	Mongolia	MNG	MNG	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Montenegro	40	Montenegro	Montenegro	MNE	MNE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Montserrat	4	Montserrat	Montserrat	MSR	MSR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Morocco	220	Morocco	Morocco	MAR	MAR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Mozambique	1144	Mozambique	Mozambique	MOZ	MOZ	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Myanmar	56	Myanmar	Myanmar (Burma)	MMR	MMR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+NIGERIA	1	NIGERIA	Nigeria	NGA	NGA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Case corrected
+Namibia	65	Namibia	Namibia	NAM	NAM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Nepal	1501	Nepal	Nepal	NPL	NPL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Netherlands	7213	Netherlands	Netherlands	NLD	NLD	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+New Caledonia	99	New Caledonia	New Caledonia	NCL	NCL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+New Zealand	5043	New Zealand	New Zealand	NZL	NZL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Nicaragua	29	Nicaragua	Nicaragua	NIC	NIC	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Niger	43	Niger	Niger	NER	NER	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Nigeria	1544	Nigeria	Nigeria	NGA	NGA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+No Travel Information	30	No Travel Information	NA	NA	NA	unmatched	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	low	Could not match to ISO 3166-1 standard
+No Travel Reported	19	No Travel Reported	NA	NA	NA	unmatched	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	low	Could not match to ISO 3166-1 standard
+North Korea	4	North Korea	North Korea	PRK	PRK	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+North Sea	35	North Sea	North Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Northern Mariana Islands	6	Northern Mariana Islands	Northern Mariana Islands	MNP	MNP	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Norway	9216	Norway	Norway	NOR	NOR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Oman	202	Oman	Oman	OMN	OMN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Pacific Ocean	1266	Pacific Ocean	Pacific Ocean	NA	NA	ocean	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Pakistan	2671	Pakistan	Pakistan	PAK	PAK	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Pakistan, Turkey	1	Pakistan, Turkey	Multiple countries	NA	NA	multiple	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	TRUE	medium	Pakistan and Turkey
+Palau	16	Palau	Palau	PLW	PLW	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Palestinian Territory	8	Palestinian Territory	Palestine	PSE	PSE	territory	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	medium	ISO 3166-1
+Panama	553	Panama	Panama	PAN	PAN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Papua New Guinea	549	Papua New Guinea	Papua New Guinea	PNG	PNG	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Paraguay	147	Paraguay	Paraguay	PRY	PRY	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Peru	4056	Peru	Peru	PER	PER	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Philippine Sea	1	Philippine Sea	Philippine Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Philippines	657	Philippines	Philippines	PHL	PHL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Poland	1969	Poland	Poland	POL	POL	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Portugal	3209	Portugal	Portugal	PRT	PRT	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Puerto Rico	664	Puerto Rico	Puerto Rico	PRI	PRI	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Qatar	70	Qatar	Qatar	QAT	QAT	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Red Sea	3	Red Sea	Red Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Reunion	155	Reunion	Réunion	REU	REU	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Romania	426	Romania	Romania	ROU	ROU	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Russia	9280	Russia	Russia	RUS	RUS	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Rwanda	280	Rwanda	Rwanda	RWA	RWA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Saint Kitts	29	Saint Kitts	St. Kitts & Nevis	KNA	KNA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Saint Kitts and Nevis	60	Saint Kitts and Nevis	St. Kitts & Nevis	KNA	KNA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Saint Lucia	26	Saint Lucia	St. Lucia	LCA	LCA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Saint Martin	3	Saint Martin	Saint Martin	MAF	MAF	territory	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	medium	Assumed French side - slightly more common in databases
+Saint Vincent	13	Saint Vincent	St. Vincent & Grenadines	VCT	VCT	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Samoa	119	Samoa	Samoa	WSM	WSM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Sao Tome and Principe	2	Sao Tome and Principe	São Tomé & Príncipe	STP	STP	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Sargasso Sea	10	Sargasso Sea	Sargasso Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Saudi Arabia	1240	Saudi Arabia	Saudi Arabia	SAU	SAU	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Sea of Korea	1	Sea of Korea	Sea of Japan	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Senegal	205	Senegal	Senegal	SEN	SEN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Serbia	403	Serbia	Serbia	SRB	SRB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Seychelles	7	Seychelles	Seychelles	SYC	SYC	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Sierra Leone	48	Sierra Leone	Sierra Leone	SLE	SLE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Singapore	18809	Singapore	Singapore	SGP	SGP	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Slovakia	447	Slovakia	Slovakia	SVK	SVK	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Slovenia	557	Slovenia	Slovenia	SVN	SVN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Solomon Islands	26	Solomon Islands	Solomon Islands	SLB	SLB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Somalia	55	Somalia	Somalia	SOM	SOM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+South Africa	8795	South Africa	South Africa	ZAF	ZAF	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+South China Sea	1	South China Sea	South China Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+South Georgia and the South Sandwich Islands	2	South Georgia and the South Sandwich Islands	South Georgia & South Sandwich Islands	SGS	SGS	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+South Korea	9911	South Korea	South Korea	KOR	KOR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+South Sea	2	South Sea	South Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Southeast Asia	3	Southeast Asia	Southeast Asia	NA	NA	region	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	low	Regional designation
+Southern Ocean	3	Southern Ocean	Southern Ocean	NA	NA	ocean	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Spain	9278	Spain	Spain	ESP	ESP	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Sri Lanka	317	Sri Lanka	Sri Lanka	LKA	LKA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Sudan	234	Sudan	Sudan	SDN	SDN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Suriname	27	Suriname	Suriname	SUR	SUR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Svalbard	60	Svalbard	Svalbard & Jan Mayen	SJM	SJM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Swaziland	276	Swaziland	Eswatini	SWZ	SWZ	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Sweden	9670	Sweden	Sweden	SWE	SWE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Switzerland	11641	Switzerland	Switzerland	CHE	CHE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Syria	31	Syria	Syria	SYR	SYR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Tahiti	1	Tahiti	French Polynesia	PYF	PYF	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Taiwan	2195	Taiwan	Taiwan	TWN	TWN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Tajikistan	17	Tajikistan	Tajikistan	TJK	TJK	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Tanzania	5702	Tanzania	Tanzania	TZA	TZA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Tasman Sea	1	Tasman Sea	Tasman Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Thailand	8400	Thailand	Thailand	THA	THA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+The Gambia	53	The Gambia	Gambia	GMB	GMB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+The Netherlands	4	The Netherlands	Netherlands	NLD	NLD	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Removed article
+Tibet	1	Tibet	China	CHN	CHN	subnational	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	medium	Autonomous region of China
+Timor	1	Timor	Timor-Leste	TLS	TLS	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Assumed Timor-Leste (East Timor) - most likely interpretation
+Togo	56	Togo	Togo	TGO	TGO	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Tonga	153	Tonga	Tonga	TON	TON	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Trinidad	35	Trinidad	Trinidad & Tobago	TTO	TTO	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Trinidad and Tobago	68	Trinidad and Tobago	Trinidad & Tobago	TTO	TTO	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Tunisia	654	Tunisia	Tunisia	TUN	TUN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Turkey	1459	Turkey	Turkey	TUR	TUR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Turkmenistan	56	Turkmenistan	Turkmenistan	TKM	TKM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Turks and Caicos Islands	5	Turks and Caicos Islands	Turks & Caicos Islands	TCA	TCA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+UAE	1	UAE	United Arab Emirates	ARE	ARE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+UK	106	UK	United Kingdom	GBR	GBR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Standardized to GBR
+USA	176176	USA	United States	USA	USA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Standardized to USA
+USSR	19	USSR	Soviet Union	NA	USSR	historical	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	medium	Dissolved 1991
+Uganda	2691	Uganda	Uganda	UGA	UGA	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Ukraine	612	Ukraine	Ukraine	UKR	UKR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+United Arab Emirates	251	United Arab Emirates	United Arab Emirates	ARE	ARE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+United Kingdom	36659	United Kingdom	United Kingdom	GBR	GBR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+United Kingdom (England, Wales & N. Ireland)	51	United Kingdom (England, Wales & N. Ireland)	United Kingdom	GBR	GBR	subnational	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	medium	Part of UK
+United Kingdom (Scotland)	6	United Kingdom (Scotland)	United Kingdom	GBR	GBR	subnational	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	medium	Part of UK
+United States Virgin Islands	2	United States Virgin Islands	U.S. Virgin Islands	VIR	VIR	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Uruguay	215	Uruguay	Uruguay	URY	URY	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Uzbekistan	382	Uzbekistan	Uzbekistan	UZB	UZB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Vanuatu	9	Vanuatu	Vanuatu	VUT	VUT	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Venezuela	372	Venezuela	Venezuela	VEN	VEN	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Viet Nam	1852	Viet Nam	Vietnam	VNM	VNM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Alternative spelling
+Vietnam	531	Vietnam	Vietnam	VNM	VNM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Virgin Islands	5	Virgin Islands	U.S. Virgin Islands	VIR	VIR	territory	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	FALSE	medium	Assumed US Virgin Islands - more common than British
+Wallis and Futuna	2	Wallis and Futuna	Wallis & Futuna	WLF	WLF	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Yellow Sea	2	Yellow Sea	Yellow Sea	NA	NA	sea	FALSE	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	medium	Marine environment
+Yemen	1	Yemen	Yemen	YEM	YEM	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Yugoslavia	10	Yugoslavia	Yugoslavia	NA	Yugoslavia	historical	FALSE	FALSE	FALSE	TRUE	FALSE	FALSE	FALSE	medium	Dissolved 1992
+Zambia	122	Zambia	Zambia	ZMB	ZMB	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+Zimbabwe	80	Zimbabwe	Zimbabwe	ZWE	ZWE	country	TRUE	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	high	Matched via countrycode
+uncalculated	27	uncalculated	NA	NA	NA	unmatched	FALSE	FALSE	FALSE	FALSE	FALSE	FALSE	TRUE	low	Could not match to ISO 3166-1 standard

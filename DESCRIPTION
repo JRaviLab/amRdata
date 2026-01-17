@@ -1,21 +1,60 @@
-Package: NewPackage
-Title: What the Package Does (One Line, Title Case)
+Package: amRdata
+Title: To download, process, and featurize AMR genome isolates and metadata | pkg 1 of 3-pkg amR suite
 Version: 0.0.0.9000
-Authors@R: 
-    person("David", "Mayer", , "david.mayer@cuanschutz.edu", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
-License: MIT + file LICENSE
-Suggests: 
+Authors@R: c(
+    person("Janani", "Ravi", , "janani.ravi@cuanschutz.edu", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0001-7443-925X")),
+    person("Abhirupa", "Ghosh", , "abhirupa.ghosh@cuanschutz.edu", role = "ctb"),
+    person("Evan", "Brenner", , "evan.brenner@cuanschutz.edu", role = "ctb"),
+    person("Charmie", "Vang", , "charmie.vang@cuanschutz.edu", role = "ctb"),
+    person("Emily", "Boyer", , "emily.boyer@cuanschutz.edu", role = "ctb"),
+    person("Raymond", "Lesiyon", , "raymond.lesiyon@cuanschutz.edu", role = "ctb"),
+    person("David", "Mayer", , "david.mayer@cuanschutz.edu", role = "ctb")
+  )
+Author: Janani Ravi [aut, cre] (<https://orcid.org/0000-0001-7443-925X>),
+    Abhirupa Ghosh [ctb],
+    Evan Brenner [ctb],
+    Emily Boyer [ctb],
+    Charmie Vang [ctb],
+    Ethan Wolfe [ctb],
+    Raymond Lesiyon [ctb],
+    David Mayer [ctb]
+Maintainer: Janani Ravi <janani.ravi@cuanschutz.edu>
+Description: amRdata starts with a user's species query and downloads all
+      relevant BV-BRC genomic sequences and metadata. Pangenomes constructed with
+      these genome isolates are then featurized into molecular scales, genes,
+      proteins, protein domains, and structure (genomic neighbors). These data are
+      saved as processed data along with associated AMR phenotypes and isolate 
+      metadata for downstream ML modeling in package 2, amRml.
+Config/testthat/edition: 3
+License: BSD_3_clause + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends:
+    R (>= 4.1.0)
+URL: https://github.com/JRaviLab/amR_data
+BugReports: https://github.com/JRaviLab/amR_data/issues
+Imports:
+    arrow,
+    DBI,
+    data.table,
+    dplyr,
+    duckdb,
+    furrr,
+    future,
+    future.apply,
+    glue,
+    purrr,
+    readr,
+    reshape2,
+    stringr,
+    tibble,
+    tidyr
+biocViews: GenomeAssembly, Annotation, Sequencing
+VignetteBuilder: knitr
+Suggests:
+    Biostrings,
     knitr,
     rmarkdown,
     testthat (>= 3.0.0)
-Config/testthat/edition: 3
-Encoding: UTF-8
-Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
-URL: https://github.com/JRaviLab/NewPackage
-BugReports: https://github.com/JRaviLab/NewPackage/issues
-Imports: 
-    glue,
-    rlang
-VignetteBuilder: knitr
