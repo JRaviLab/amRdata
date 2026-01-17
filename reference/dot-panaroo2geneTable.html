@@ -3,7 +3,7 @@
 reshapes it into a genome-by-gene count matrix, and writes the result to DuckDB
 as a table named "gene_count". Returns the reshaped tibble for immediate use.
 Converts presence strings to counts by splitting semicolon-delimited entries:
-empty → 0, "A;B;C" → 3.
+empty -&amp;gt; 0, "A;B;C" -&amp;gt; 3.
 
 '><!-- mathjax --><script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js" integrity="sha256-nvJJv9wWKEm88qvoQl9ekL2J+k/RWIsaSScxxlsrv8k=" crossorigin="anonymous"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/config/TeX-AMS-MML_HTMLorMML.js" integrity="sha256-84DKXVJXs0/F8OTMzX4UR909+jtl4G7SPypPavF+GfA=" crossorigin="anonymous"></script><!--[if lt IE 9]>
 <script src="https://oss.maxcdn.com/html5shiv/3.7.3/html5shiv.min.js"></script>
@@ -65,7 +65,7 @@ empty → 0, "A;B;C" → 3.
     <p>Reads <code>gene_presence_absence.csv</code> (from <code><a href="runPanaroo.html">runPanaroo()</a></code> or <code><a href="mergePanaroo.html">mergePanaroo()</a></code> outputs),
 reshapes it into a genome-by-gene count matrix, and writes the result to DuckDB
 as a table named <code>"gene_count"</code>. Returns the reshaped tibble for immediate use.</p><ul><li><p>Converts presence strings to <strong>counts</strong> by splitting semicolon-delimited entries:
-empty → <code>0</code>, <code>"A;B;C"</code> → <code>3</code>.</p></li>
+empty -&gt; <code>0</code>, <code>"A;B;C"</code> -&gt; <code>3</code>.</p></li>
 </ul></div>
 
     <div id="ref-usage">
@@ -90,7 +90,7 @@ empty → <code>0</code>, <code>"A;B;C"</code> → <code>3</code>.</p></li>
 <dd><p>Character column of normalized genome IDs.</p></dd>
 
 <dt><gene columns></gene></dt>
-<dd><p>Integer counts per gene (0 if absent, ≥1 if present,
+<dd><p>Integer counts per gene (0 if absent, &gt;=1 if present,
 counting semicolon-separated entries).</p></dd>
 
 
