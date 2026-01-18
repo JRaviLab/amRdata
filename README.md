@@ -1,102 +1,264 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# NewPackage
+# amRdata
 
 <!-- badges: start -->
 
 [![Lifecycle:
 experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
-[![CRAN
-status](https://www.r-pkg.org/badges/version/NewPackage)](https://CRAN.R-project.org/package=NewPackage)
-[![R-CMD-check](https://github.com/JRaviLab/NewPackage/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/JRaviLab/NewPackage/actions/workflows/R-CMD-check.yaml)
 <!-- badges: end -->
 
-The goal of NewPackage is to … \< *your awesome package description
-here!* \>
+amRdata is the first package in the [amR
+suite](https://github.com/JRaviLab/amR) for antimicrobial resistance
+prediction. This package starts with a user’s species query and
+downloads all relevant BV-BRC genomic sequences and metadata. Pangenomes
+constructed with these genome isolates are then featurized into
+molecular scales, genes, proteins, protein domains, and structure
+(genomic neighbors). These data are saved as processed data along with
+associated AMR phenotypes and isolate metadata for downstream ML
+modeling in package 2, amRml.
 
-## GitHub Setup
+## Overview
 
-### Repository
+amRdata provides functions to:
 
-Initial Repository Configuration:
+- Query and download bacterial genome data from BV-BRC
+- Access paired antimicrobial susceptibility testing (AST) results
+- Extract molecular features across four scales:
+  - Gene clusters (pangenome analysis)
+  - Protein clusters (sequence similarity)
+  - Protein domains (functional annotations)
+  - Structural variants (genome rearrangements)
+- Generate summary visualizations of AMR trends
+- Store data efficiently in Parquet and DuckDB formats
 
-- Enable Git: `usethis::use_git()`
-- Configure Remote:
-  `usethis::use_github(organisation = "JRaviLab", private = TRUE, protocol = "https")`
-- Contributor Code of Conduct:
-  `usethis::use_code_of_conduct(contact = "janani.ravi@cuanschutz.edu")`
-
-### GitHub Actions
-
-These functions will enable common package development GitHub Actions is
-desired:
-
-- R CMD Check (multiplatform):
-  `usethis::use_github_action("check_standard")`
-- Build Pkgdown: `use_github_action("pkgdown")`
-- lint code: `use_github_action("lint")`
-- style code: `use_github_action("style")`
-
-Example GitHub Actions workflows have been incorporated into this
-template. Modify workflows in `.github/workflows/` or delete if these
-are not required.
-
-## Development
-
-- new function: `usethis::use_r("hello")`
-- add package dependency: `usethis::use_package("rlang")`
-- render documentation/update NAMESPACE: `devtools::document()`
-- load changes without install: `devtools::load_all()`
-- Local R CMD Check: `devtools::check()`
+See the [package
+vignette](https://jravilab.github.io/amR_data/articles/intro.html) for
+detailed usage.
 
 ## Installation
 
-You can install the development version of NewPackage like so:
-
 ``` r
-# GitHub
-devtools::install_github("JRaviLab/NewPackage", auth_token = "<PersonalAccessToken>")
-# If Bioconductor Dependencies
-BiocManager::install("JRaviLab/NewPackage", auth_token = "<PersonalAccessToken>")
+# Install from GitHub
+if (!requireNamespace("remotes", quietly = TRUE))
+    install.packages("remotes")
+
+remotes::install_github("JRaviLab/amR_data")
 ```
 
-## Example
-
-This is a basic example which shows you how to solve a common problem:
+## Quick start
 
 ``` r
-library(NewPackage)
-## basic example code
+library(amRdata)
+
+# Download genome data for a species
+cje_data <- download_bvbrc_data(
+  taxon = "Campylobacter jejuni",
+  drugs = c("ciprofloxacin", "tetracycline"),
+  output_dir = "cje_genomes"
+)
+
+# Extract multi-scale features
+features <- extract_features(
+  genome_dir = "cje_genomes",
+  scales = c("gene", "protein", "domain", "struct"),
+  taxon = "Campylobacter jejuni",
+  parallel = TRUE,
+  n_cores = 4
+)
+
+# Explore metadata summaries
+summarize_metadata(features$metadata, by = "country")
+
+# Visualize geographic distribution
+plot_geographic_distribution(features$metadata)
 ```
 
-What is special about using `README.Rmd` instead of just `README.md`?
-You can include R chunks like so:
+## Features
+
+### Data curation
+
+The package interfaces with BV-BRC (Bacterial and Viral Bioinformatics
+Resource Center) to access bacterial genome sequences and antimicrobial
+susceptibility testing data either using FTP or the BV-BRC CLI wrapped
+in a Docker container for reproducible access:
+
+- Query isolate metadata with flexible filtering
+- Download genome files (.fna, .faa, .gff)
+- Retrieve AST results linking genotypes to phenotypes
+- Apply quality control filters (assembly quality, metadata
+  completeness)
+
+### Feature extraction
+
+Features are extracted at four complementary molecular scales:
+
+#### 1. Gene clusters (pangenome)
+
+Uses Panaroo to construct graph-based pangenomes: - Handles large
+isolate sets (\>5,000 genomes) through parallelized subset analysis -
+Merges multiple pangenome runs into a single unified pangenome -
+Generates gene presence/absence matrix per isolate - Identifies
+structural variants (gene triplets indicating genome rearrangements)
+
+#### 2. Protein clusters
+
+CD-HIT-based clustering of protein sequences: - Clusters proteins across
+all isolates - Creates protein presence/absence matrices - Complements
+gene-level features with protein-level resolution
+
+#### 3. Protein domains
+
+InterProScan analysis of representative protein sequences: - Identifies
+Pfam domains across the protein space - Maps domains to isolates through
+protein cluster membership - Provides functional annotation layer
+
+### Data storage
+
+All feature matrices and metadata are stored in efficient formats: -
+**Parquet**: Columnar storage for large matrices - **DuckDB**:
+SQL-queryable database for rapid filtering - **Metadata**: Geographic,
+temporal, and host information per isolate
+
+### Visualization
+
+Built-in functions for exploring data: - Geographic distributions (maps,
+treemaps) - Temporal trends in AMR - Host organism analyses - Feature
+distribution summaries
+
+## Workflow example
+
+Complete workflow for processing *Staphylococcus epidermidis*:
 
 ``` r
-summary(cars)
-#>      speed           dist       
-#>  Min.   : 4.0   Min.   :  2.00  
-#>  1st Qu.:12.0   1st Qu.: 26.00  
-#>  Median :15.0   Median : 36.00  
-#>  Mean   :15.4   Mean   : 42.98  
-#>  3rd Qu.:19.0   3rd Qu.: 56.00  
-#>  Max.   :25.0   Max.   :120.00
+library(amRdata)
+
+# 1. Download data
+sepi_data <- download_bvbrc_data(
+  taxon = "Staphylococcus epidermidis",
+  drugs = c("oxacillin", "vancomycin", "ciprofloxacin"),
+  min_assembly_quality = "Good",
+  output_dir = "sepi_data"
+)
+
+# 2. Extract features (all scales)
+features <- extract_features(
+  genome_dir = "sepi_data",
+  scales = c("gene", "protein", "domain", "struct"),
+  taxon = "Staphylococcus epidermidis",
+  parallel = TRUE,
+  n_cores = 8
+)
+
+# 3. Explore metadata
+summary(features$metadata)
+
+plot_temporal_trends(
+  features$metadata,
+  drug = "oxacillin",
+  by_year = TRUE
+)
+
+# 4. Save processed data
+save_features(
+  features,
+  output_file = "sepi_features.parquet"
+)
 ```
 
-You’ll still need to render `README.Rmd` regularly, to keep `README.md`
-up-to-date. `devtools::build_readme()` is handy for this.
+## Data requirements
 
-You can also embed plots, for example:
+### Input
 
-<img src="man/figures/README-pressure-1.png" width="100%" />
+The package requires: - Internet connection to access BV-BRC - Docker
+for BV-BRC CLI (automatically managed) - Sufficient storage for genome
+files (varies by species; typically 1-10 GB)
 
-In that case, don’t forget to commit and push the resulting figure
-files, so they display on GitHub and CRAN.
+### Output
 
-## Code of Conduct
+Feature matrices dimensions depend on species: - Rows: Number of
+isolates (typically 1,000-10,000) - Columns: Number of features - Genes:
+2,000-20,000 - Proteins: 2,000-15,000 - Domains: 500-5,000 - Structural
+variants: 100-5,000
 
-Please note that the NewPackage project is released with a [Contributor
-Code of
+## External dependencies
+
+The package uses established bioinformatics tools: - **Panaroo**
+(≥1.3.0): Pangenome analysis - **CD-HIT** (≥4.8.1): Protein clustering -
+**InterProScan** (≥5.0): Domain annotation - **Docker**: For BV-BRC CLI
+container
+
+These are automatically managed through the Docker container.
+
+## Performance
+
+Processing times vary by species and isolate count: - Data download:
+10-30 minutes for 1,000 isolates - Pangenome construction: 1-6 hours for
+5,000 isolates (parallelized) - Protein clustering: 30-90 minutes for
+5,000 isolates - Domain annotation: 2-4 hours for 5,000 isolates -
+Total: 4-12 hours for a complete species analysis
+
+Parallelization significantly reduces processing time when multiple
+cores are available.
+
+## Integration with amR suite
+
+amRdata is designed to work seamlessly with other amR packages:
+
+``` r
+library(amRdata)
+library(amRml)
+library(amRshiny)
+
+# 1. Curate data
+features <- extract_features(...)
+
+# 2. Train models
+models <- train_amr_models(features, drug = "ciprofloxacin")
+
+# 3. Visualize
+launch_dashboard()
+```
+
+## Related packages
+
+- [amR](https://github.com/JRaviLab/amR): Suite metapackage
+- [amRml](https://github.com/JRaviLab/amR_ml): ML for AMR prediction
+- [amRshiny](https://github.com/JRaviLab/amR_shiny): Interactive
+  dashboard
+
+## Citation
+
+If you use `amRdata` in your research, please cite:
+
+    Brenner E, Ghosh A, Wolfe E, Boyer E, Vang C, Lesiyon R, Mayer D, Ravi J. (2026).
+    amR: an R package suite to predict antimicrobial resistance in bacterial pathogens.
+    R package version 0.99.0.
+    https://github.com/JRaviLab/amR
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md)
+for guidelines.
+
+## Reporting issues
+
+Report bugs and request features at:
+<https://github.com/JRaviLab/amR_ml/issues>
+
+## License
+
+BSD 3-Clause License. See [LICENSE](LICENSE) for details.
+
+## Contact
+
+**Corresponding author**: Janani Ravi (<janani.ravi@cuanschutz.edu>)
+
+**Lab website**: <https://jravilab.github.io>
+
+## Code of conduct
+
+Please note that `amRml` is released with a [Contributor Code of
 Conduct](https://contributor-covenant.org/version/2/1/CODE_OF_CONDUCT.html).
 By contributing to this project, you agree to abide by its terms.
