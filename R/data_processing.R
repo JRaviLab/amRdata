@@ -951,13 +951,12 @@ checkInterProData <- function(
     warning("InterProScan indexing completed with non-zero exit status.")
   }
 
-  # 7) Final check (Pfam-only)
+  # Final check
   if (is_indexed()) {
     msg("InterProScan Pfam HMMs are indexed and ready: %s", data_dir)
     return(list(data_dir = normalizePath(data_dir), ready = TRUE))
   } else {
-    warning("Pfam HMM indices not found. InterProScan may press at runtime,
-            which may be slow the first time it is run.")
+    warning("Pfam HMM indices not found. InterProScan may press at runtime, which may be slow the first time it is run.")
     return(list(data_dir = normalizePath(data_dir), ready = FALSE))
   }
 }
