@@ -11,14 +11,6 @@ Authors@R: c(
     person("Raymond", "Lesiyon", , "raymond.lesiyon@cuanschutz.edu", role = "ctb"),
     person("David", "Mayer", , "david.mayer@cuanschutz.edu", role = "ctb")
   )
-Author: Janani Ravi [aut, cre] (<https://orcid.org/0000-0001-7443-925X>),
-    Abhirupa Ghosh [ctb],
-    Evan Brenner [ctb],
-    Emily Boyer [ctb],
-    Charmie Vang [ctb],
-    Ethan Wolfe [ctb],
-    Raymond Lesiyon [ctb],
-    David Mayer [ctb]
 Maintainer: Janani Ravi <janani.ravi@cuanschutz.edu>
 Description: amRdata starts with a user's species query and downloads all
       relevant BV-BRC genomic sequences and metadata. Pangenomes constructed with
@@ -32,7 +24,7 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Depends:
-    R (>= 4.1.0)
+    R (>= 4.5.0)
 URL: https://github.com/JRaviLab/amR_data
 BugReports: https://github.com/JRaviLab/amR_data/issues
 Imports:
