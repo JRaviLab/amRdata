@@ -2,21 +2,48 @@
 % Please edit documentation in R/data_curation.R
 \name{retrieveGenomes}
 \alias{retrieveGenomes}
-\title{Download genome files (PATRIC.GFF, FNA, PATRIC.FAA) for filtered BV-BRC genomes}
+\title{Download .fna, .faa, .gff files for filtered BV-BRC genomes}
 \usage{
-retrieveGenomes(base_path = ".", user_bacs, verbose = TRUE)
+retrieveGenomes(
+  base_dir = ".",
+  user_bacs,
+  method = c("ftp", "cli"),
+  image = "danylmb/bvbrc:5.3",
+  skip_existing = TRUE,
+  ftp_workers = 8L,
+  cli_fasta_workers = 4L,
+  cli_gff_workers = 4L,
+  chunk_size = 50L,
+  verbose = TRUE
+)
 }
 \arguments{
-\item{base_path}{Character. Project root.}
+\item{base_dir}{Project root (results layout preserved).}
 
-\item{user_bacs}{Character vector. Used to locate the DuckDB and output directory.}
+\item{user_bacs}{Input label(s) used to locate per-selection DB path.}
 
-\item{verbose}{Logical. If TRUE, prints messages.}
+\item{method}{"ftp" (default) or "cli".}
+
+\item{image}{Docker image for CLI path (default "danylmb/bvbrc:5.3").}
+
+\item{skip_existing}{Logical; if TRUE, do not re-download genomes already complete. Default TRUE.}
+
+\item{ftp_workers}{Parallel workers for FTP path (default 8).}
+
+\item{cli_fasta_workers}{Parallel chunk containers for FASTA+GTO (default 4).}
+
+\item{cli_gff_workers}{Parallel chunk containers for GFF export (default 4).}
+
+\item{chunk_size}{Genomes per chunk container (default 50).}
+
+\item{verbose}{Verbose messages.}
 }
 \value{
-Character vector of genome IDs with all expected files successfully downloaded.
+Character vector of genome IDs with complete file sets on disk.
 }
 \description{
-Uses filterGenomes() to get filtered metadata, then downloads to:
-<base_path>/data/<bug_dir>/genomes/
+Default and fast method="ftp"
+}
+\details{
+Alternative path to bypass FTP: method="cli"
 }

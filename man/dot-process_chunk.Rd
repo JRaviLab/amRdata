@@ -2,7 +2,7 @@
 % Please edit documentation in R/data_processing.R
 \name{.process_chunk}
 \alias{.process_chunk}
-\title{Process a chunk of sequences through InterProScan}
+\title{Run InterProScan on a sequence chunk inside Docker}
 \usage{
 .process_chunk(
   chunk,
@@ -12,35 +12,34 @@
   appl,
   chunk_id,
   threads,
-  file_format
+  file_format,
+  docker_image = sprintf("interpro/interproscan:\%s", "5.76-107.0")
 )
 }
 \arguments{
-\item{chunk}{Character vector of sequences to process.}
+\item{chunk}{A tibble with columns \code{name} and \code{sequence}.}
 
-\item{path}{Character. Path to the working directory.}
+\item{path}{Working directory used for temporary files.}
 
-\item{ipr_data_path}{Character. Path to InterProScan data directory.}
+\item{ipr_data_path}{Path to InterProScan data directory.}
 
-\item{out_file_base}{Character. Base name for output files.}
+\item{out_file_base}{Output prefix for chunk results.}
 
-\item{appl}{Character. InterProScan applications to run.}
+\item{appl}{Character vector of InterProScan applications (e.g. \code{"Pfam"}).}
 
-\item{chunk_id}{Integer. Identifier for this chunk.}
+\item{chunk_id}{Integer chunk index.}
 
-\item{threads}{Integer. Number of threads to use.}
+\item{threads}{Number of CPUs for InterProScan container.}
 
-\item{file_format}{Character. Output file format.}
+\item{file_format}{Output format (\code{"TSV"}).}
+
+\item{docker_image}{InterProScan Docker image.}
 }
 \value{
-Data frame with InterProScan results.
+Path to a \code{.tsv} or \code{.tsv.gz} InterProScan output file.
 }
 \description{
-Process a chunk of sequences through InterProScan
-}
-\examples{
-\dontrun{
-.process_chunk(chunk, path, ipr_data_path, out_file_base, appl, chunk_id, threads, file_format)
-}
+Executes InterProScan on a subset of protein sequences, writing temporary
+FASTA and reading back \code{.tsv} or \code{.tsv.gz} results.
 }
 \keyword{internal}

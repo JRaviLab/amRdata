@@ -2,18 +2,18 @@
 % Please edit documentation in R/data_processing.R
 \name{.getDfIPRColTypes}
 \alias{.getDfIPRColTypes}
-\title{construct column types for reading interproscan output TSVs
-(based upon the global variable written in
-molevol_scripts/R/colnames_molevol.R)}
+\title{Internal helpers for reading InterProScan TSV outputs}
 \usage{
 .getDfIPRColTypes()
 }
+\arguments{
+\item{filepath}{Path to a \code{.tsv} or \code{.tsv.gz} InterProScan result file.}
+}
 \value{
-\link{collector} a named vector of type expectations
-for interproscan columns
+A tibble of parsed InterProScan output.
 }
 \description{
-construct column types for reading interproscan output TSVs
-(based upon the global variable written in
-molevol_scripts/R/colnames_molevol.R)
+Provide standardized column names, types, and a reader wrapper for the
+InterProScan tab-delimited output format.
 }
+\keyword{internal}

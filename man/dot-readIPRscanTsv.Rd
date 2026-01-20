@@ -2,18 +2,18 @@
 % Please edit documentation in R/data_processing.R
 \name{.readIPRscanTsv}
 \alias{.readIPRscanTsv}
-\title{Read an interproscan output TSV with standardized
-column names and types}
+\title{Internal helpers for reading InterProScan TSV outputs}
 \usage{
 .readIPRscanTsv(filepath)
 }
 \arguments{
-\item{filepath}{\link{chr} path to interproscan output TSV}
+\item{filepath}{Path to a \code{.tsv} or \code{.tsv.gz} InterProScan result file.}
 }
 \value{
-\link{tbl_df} interproscan output table
+A tibble of parsed InterProScan output.
 }
 \description{
-Read an interproscan output TSV with standardized
-column names and types
+Provide standardized column names, types, and a reader wrapper for the
+InterProScan tab-delimited output format.
 }
+\keyword{internal}

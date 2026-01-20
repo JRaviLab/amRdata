@@ -5,7 +5,7 @@
 \title{This function retrieves metadata for the given genome IDs.}
 \usage{
 .extractGenomeData(
-  base_path,
+  base_dir,
   batch_genome_IDs,
   filter_type,
   amr_fields,
@@ -15,7 +15,7 @@
 )
 }
 \arguments{
-\item{base_path}{Character. Project root.}
+\item{base_dir}{Character. Project root.}
 
 \item{batch_genome_IDs}{Vector of genome IDs.}
 

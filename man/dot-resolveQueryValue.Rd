@@ -2,7 +2,7 @@
 % Please edit documentation in R/data_curation.R
 \name{.resolveQueryValue}
 \alias{.resolveQueryValue}
-\title{Resolve \verb{query value} from \code{user_bacs} for \code{\link[=getGenomeIDs]{getGenomeIDs()}}}
+\title{Resolve \verb{query value} from \code{user_bacs} for \code{\link[=.getGenomeIDs]{.getGenomeIDs()}}}
 \usage{
 .resolveQueryValue(query_type, query_value, user_bacs)
 }
