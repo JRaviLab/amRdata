@@ -391,20 +391,20 @@
 #'   - duckdbConnection: DBI connection to the DuckDB file
 #'   - table_name: "bac_data"
 .getGenomeIDs <- function(base_dir = ".",
-                         query_type = c("genome_name", "species", "taxon_id"),
-                         query_value = NULL,
-                         user_bacs,
-                         overwrite = FALSE,
-                         image = "danylmb/bvbrc:5.3",
-                         verbose = TRUE) {
-
+                          query_type = c("genome_name", "species", "taxon_id"),
+                          query_value = NULL,
+                          user_bacs,
+                          overwrite = FALSE,
+                          image = "danylmb/bvbrc:5.3",
+                          verbose = TRUE) {
+  
   query_type  <- match.arg(query_type)
   query_value <- .resolveQueryValue(query_type, query_value, user_bacs)
-
+  
   if (isTRUE(verbose)) {
     message("Querying BV-BRC: ", query_type, " == ", query_value)
   }
-
+  
   # Count
   count_cmd <- paste0(
     "docker run --rm ", image,
@@ -417,7 +417,7 @@
   count_lines  <- tryCatch(system(count_cmd, intern = TRUE), error = function(e) character())
   count_result <- suppressWarnings(as.integer(if (length(count_lines) >= 2) count_lines[2] else NA_integer_))
   if (isTRUE(verbose) && !is.na(count_result)) message("Count returned: ", count_result)
-
+  
   # Details
   data_cmd <- paste0(
     "docker run --rm ", image,
@@ -429,7 +429,7 @@
   )
   data_raw <- tryCatch(system(data_cmd, intern = TRUE), error = function(e) character())
   if (length(data_raw) == 0L) stop("BV-BRC returned no data for: ", query_type, " = ", query_value)
-
+  
   data_result <- tibble::as_tibble(
     utils::read.table(
       text = data_raw, sep = "\t", header = TRUE, fill = TRUE,
@@ -437,22 +437,22 @@
     )
   ) |>
     dplyr::mutate(
-      `genome.genome_id`   = suppressWarnings(as.numeric(`genome.genome_id`)),
+      `genome.genome_id`   = as.character(`genome.genome_id`),
       `genome.genome_name` = as.character(`genome.genome_name`),
-      `genome.taxon_id`    = suppressWarnings(as.integer(`genome.taxon_id`)),
+      `genome.taxon_id`    = as.character(`genome.taxon_id`),
       `genome.species`     = as.character(`genome.species`),
       `genome.strain`      = as.character(`genome.strain`)
     )
-
+  
   # Per-bug DB path
   paths   <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
   db_path <- paths$db_path
-
+  
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
   DBI::dbWriteTable(con, "bac_data", data_result, overwrite = TRUE)
-
+  
   if (isTRUE(verbose)) message("Wrote table 'bac_data' to: ", db_path)
-
+  
   list(count_result = count_result, duckdbConnection = con, table_name = "bac_data")
 }
 
@@ -474,49 +474,52 @@
                               overwrite = FALSE,
                               verbose = TRUE) {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
-
+  
   if (isTRUE(verbose)) message("Resolving input taxa.")
   bac_input_data <- .retrieveCustomQuery(base_dir = base_dir, user_bacs = user_bacs)
-
+  
   if (is.null(bac_input_data) || nrow(bac_input_data) == 0) {
     message("No valid input provided or no matches found.")
     return(NULL)
   }
-
-  # Resolve per-bug DB path (non-enforcing)
+  
+  # Resolve per-bug DB path
   paths   <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
   db_path <- paths$db_path
-
+  
   bac_data  <- tibble::tibble()
   taxon_ids <- unique(bac_input_data$genome.taxon_id)
-
+  
   if (isTRUE(verbose)) message("Querying BV-BRC for ", length(taxon_ids), " taxon IDs.")
-
+  
   for (i in seq_along(taxon_ids)) {
     tax <- taxon_ids[i]
     if (isTRUE(verbose)) message("Taxon ", i, "/", length(taxon_ids), ": ", tax)
-
+    
     res <- .getGenomeIDs(
       base_dir    = base_dir,
       query_type  = "taxon_id",
       query_value = as.character(tax),
       user_bacs   = user_bacs,
-      overwrite   = TRUE,   # per-iteration table overwrite is OK
+      overwrite   = TRUE,
       verbose     = verbose
     )
-
+    
     con <- res$duckdbConnection
     tbl <- res$table_name
     each_bac_data <- tibble::as_tibble(DBI::dbReadTable(con, tbl))
     bac_data <- dplyr::bind_rows(bac_data, each_bac_data)
+    
+    # Close per-iteration connection to avoid open handles piling up
+    try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)
   }
-
+  
   if (nrow(bac_data) > 0) {
     genome_ids <- bac_data |>
       dplyr::distinct(`genome.genome_id`) |>
       dplyr::pull(`genome.genome_id`)
     genome_ids <- genome_ids[!is.na(genome_ids)]
-
+    
     if (length(genome_ids) > 0) {
       if (isTRUE(verbose)) message("Collected ", length(genome_ids), " distinct genome IDs.")
       return(genome_ids)
@@ -577,17 +580,17 @@
   data_dir <- file.path(base_dir, "data")
   tmp_dir  <- file.path(data_dir, "tmp")
   dir.create(tmp_dir, recursive = TRUE, showWarnings = FALSE)
-
+  
   if (isTRUE(verbose)) {
     message("Preparing AMR query input for ", length(batch_genome_IDs), " genomes.")
   }
-
+  
   docker_path <- Sys.which("docker")
   if (!nzchar(docker_path)) {
     stop("Docker is not available on your PATH but is required.")
   }
-
-  # Generate genome list with p3-echo (title must match drug table key)
+  
+  # Generate genome list with p3-echo
   echo_args <- c(
     "run", "--rm",
     image, "p3-echo",
@@ -596,30 +599,38 @@
   genome_ids_output <- suppressWarnings(
     system2("docker", args = echo_args, stdout = TRUE, stderr = TRUE)
   )
-
+  
   # Write a temporary file in data/tmp/
   tmp_in <- tempfile(tmpdir = tmp_dir, pattern = "genome_drug_ids_", fileext = ".tsv")
   writeLines(genome_ids_output, con = tmp_in)
   tmp_in_mounted <- file.path("/data", "tmp", basename(tmp_in))
-
+  
+  # Allow abx_filter to be a single string with spaces OR a vector of args
+  abx_args <-
+    if (length(abx_filter) == 1L) {
+      strsplit(abx_filter, "[[:space:]]+", perl = TRUE)[[1]]
+    } else {
+      abx_filter
+    }
+  
   # Query drug data
   drug_args <- c(
     "run", "--rm",
     "-v", paste0(data_dir, ":/data"),
     image, "p3-get-genome-drugs",
     "--input", tmp_in_mounted,
-    abx_filter,
+    abx_args,
     "--attr", drug_fields
   )
-
+  
   if (isTRUE(verbose)) {
     message("Running AMR query.")
   }
   drug_data <- suppressWarnings(system2("docker", args = drug_args, stdout = TRUE, stderr = TRUE))
-
+  
   # Clean up after yourself
   try(unlink(tmp_in), silent = TRUE)
-
+  
   return(drug_data)
 }
 
@@ -646,13 +657,16 @@
   data_dir <- file.path(base_dir, "data")
   tmp_dir  <- file.path(data_dir, "tmp")
   dir.create(tmp_dir, recursive = TRUE, showWarnings = FALSE)
-
+  
   if (isTRUE(verbose)) {
     message("Preparing genome metadata input for ", length(batch_genome_IDs), " genomes.")
   }
-
+  
   docker_path <- Sys.which("docker")
-
+  if (!nzchar(docker_path)) {
+    stop("Docker is not available on your PATH but is required.")
+  }
+  
   # Generate genome list with p3-echo
   echo_args <- c(
     "run", "--rm",
@@ -662,14 +676,14 @@
   genome_ids_output <- suppressWarnings(
     system2("docker", args = echo_args, stdout = TRUE, stderr = TRUE)
   )
-
+  
   tmp_in <- tempfile(tmpdir = tmp_dir, pattern = "genome_ids_", fileext = ".tsv")
   writeLines(genome_ids_output, con = tmp_in)
   tmp_in_mounted <- file.path("/data", "tmp", basename(tmp_in))
-
+  
   # Choose attributes (AMR for this pipeline)
   chosen_fields <- if (identical(filter_type, "AMR")) amr_fields else microtrait_fields
-
+  
   get_args <- c(
     "run", "--rm",
     "-v", paste0(data_dir, ":/data"),
@@ -677,17 +691,18 @@
     "--input", tmp_in_mounted,
     "--attr", chosen_fields
   )
-
+  
   if (isTRUE(verbose)) {
     message("Running genome metadata query.")
   }
   genome_data <- suppressWarnings(system2("docker", args = get_args, stdout = TRUE, stderr = TRUE))
-
+  
   # Cleaning up
   try(unlink(tmp_in), silent = TRUE)
-
+  
   return(genome_data)
 }
+
 
 #' Retrieve AMR or Microtrait metadata from BV-BRC and store in DuckDB
 #'
@@ -930,15 +945,14 @@ retrieveMetadata <- function(user_bacs,
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
   paths    <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
   db_path  <- paths$db_path
-
+  
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
-
+  
   on.exit({
-    # Keep connection open for caller (matches existing behavior),
-    # so we do NOT disconnect here.
+    # Keep connection open for caller
     NULL
   }, add = TRUE)
-
+  
   # Happy path: metadata present -> apply AMR-aware filters
   if ("metadata" %in% DBI::dbListTables(con)) {
     if (isTRUE(verbose)) message("Loading metadata for filtering.")
@@ -948,7 +962,7 @@ retrieveMetadata <- function(user_bacs,
       message("No data available in 'metadata'.")
       return(NULL)
     }
-
+    
     # Normalize evidence labels
     initial_metadata <- tibble::as_tibble(initial_metadata) |>
       dplyr::mutate(
@@ -959,13 +973,13 @@ retrieveMetadata <- function(user_bacs,
           TRUE ~ `genome_drug.evidence`
         )
       )
-
-    # AMR-aware filtering
+    
+    # AMR and quality filtering
     filtered_metadata <- initial_metadata |>
       dplyr::filter(`genome_drug.evidence` == "Laboratory Method") |>
       dplyr::filter(`genome.genome_quality` == "Good") |>
       dplyr::filter(`genome_drug.resistant_phenotype` %in% c("Resistant", "Susceptible", "Intermediate"))
-
+    
     DBI::dbWriteTable(con, "filtered", filtered_metadata, overwrite = TRUE)
     if (isTRUE(verbose)) {
       message("Post-filter rows: ", nrow(filtered_metadata))
@@ -973,34 +987,34 @@ retrieveMetadata <- function(user_bacs,
     }
     return(list(duckdbConnection = con, table_name = "filtered"))
   }
-
+  
   # Attempt BV-BRC cache location
   if (!isTRUE(fallback_to_bvbrc_cache)) {
     DBI::dbDisconnect(con, shutdown = TRUE)
     stop("No 'metadata' table found in ", db_path, ". Run retrieveMetadata() first.")
   }
-
+  
   if (isTRUE(verbose)) {
     message("No 'metadata' in per-selection DB. Falling back to BV-BRC cache at data/bvbrc/.")
   }
-
+  
   cache_db <- file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")
   if (!file.exists(cache_db)) {
     DBI::dbDisconnect(con, shutdown = TRUE)
     stop("BV-BRC cache not found at: ", cache_db, ". Run .updateBVBRCdata() first.")
   }
-
+  
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db)
   on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
-
+  
   if (!"bvbrc_bac_data" %in% DBI::dbListTables(con_cache)) {
     DBI::dbDisconnect(con, shutdown = TRUE)
     stop("Table 'bvbrc_bac_data' not found in BV-BRC cache: ", cache_db)
   }
-
+  
   bv <- tibble::as_tibble(DBI::dbReadTable(con_cache, "bvbrc_bac_data"))
-
-  # Derive matches from user_bacs (taxon IDs or species substrings)
+  
+  # Derive matches from user_bacs (taxon IDs or species)
   sel <- tibble::tibble(`genome.genome_id` = character())
   for (v in user_bacs) {
     if (suppressWarnings(!is.na(as.numeric(v)))) {
@@ -1015,21 +1029,22 @@ retrieveMetadata <- function(user_bacs,
     }
   }
   sel <- dplyr::distinct(sel)
-
+  
   if (nrow(sel) == 0L) {
     DBI::dbDisconnect(con, shutdown = TRUE)
     stop("No genomes matched user_bacs in BV-BRC cache. (Cache present but no hits.)")
   }
-
+  
   # Minimal 'filtered' for downstream steps (downloaders & genomeList)
   minimal_filtered <- sel
   # Ensure expected column name used downstream:
   # retrieveGenomes() reads "filtered" and expects `genome.genome_id` to exist.
   DBI::dbWriteTable(con, "filtered", minimal_filtered, overwrite = TRUE)
-
+  
+  if (isTRUE(verbose)) {
     message("Wrote table 'filtered' to: ", db_path)
   }
-
+  
   list(duckdbConnection = con, table_name = "filtered")
 }
 
@@ -1446,16 +1461,6 @@ genomeList <- function(base_dir = ".",
 #' @return A list (the output of `genomeList()`), containing:
 #'   - `duckdbConnection`  Active DBI connection to the per-bug DuckDB
 #'   - `table_name`        `"files"`
-#'
-#' @export
-
-#' Download and prepare all files for a chosen bacterial species or TaxID
-#'
-#' Orchestrates the whole flow:
-#'   1) Ensure BV-BRC cache exists at <base_dir>/data/bvbrc/bvbrcData.duckdb (create if missing)
-#'   2) Filter genomes (uses per-selection 'metadata' if present; else uses global cache)
-#'   3) Download genomes (.fna, .PATRIC.faa, .PATRIC.gff)
-#'   4) Build 'files' table via genomeList()
 #'
 #' @export
 prepareGenomes <- function(user_bacs,
