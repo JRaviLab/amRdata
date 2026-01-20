@@ -1439,7 +1439,7 @@ genomeList <- function(base_dir = ".",
 #' retrieves the corresponding filtered genome set from BV-BRC, downloads all
 #' required genome files (.fna, .PATRIC.faa, .PATRIC.gff), and produces the
 #' Panaroo input table via `genomeList()`. These outputs are used for the
-#' [`data_processing.R`] script next.
+#' data_processing.R script next.
 #'
 #' Internally, this runs:
 #'   1. `retrieveGenomes()`  – filters BV-BRC metadata, selects genomes, downloads files.

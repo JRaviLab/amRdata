@@ -5,13 +5,13 @@
 \title{Retrieve BV-BRC records for user-provided bacteria}
 \usage{
 .retrieveCustomQuery(
-  base_path = ".",
+  base_dir = ".",
   user_bacs = c("90371", "Bacillus subtilis")
 )
 }
 \arguments{
-\item{base_path}{Character. Project root. BV-BRC cache is expected at
-\code{file.path(base_path, "data", "bvbrc", "bvbrcData.duckdb")}.}
+\item{base_dir}{Character. Project root. BV-BRC cache is expected at
+\code{file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")}.}
 
 \item{user_bacs}{Character vector. Mixed inputs of taxon IDs and/or species strings.}
 }

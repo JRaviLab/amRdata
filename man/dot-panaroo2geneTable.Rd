@@ -2,30 +2,20 @@
 % Please edit documentation in R/data_processing.R
 \name{.panaroo2geneTable}
 \alias{.panaroo2geneTable}
-\title{Convert Panaroo gene presence/absence matrix to a per-genome gene count table}
+\title{Load Panaroo gene presence/absence table into DuckDB}
 \usage{
 .panaroo2geneTable(panaroo_output_path, duckdb_path)
 }
 \arguments{
-\item{panaroo_output_path}{Character scalar. Path to Panaroo output directory;}
+\item{panaroo_output_path}{Path to a Panaroo result directory.}
 
-\item{duckdb_path}{Character scalar. Path to the DuckDB database file to use}
+\item{duckdb_path}{Path to a DuckDB database file.}
 }
 \value{
-A tibble with:
-\describe{
-\item{genome_id}{Character column of normalized genome IDs.}
-\item{\if{html}{\out{<gene columns>}}}{Integer counts per gene (0 if absent, >=1 if present,
-counting semicolon-separated entries).}
-}
-(writing table into DuckDB).
+A tibble containing the gene count matrix.
 }
 \description{
-Reads \code{gene_presence_absence.csv} (from \code{runPanaroo()} or \code{mergePanaroo()} outputs),
-reshapes it into a genome-by-gene count matrix, and writes the result to DuckDB
-as a table named \code{"gene_count"}. Returns the reshaped tibble for immediate use.
-\itemize{
-\item Converts presence strings to \strong{counts} by splitting semicolon-delimited entries:
-empty -> \code{0}, \code{"A;B;C"} -> \code{3}.
+Reads \code{gene_presence_absence.csv} and constructs a genome-by-gene count
+table, writing it into the DuckDB database as \code{gene_count}.
 }
-}
+\keyword{internal}

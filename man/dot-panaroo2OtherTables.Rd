@@ -2,28 +2,20 @@
 % Please edit documentation in R/data_processing.R
 \name{.panaroo2OtherTables}
 \alias{.panaroo2OtherTables}
-\title{Write Panaroo reference FASTA and long presence/absence to DuckDB tables}
+\title{Import additional Panaroo reference outputs into DuckDB}
 \usage{
 .panaroo2OtherTables(panaroo_output_path, duckdb_path)
 }
 \arguments{
-\item{panaroo_output_path}{\link{character} Base directory containing Panaroo outputs.
-Normalized via \code{normalizePath()}.}
+\item{panaroo_output_path}{Path to a Panaroo result directory.}
 
-\item{duckdb_path}{\link{character} Path to the DuckDB database file to open
-(e.g., created earlier via \code{\link[=generateDBname]{generateDBname()}}).}
+\item{duckdb_path}{Path to a DuckDB database file.}
 }
 \value{
-(writing two tables into DuckDB).
+Invisibly returns TRUE.
 }
 \description{
-Reads Panaroo outputs produced by \code{\link[=runPanaroo]{runPanaroo()}} or \code{\link[=mergePanaroo]{mergePanaroo()}} and
-writes two tables to DuckDB:
-\itemize{
-\item \code{gene_ref_seq}: Reference gene sequences from
-\code{pan_genome_reference.fa} (columns: \code{name}, \code{sequence}).
-\item \code{genome_gene_protein}: Long-format mapping of genomes to Panaroo
-gene families and their protein IDs, derived from
-\code{gene_presence_absence.csv}.
+Loads reference sequences and long-format gene–protein mappings from
+Panaroo outputs and stores them into DuckDB (\code{gene_ref_seq}, \code{genome_gene_protein}).
 }
-}
+\keyword{internal}

@@ -4,10 +4,10 @@
 \alias{genomeList}
 \title{Build a table of local genome file paths and write to DuckDB}
 \usage{
-genomeList(base_path = ".", user_bacs, verbose = TRUE)
+genomeList(base_dir = ".", user_bacs, verbose = TRUE)
 }
 \arguments{
-\item{base_path}{Character. Project root.}
+\item{base_dir}{Character. Project root.}
 
 \item{user_bacs}{Character vector. Used to locate per-bug directories and DB.}
 
@@ -17,8 +17,8 @@ genomeList(base_path = ".", user_bacs, verbose = TRUE)
 A list with duckdbConnection and table_name = "files".
 }
 \description{
-Scans <base_path>/data/<bug_dir>/genomes for *.PATRIC.gff, *.fna, *.PATRIC.faa,
+Scans <base_dir>/data/<bug_dir>/genomes for *.PATRIC.gff, *.fna, *.PATRIC.faa,
 verifies size > 100 bytes, assembles rows per genome, and writes to the per-bug
 DuckDB table "files". This writes a Panaroo input file at:
-<base_path>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.txt
+<base_dir>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.txt
 }

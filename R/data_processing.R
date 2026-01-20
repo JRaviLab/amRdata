@@ -1,7 +1,22 @@
-# Normalize Docker path (reuse from data_curation.R)
+#' Normalize a host filesystem path for use in Docker
+#'
+#' Converts Windows and mixed-separator paths to forward slashes
+#' and applies `normalizePath()` without requiring the path to exist.
+#'
+#' @param p Character scalar. A filesystem path on the host OS.
+#'
+#' @return A normalized path string.
+#'
+#' @keywords internal
 .docker_path <- function(p) gsub("\\\\", "/", normalizePath(p, mustWork = FALSE))
 
 # Map host paths under mounted root to container path
+#' .to_container()
+#'
+#' Used for OS-agnostic mapping of Docker directories and mount paths 
+#'
+#' @keywords internal
+#' @examples NULL
 .to_container <- function(x, host_root, container_root = "/work") {
   host_root_unix <- .docker_path(host_root)
   x_unix <- .docker_path(x)
@@ -10,7 +25,23 @@
 }
 
 # Launch Panaroo to build a pangenome (per batch)
-
+#' processPanaroo()
+#' 
+#' See Panaroo's documentation for details on how the parameters affect your
+#' pangenome output: https://gthlab.au/panaroo/#/gettingstarted/params
+#'
+#' @param batch_input A series of genome IDs for input
+#' @param output_path Character scalar. Base directory for Panaroo outputs and temporary files.
+#' @param core_threshold Numeric. Core genome threshold for Panaroo (`--core_threshold`). Default `0.90`.
+#' @param len_dif_percent Numeric. Length difference percentage (`--len_dif_percent`). Default `0.95`.
+#' @param cluster_threshold Numeric. Sequence identity threshold (`--threshold`). Default `0.95`.
+#' @param family_seq_identity Numeric. Gene family clustering identity (`-f`). Default `0.5`.
+#' @param panaroo_threads_per_job Integer. Number of threads for Panaroo and parallel execution.
+#'
+#' @returns A list of results for each Panaroo batch in its output directory.
+#'
+#' @keywords internal
+#' @examples NULL
 .processPanaroo <- function(batch_input,
                             output_path,
                             core_threshold,
@@ -89,7 +120,18 @@
   invisible(res)
 }
 
-# Safely set a temporary future plan and restore it on exit
+
+#' Temporarily set a future plan for parallel execution
+#'
+#' Sets a `future` plan (sequential or multisession) for the duration of a block
+#' and automatically restores the previous plan on exit.
+#'
+#' @param workers Integer. Number of workers to use; if <= 1, uses sequential mode.
+#' @param plan Character. Either `"multisession"` or `"sequential"`.
+#'
+#' @return Invisibly returns `TRUE` after setting the plan.
+#'
+#' @keywords internal
 .with_future_plan <- function(workers, plan = c("multisession", "sequential")) {
   plan <- match.arg(plan)
   old_plan <- future::plan()
@@ -117,18 +159,18 @@
 #' @param len_dif_percent Numeric. Length difference percentage (`--len_dif_percent`). Default `0.95`.
 #' @param cluster_threshold Numeric. Sequence identity threshold (`--threshold`). Default `0.95`.
 #' @param family_seq_identity Numeric. Gene family clustering identity (`-f`). Default `0.5`.
-#' @param threads Integer. Number of threads for Panaroo and parallel execution. Default `16`.
+#' @param threads Integer. Number of threads for Panaroo and parallel execution. Default `8`.
 #' @param split_jobs Logical. If TRUE, split into multiple smaller pangenome
 #'   generation jobs that can be merged by [.mergePanaroo()]. If FALSE, all isolates in one run.
 #'
-#' @return A list of results for each Panaroo batch (stdout/stderr lines).
+#' @return A list of results for each Panaroo batch in its output directory.
 #'
+#' @keywords internal
 #' @details
 #' - Panaroo uses: `--clean-mode strict`, `--merge_paralogs`, `--remove-invalid-genes`.
 #' - Temporary genome file lists are created in `output_path`.
 #' - Output directories are named `panaroo_out_<timestamp>` under `output_path`.
 #'
-
 .runPanaroo <- function(duckdb_path = "data/{Bug}/{Bug}.duckdb",
                         output_path = "data/{Bug}/",
                         core_threshold = 0.90,
@@ -207,6 +249,17 @@
 #' Finds batch output directories under `input_path` that contain `final_graph.gml`,
 #' and merges them with `panaroo-merge` inside a Docker container. Output goes to
 #' `input_path/merge_output`.
+#'
+#' @param input_path A directory that contains multiple Panaroo pangenome directories for merging.
+#' @param core_threshold Numeric. Core genome threshold for Panaroo (`--core_threshold`). Default `0.90`.
+#' @param len_dif_percent Numeric. Length difference percentage (`--len_dif_percent`). Default `0.95`.
+#' @param cluster_threshold Numeric. Sequence identity threshold (`--threshold`). Default `0.95`.
+#' @param family_seq_identity Numeric. Gene family clustering identity (`-f`). Default `0.5`.
+#' @param threads Integer. Number of threads for Panaroo and parallel execution. Default `8`.
+#' 
+#' @returns A a single combined pangenome.
+#' 
+#' @keywords internal
 .mergePanaroo <- function(input_path,
                           core_threshold = 0.90,
                           len_dif_percent = 0.95,
@@ -261,7 +314,18 @@
 }
 
 
-#' Convert Panaroo gene presence/absence matrix to a per-genome gene count table
+
+#' Load Panaroo gene presence/absence table into DuckDB
+#'
+#' Reads `gene_presence_absence.csv` and constructs a genome-by-gene count
+#' table, writing it into the DuckDB database as `gene_count`.
+#'
+#' @param panaroo_output_path Path to a Panaroo result directory.
+#' @param duckdb_path Path to a DuckDB database file.
+#'
+#' @return A tibble containing the gene count matrix.
+#'
+#' @keywords internal
 .panaroo2geneTable <- function(panaroo_output_path, duckdb_path){
   filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
   duckdb_path <- normalizePath(duckdb_path)
@@ -281,7 +345,17 @@
   gene_count
 }
 
-#' Extract gene name and annotations from Panaroo gene presence/absence matrix
+
+#' Extract gene names and annotations from Panaroo outputs
+#'
+#' Reads Panaroo's `gene_presence_absence.csv` to extract gene identifiers
+#' and gene annotations, then writes them into the DuckDB table `gene_names`.
+#'
+#' @inheritParams .panaroo2geneTable
+#'
+#' @return A tibble with `Gene` and `Annotation` columns.
+#'
+#' @keywords internal
 .panaroo2geneNames <- function(panaroo_output_path, duckdb_path){
   filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
   duckdb_path <- normalizePath(duckdb_path)
@@ -296,7 +370,17 @@
   gene_names
 }
 
-#' Convert Panaroo gene struct presence/absence matrix to a per-genome struct table
+
+#' Create structural variant presence/absence table from Panaroo outputs
+#'
+#' Reads `struct_presence_absence.Rtab` and constructs a genome-by-struct
+#' presence/absence matrix, writing the result to `gene_struct` in DuckDB.
+#'
+#' @inheritParams .panaroo2geneTable
+#'
+#' @return A tibble containing the struct matrix.
+#'
+#' @keywords internal
 .panaroo2StructTable <- function(panaroo_output_path, duckdb_path){
   struct_filepath <- file.path(normalizePath(panaroo_output_path), "struct_presence_absence.Rtab")
   duckdb_path <- normalizePath(duckdb_path)
@@ -314,7 +398,17 @@
   gene_struct
 }
 
-#' Write Panaroo reference FASTA and long presence/absence to DuckDB tables
+
+#' Import additional Panaroo reference outputs into DuckDB
+#'
+#' Loads reference sequences and long-format gene–protein mappings from
+#' Panaroo outputs and stores them into DuckDB (`gene_ref_seq`, `genome_gene_protein`).
+#'
+#' @inheritParams .panaroo2geneTable
+#'
+#' @return Invisibly returns TRUE.
+#'
+#' @keywords internal
 .panaroo2OtherTables <- function(panaroo_output_path, duckdb_path){
   panaroo_output_path <- normalizePath(panaroo_output_path)
   duckdb_path <- normalizePath(duckdb_path)
@@ -342,7 +436,17 @@
     DBI::dbWriteTable(conn = con, name = "genome_gene_protein", overwrite = TRUE)
 }
 
-#' Consolidate Panaroo outputs into DuckDB tables
+
+#' Import all Panaroo-derived outputs into DuckDB
+#'
+#' Wrapper that loads gene counts, gene names, struct tables, and reference
+#' sequence tables from a Panaroo output directory into a DuckDB database.
+#'
+#' @inheritParams .panaroo2geneTable
+#'
+#' @return Invisibly returns TRUE.
+#'
+#' @keywords internal
 .panaroo2duckdb <- function(panaroo_output_path, duckdb_path){
   panaroo_output_path <- normalizePath(panaroo_output_path)
   duckdb_path         <- normalizePath(duckdb_path)
@@ -354,8 +458,24 @@
   invisible(TRUE)
 }
 
-#' Run CD-HIT (via Docker) on concatenated protein FASTA and return output paths
 
+#' Run CD-HIT inside Docker and assemble protein clusters
+#'
+#' Concatenates `.faa` files, executes CD-HIT in a Docker container,
+#' and returns paths to the cluster output files.
+#'
+#' @param duckdb_path Path to DuckDB containing the `files` table.
+#' @param output_path Directory to write concatenated FASTA and CD-HIT results.
+#' @param output_prefix String used to prefix CD-HIT output files.
+#' @param identity CD-HIT sequence identity threshold (`-c`).
+#' @param word_length CD-HIT word size (`-n`).
+#' @param threads Integer number of threads.
+#' @param memory Integer memory limit (`-M`).
+#' @param extra_args Character vector of additional CD-HIT arguments.
+#'
+#' @return A list containing paths to the concatenated FASTA and cluster FASTA.
+#'
+#' @keywords internal
 .runCDHIT <- function(duckdb_path,
                       output_path,
                       output_prefix = "cdhit_out",
@@ -442,7 +562,103 @@
   )
 }
 
-.runPanaroo2Duckdb <- function(duckdb_path,
+#' Run Panaroo and import pangenome outputs into DuckDB
+#'
+#' @description
+#' `runPanaroo2Duckdb()` executes Panaroo on the genomes registered in a
+#' per-selection DuckDB (created earlier by `prepareGenomes()`), optionally in
+#' multiple batches, and imports all resulting pangenome tables into the same
+#' DuckDB database.  
+#'
+#' It acts as a high-level wrapper around:
+#' * **`.runPanaroo()`** — runs Panaroo (single or multi-batch)
+#' * **`.mergePanaroo()`** — optionally merges batch outputs
+#' * **`.panaroo2duckdb()`** — loads Panaroo results (gene counts, struct variants,
+#'   gene names, reference sequences, long tables) into the DuckDB
+#'
+#' The function determines which Panaroo output directory to use (single-run or merged),
+#' verifies that a valid pangenome has been produced, and updates the DuckDB with
+#' standardized table names consistent with downstream processing steps.
+#'
+#' @param duckdb_path Character. Path to the per-selection DuckDB database created by
+#'   `prepareGenomes()`. Must contain a `files` table with Panaroo input file paths.
+#' @param output_path Character or `NULL`. Directory where Panaroo outputs
+#'   (`panaroo_out_*` or merged `merge_output/`) will be written. If `NULL`,
+#'   defaults to `dirname(duckdb_path)`.
+#'
+#' @param core_threshold Numeric. Panaroo `--core_threshold` parameter.
+#'   Default: `0.90`.
+#' @param len_dif_percent Numeric. Panaroo `--len_dif_percent` parameter.
+#'   Default: `0.95`.
+#' @param cluster_threshold Numeric. Panaroo global clustering `--threshold`.
+#'   Default: `0.95`.
+#' @param family_seq_identity Numeric. Panaroo gene family identity `-f`.
+#'   Default: `0.5`.
+#'
+#' @param threads Integer. Total CPU budget to allocate for Panaroo.
+#'   If `split_jobs = TRUE`, threads are divided across batches.
+#'   Default: `16`.
+#'
+#' @param split_jobs Logical. If `TRUE`, Panaroo is run in multiple parallel
+#'   batches (up to 5, depending on dataset size), and batch outputs are merged
+#'   using `.mergePanaroo()`. If `FALSE`, only one Panaroo invocation is run.
+#'   Default: `FALSE`.
+#'
+#' @param verbose Logical. Print status messages during Panaroo execution,
+#'   merging, and DuckDB import. Default: `TRUE`.
+#'
+#' @return
+#' Invisibly returns the path to the selected Panaroo output directory
+#' (either the single-run output or the merged `merge_output/` directory).
+#'
+#' @details
+#' ### Panaroo Output Discovery
+#' After running `.runPanaroo()`, the function scans `output_path` for directories
+#' matching `panaroo_out_*` and identifies those containing a `final_graph.gml` file —
+#' the minimum requirement for a valid Panaroo run.
+#'
+#' * If **`split_jobs = TRUE`** and multiple valid outputs are present,
+#'   `.mergePanaroo()` is used to combine the outputs.
+#' * If **`split_jobs = FALSE`**, the single valid output directory is used directly.
+#'
+#' ### DuckDB Integration
+#' `.panaroo2duckdb()` is then called to import:
+#' * gene presence/absence counts (`gene_count`)
+#' * gene names (`gene_names`)
+#' * structural presence/absence (`gene_struct`)
+#' * gene reference FASTA (`gene_ref_seq`)
+#' * long-form genome → gene → protein tables
+#'
+#' These maintain the standardized schema used by downstream feature extraction
+#' and modeling steps in `amRdata` and `amRml`.
+#'
+#' @seealso
+#' * `.runPanaroo()` — core Panaroo execution  
+#' * `.mergePanaroo()` — merge multiple Panaroo batches  
+#' * `.panaroo2duckdb()` — import Panaroo results into DuckDB  
+#' * [runDataProcessing()] — full pipeline including CD-HIT & InterProScan  
+#'
+#' @examples
+#' \dontrun{
+#' # Basic usage:
+#' runPanaroo2Duckdb(
+#'   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
+#'   output_path = "data/Shigella_flexneri",
+#'   threads     = 12,
+#'   split_jobs  = FALSE
+#' )
+#'
+#' # Merging multi-batch pangenomes:
+#' runPanaroo2Duckdb(
+#'   duckdb_path = "data/Ecoli/Eco.duckdb",
+#'   output_path = "data/Ecoli",
+#'   split_jobs  = TRUE,
+#'   threads     = 24
+#' )
+#' }
+#'
+#' @export
+runPanaroo2Duckdb <- function(duckdb_path,
                               output_path = NULL,
                               core_threshold = 0.90,
                               len_dif_percent = 0.95,
@@ -501,7 +717,16 @@
   invisible(target_dir)
 }
 
-#' Parse CD-HIT protein cluster output
+
+#' Parse CD-HIT `.clstr` output into a long-format mapping
+#'
+#' Reads a CD-HIT `.clstr` file and constructs a mapping of clusters to genome IDs.
+#'
+#' @param clustered_faa Base path to CD-HIT output (without `.clstr` extension).
+#'
+#' @return A data.table with columns `cluster` and `genome_id`.
+#'
+#' @keywords internal
 .parseProteinClusters <- function(clustered_faa) {
   clstr <- paste0(clustered_faa, ".clstr")
   if (!file.exists(clstr)) {
@@ -542,7 +767,17 @@
   cluster_map
 }
 
-#' Build genome-by-cluster count matrix
+
+#' Build genome-by-protein-cluster count matrix
+#'
+#' Converts a long-format cluster mapping from `.parseProteinClusters()`
+#' into a genome-by-cluster count matrix.
+#'
+#' @param cluster_map A data.table with `cluster` and `genome_id`.
+#'
+#' @return A wide-format matrix as a data.frame.
+#'
+#' @keywords internal
 .buildProtMatrices <- function(cluster_map) {
   cluster_map[, count := 1]
   reshape2::dcast(cluster_map, genome_id ~ cluster, value.var = "count", fun.aggregate = sum, fill = 0)
@@ -550,7 +785,18 @@
 # Back-compat wrapper (older external name)
 buildMatrices <- function(cluster_map) .buildProtMatrices(cluster_map)
 
-#' Get cluster names from CD-HIT output
+
+#' Extract per-cluster protein names from CD-HIT cluster FASTA
+#'
+#' Reads a FASTA file of representative proteins and extracts protein IDs,
+#' locus tags, and descriptive names.
+#'
+#' @param cluster_map Output of `.parseProteinClusters()`.
+#' @param cluster_fasta Path to representative FASTA file used by CD-HIT.
+#'
+#' @return A tibble containing protein metadata.
+#'
+#' @keywords internal
 .clusterNames <- function(cluster_map, cluster_fasta) {
   # Note: cluster_map_unique computed but not used previously—keeping for parity
   cluster_map_unique <- cluster_map |>
@@ -572,8 +818,6 @@ buildMatrices <- function(cluster_map) .buildProtMatrices(cluster_map)
 
   names_faa
 }
-# Back-compat wrapper (older external name)
-clusterNames <- function(cluster_map, cluster_fasta) .clusterNames(cluster_map, cluster_fasta)
 
 #' Cluster proteins with CD-HIT and write results to DuckDB
 #' @export
@@ -624,7 +868,22 @@ CDHIT2duckdb <- function(duckdb_path,
 }
 
 
-# Check if InterProScan data are ready for use
+
+#' Check or install InterProScan data bundle
+#'
+#' Ensures that the InterProScan data directory exists locally, downloading
+#' and verifying the appropriate tarball when necessary.
+#'
+#' @param version InterProScan version string.
+#' @param dest_dir Directory where data should be installed.
+#' @param docker_image Docker image string for InterProScan.
+#' @param platform Character indicating Docker platform (e.g. `"linux/amd64"`).
+#' @param curl_bin Path to curl executable.
+#' @param verbose Logical; print status messages.
+#'
+#' @return A list containing `data_dir` and `ready` status.
+#'
+#' @keywords internal
 .checkInterProData <- function(
     version      = "5.76-107.0",
     dest_dir     = "inst/extdata/interpro",
@@ -675,12 +934,34 @@ CDHIT2duckdb <- function(duckdb_path,
   return(list(data_dir = normalizePath(data_dir), ready = TRUE))
 }
 
-# Helpers for reading InterPro output
+
+#' Internal helpers for reading InterProScan TSV outputs
+#'
+#' Provide standardized column names, types, and a reader wrapper for the
+#' InterProScan tab-delimited output format.
+#'
+#' @param filepath Path to a `.tsv` or `.tsv.gz` InterProScan result file.
+#'
+#' @return A tibble of parsed InterProScan output.
+#'
+#' @keywords internal
 .getDfIPRColNames <- function() {
   c("AccNum", "SeqMD5Digest", "SLength", "Analysis",
     "DB.ID", "SignDesc", "StartLoc", "StopLoc", "Score",
     "Status", "RunDate", "IPRAcc", "IPRDesc", "placeholder")
 }
+
+#' Internal helpers for reading InterProScan TSV outputs
+#'
+#' Provide standardized column names, types, and a reader wrapper for the
+#' InterProScan tab-delimited output format.
+#'
+#' @param filepath Path to a `.tsv` or `.tsv.gz` InterProScan result file.
+#'
+#' @return A tibble of parsed InterProScan output.
+#'
+#' @keywords internal
+
 .getDfIPRColTypes <- function() {
   readr::cols(
     "AccNum"        = readr::col_character(),
@@ -699,13 +980,42 @@ CDHIT2duckdb <- function(duckdb_path,
     "placeholder"   = readr::col_character()
   )
 }
+
+#' Internal helpers for reading InterProScan TSV outputs
+#'
+#' Provide standardized column names, types, and a reader wrapper for the
+#' InterProScan tab-delimited output format.
+#'
+#' @param filepath Path to a `.tsv` or `.tsv.gz` InterProScan result file.
+#'
+#' @return A tibble of parsed InterProScan output.
+#'
+#' @keywords internal
 .readIPRscanTsv <- function(filepath) {
   readr::read_tsv(filepath,
                   col_types = .getDfIPRColTypes(),
                   col_names = .getDfIPRColNames())
 }
 
-# Process a chunk of sequences through InterProScan (Docker)
+
+#' Run InterProScan on a sequence chunk inside Docker
+#'
+#' Executes InterProScan on a subset of protein sequences, writing temporary
+#' FASTA and reading back `.tsv` or `.tsv.gz` results.
+#'
+#' @param chunk A tibble with columns `name` and `sequence`.
+#' @param path Working directory used for temporary files.
+#' @param ipr_data_path Path to InterProScan data directory.
+#' @param out_file_base Output prefix for chunk results.
+#' @param appl Character vector of InterProScan applications (e.g. `"Pfam"`).
+#' @param chunk_id Integer chunk index.
+#' @param threads Number of CPUs for InterProScan container.
+#' @param file_format Output format (`"TSV"`).
+#' @param docker_image InterProScan Docker image.
+#'
+#' @return Path to a `.tsv` or `.tsv.gz` InterProScan output file.
+#'
+#' @keywords internal
 .process_chunk <- function(chunk,
                            path,
                            ipr_data_path = "inst/extdata/interpro/data",
@@ -1100,6 +1410,147 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/"){
 }
 
 
+#' Run the full amRdata processing pipeline (Panaroo → CD-HIT → InterProScan → Parquet)
+#'
+#' @description
+#' `runDataProcessing()` orchestrates the complete feature-extraction pipeline for a
+#' BV-BRC selection, starting from a **per-selection DuckDB** (created by
+#' [prepareGenomes()] and populated by downstream steps). It:
+#' 1. Runs **Panaroo** to build the pangenome and writes gene/struct outputs into DuckDB.
+#' 2. Runs **CD-HIT** to cluster proteins and writes protein outputs into DuckDB.
+#' 3. Runs **InterProScan** (Pfam) to annotate protein domains and writes domain outputs into DuckDB.
+#' 4. **Cleans BV-BRC metadata** (drug names/classes, countries, years) and
+#'    exports all feature/metadata tables as **compressed Parquet** files, then creates
+#'    a **Parquet-backed DuckDB** with read-only views of those Parquets for downstream ML.
+#'
+#' The function is a thin controller that delegates each stage to the corresponding
+#' internal helpers (Dockerized tools where applicable) and ensures consistent
+#' output locations and table schemas across stages.
+#'
+#' @section Pipeline Steps:
+#' \enumerate{
+#'   \item **Panaroo** via runPanaroo2Duckdb() → writes:
+#'     \itemize{
+#'       \item `gene_count` (genome × gene counts)\cr
+#'       \item `gene_names`\cr
+#'       \item `gene_struct` (structural variants)\cr
+#'       \item `gene_ref_seq`, `genome_gene_protein`
+#'     }
+#'   \item **CD-HIT** via CDHIT2duckdb() (calls internal `.runCDHIT()`) → writes:
+#'     \itemize{
+#'       \item `protein_count` (genome × protein-cluster counts)\cr
+#'       \item `protein_names`\cr
+#'       \item `protein_cluster_seq` (representative sequences)
+#'     }
+#'   \item **InterProScan (Pfam)** via domainFromIPR() → writes:
+#'     \itemize{
+#'       \item `domain_names`\cr
+#'       \item `domain_count` (genome × domain-family matrix)
+#'     }
+#'   \item **Metadata cleaning + Parquet export** via cleanData() → writes Parquet
+#'         files to `output_path`, and builds a **Parquet-backed DuckDB**
+#'         (`*_parquet.duckdb`) with views:
+#'     \itemize{
+#'       \item `gene_count`, `protein_count`, `domain_count`, `struct`\cr
+#'       \item `metadata` (cleaned), plus `amr_phenotype`, `genome_data`, `original_metadata`\cr
+#'       \item `gene_names`, `protein_names`, `domain_names`\cr
+#'       \item `gene_seqs`, `protein_seqs`\cr
+#'       \item `genome_gene_protein`
+#'     }
+#' }
+#'
+#' @param duckdb_path Character. Path to the **per-selection DuckDB** produced by
+#'   [prepareGenomes()] (e.g., `"data/<Bug>/<Abbrev>.duckdb"`). This DB must
+#'   already contain at least the tables written by `prepareGenomes()` and subsequent
+#'   download steps (e.g., `files`, `filtered`, and metadata tables).
+#' @param output_path Character or `NULL`. Base directory for writing Panaroo/CD-HIT/InterProScan
+#'   outputs and final Parquet files. If `NULL`, defaults to `dirname(duckdb_path)`.
+#'
+#' @param threads Integer. Shared concurrency budget used across tools (Panaroo, CD-HIT,
+#'   InterProScan). Passed through to each stage as appropriate. Defaults to `16`.
+#'
+#' @param panaroo_split_jobs Logical. If `TRUE`, Panaroo runs in multiple batches that can be
+#'   merged by [.mergePanaroo()]. If `FALSE`, Panaroo runs once on all isolates. Default: `FALSE`.
+#' @param panaroo_core_threshold Numeric. Panaroo `--core_threshold`. Default: `0.90`.
+#' @param panaroo_len_dif_percent Numeric. Panaroo `--len_dif_percent`. Default: `0.95`.
+#' @param panaroo_cluster_threshold Numeric. Panaroo `--threshold`. Default: `0.95`.
+#' @param panaroo_family_seq_identity Numeric. Panaroo `-f` (gene family identity). Default: `0.5`.
+#'
+#' @param cdhit_identity Numeric. CD-HIT `-c` identity threshold. Default: `0.9`.
+#' @param cdhit_word_length Integer. CD-HIT `-n` word length. Default: `5`.
+#' @param cdhit_memory Integer. CD-HIT `-M` memory limit (MB). Use `0` for unlimited. Default: `0`.
+#' @param cdhit_extra_args Character vector. Extra arguments forwarded to `cd-hit`
+#'   (e.g., `c("-g","1")`). Default: `c("-g","1")`.
+#' @param cdhit_output_prefix Character. Prefix for CD-HIT output files. Default: `"cdhit_out"`.
+#'
+#' @param ipr_appl Character vector. InterProScan applications to run; typically `c("Pfam")`.
+#'   Default: `c("Pfam")`.
+#' @param ipr_threads_unused Deprecated/unused. Kept for backward compatibility; ignored.
+#' @param ipr_version Character. InterProScan image tag (e.g., `"5.76-107.0"`). Default: `"5.76-107.0"`.
+#' @param ipr_dest_dir Character. Local destination for InterProScan data bundle
+#'   (used by `.checkInterProData()`). Default: `"inst/extdata/interpro"`.
+#' @param ipr_platform Character. Docker platform string for InterProScan containers,
+#'   e.g., `"linux/amd64"`. Default: `"linux/amd64"`.
+#' @param auto_prepare_data Logical. If `TRUE`, ensure InterProScan data are present
+#'   (download/verify if missing). Default: `TRUE`.
+#'
+#' @param ref_file_path Character. Directory containing reference TSVs used by cleanData()
+#'   for metadata harmonization (e.g., `"data_raw/"`). **Required**; defaults to `"data_raw/"`.
+#'
+#' @param verbose Logical. Print progress messages. Default: `TRUE`.
+#'
+#' @return
+#' Invisibly returns a list with:
+#' \itemize{
+#'   \item `duckdb_path` – input DuckDB path
+#'   \item `panaroo_output` – path to the selected Panaroo output directory used for import
+#'   \item `parquet_duckdb_path` – absolute path to the created Parquet-backed DuckDB
+#' }
+#'
+#' @details
+#' **Docker & Platform Notes**
+#' * All heavy tools (Panaroo, CD-HIT, InterProScan) run inside Docker containers.
+#' * On Apple Silicon/ARM hosts, images are forced to `--platform linux/amd64` to ensure compatibility.
+#' * Ensure Docker Desktop is running and has sufficient memory/CPUs configured.
+#'
+#' **Input Requirements**
+#' * The `duckdb_path` must reference a per-selection DuckDB that contains:
+#'   `files` (paths to `.gff`, `.fna`, `.PATRIC.faa`),  
+#'   `filtered` (genomes selected for download/filtering), and  
+#'   BV-BRC metadata tables written by earlier steps.
+#'
+#' **Outputs & Side Effects**
+#' * Writes tool-specific intermediate outputs under `output_path` (e.g., `panaroo_out_*`, CD-HIT files).
+#' * Writes Parquet files to `output_path`:
+#'   `gene_count.parquet`, `protein_count.parquet`, `domain_count.parquet`, `struct.parquet`,  
+#'   `gene_names.parquet`, `protein_names.parquet`, `domain_names.parquet`,  
+#'   `gene_seqs.parquet`, `protein_seqs.parquet`, `genome_gene_protein.parquet`,  
+#'   `metadata.parquet`, `amr_phenotype.parquet`, `genome_data.parquet`, `original_metadata.parquet`.
+#' * Creates a new Parquet-backed DuckDB (`*_parquet.duckdb`) with read-only views pointing to those Parquets.
+#'
+#' **Threading**
+#' * `threads` is a shared budget; each stage uses a portion or all of it.
+#' * InterProScan can be memory-intensive; on laptops, single-container mode is used internally.
+#'
+#' @seealso
+#' prepareGenomes(), runPanaroo2Duckdb(), CDHIT2duckdb(), domainFromIPR(), cleanData()
+#'
+#' @examples
+#' \dontrun{
+#' # Paths below are illustrative; adapt to your project layout.
+#' runDataProcessing(
+#'   duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
+#'   output_path   = "data/Shigella_flexneri",
+#'   threads       = 16,
+#'   ref_file_path = "data_raw/"
+#' )
+#'
+#' # After completion:
+#' #   data/Shigella_flexneri/Sfl_parquet.duckdb
+#' # will contain views over the Parquet files for downstream ML.
+#' }
+#'
+#' @export
 runDataProcessing <- function(duckdb_path,
                               output_path = NULL,
                               # unified threads for all tools
@@ -1130,7 +1581,7 @@ runDataProcessing <- function(duckdb_path,
   out_dir <- if (is.null(output_path)) dirname(duckdb_path) else normalizePath(output_path)
 
   # 1) Panaroo (run + optional merge) -> write Panaroo tables
-  pan_dir <- .runPanaroo2Duckdb(
+  pan_dir <- runPanaroo2Duckdb(
     duckdb_path            = duckdb_path,
     output_path            = out_dir,
     core_threshold         = panaroo_core_threshold,

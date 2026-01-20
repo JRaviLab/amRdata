@@ -15,56 +15,6 @@ CDHIT2duckdb(
   extra_args = c("-g", "1")
 )
 }
-\arguments{
-\item{duckdb_path}{Character scalar. Path to the DuckDB database file.}
-
-\item{output_path}{Character scalar. Directory where CD-HIT outputs will be written.}
-
-\item{output_prefix}{Character scalar. Prefix for CD-HIT output files. Defaults to
-\code{"cdhit_out"}.}
-
-\item{identity}{Numeric. Sequence identity threshold for clustering (\code{-c}).
-Defaults to \code{0.9}.}
-
-\item{word_length}{Integer. Word length parameter (\code{-n}). Defaults to \code{5}.
-Must be compatible with \code{identity} per CD-HIT rules.}
-
-\item{threads}{Integer. Number of threads for CD-HIT (\code{-T}). \code{0} uses all
-available cores. Defaults to \code{0}.}
-
-\item{memory}{Integer. Memory limit in MB (\code{-M}). \code{0} means unlimited.
-Defaults to \code{0}.}
-
-\item{extra_args}{Character vector. Additional CD-HIT flags (e.g., \code{"-g", "1"}).
-Defaults to \code{c("-g", "1")}.}
-}
-\value{
-writing the following DuckDB tables:
-\itemize{
-\item \code{"protein_count"}
-\item \code{"protein_names"}
-\item \code{"protein_cluster_seq"}
-}
-}
 \description{
-Runs CD-HIT inside a Docker container to cluster protein sequences,
-parses the resulting clusters, builds per-genome protein count matrices, and writes
-multiple tables into a DuckDB database:
-\itemize{
-\item \code{protein_count}: genome-by-protein-cluster count matrix.
-\item \code{protein_names}: mapping of cluster IDs to representative protein names.
-\item \code{protein_cluster_seq}: clustered protein sequences (AA) with IDs.
-}
-}
-\examples{
-\dontrun{
-# Cluster proteins and write results to DuckDB
-CDHIT2duckdb(
-  duckdb_path = "example.duckdb",
-  output_path = "trial",
-  identity = 0.9,
-  word_length = 5,
-  threads = 8
-)
-}
+Cluster proteins with CD-HIT and write results to DuckDB
 }

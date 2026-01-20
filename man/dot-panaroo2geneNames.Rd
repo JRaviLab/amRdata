@@ -2,25 +2,20 @@
 % Please edit documentation in R/data_processing.R
 \name{.panaroo2geneNames}
 \alias{.panaroo2geneNames}
-\title{Extract gene name and annotations from Panaroo gene presence/absence matrix}
+\title{Extract gene names and annotations from Panaroo outputs}
 \usage{
 .panaroo2geneNames(panaroo_output_path, duckdb_path)
 }
 \arguments{
-\item{panaroo_output_path}{Character scalar. Path to Panaroo output directory;}
+\item{panaroo_output_path}{Path to a Panaroo result directory.}
 
-\item{duckdb_path}{Character scalar. Path to the DuckDB database file to open}
+\item{duckdb_path}{Path to a DuckDB database file.}
 }
 \value{
-A tibble with:
-\describe{
-\item{Gene}{Character column of gene families}
-\item{Annotation}{Character column of free text annotation of the genes}
-}
-(writing table into DuckDB).
+A tibble with \code{Gene} and \code{Annotation} columns.
 }
 \description{
-Reads \code{gene_presence_absence.csv} (from \code{runPanaroo()} or \code{mergePanaroo()} outputs),
-extract gene names and annotation columns, and writes the result to DuckDB
-as a table named \code{"gene_names"}. Returns the tibble for immediate use.
+Reads Panaroo's \code{gene_presence_absence.csv} to extract gene identifiers
+and gene annotations, then writes them into the DuckDB table \code{gene_names}.
 }
+\keyword{internal}

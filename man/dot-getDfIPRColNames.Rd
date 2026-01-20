@@ -2,10 +2,18 @@
 % Please edit documentation in R/data_processing.R
 \name{.getDfIPRColNames}
 \alias{.getDfIPRColNames}
-\title{Title}
+\title{Internal helpers for reading InterProScan TSV outputs}
 \usage{
 .getDfIPRColNames()
 }
-\description{
-Title
+\arguments{
+\item{filepath}{Path to a \code{.tsv} or \code{.tsv.gz} InterProScan result file.}
 }
+\value{
+A tibble of parsed InterProScan output.
+}
+\description{
+Provide standardized column names, types, and a reader wrapper for the
+InterProScan tab-delimited output format.
+}
+\keyword{internal}

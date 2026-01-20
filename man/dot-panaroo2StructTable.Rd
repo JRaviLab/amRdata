@@ -2,26 +2,20 @@
 % Please edit documentation in R/data_processing.R
 \name{.panaroo2StructTable}
 \alias{.panaroo2StructTable}
-\title{Convert Panaroo gene struct presence/absence matrix to a per-genome struct table}
+\title{Create structural variant presence/absence table from Panaroo outputs}
 \usage{
 .panaroo2StructTable(panaroo_output_path, duckdb_path)
 }
 \arguments{
-\item{panaroo_output_path}{Character scalar. Path to Panaroo output directory
-\code{struct_presence_absence.Rtab}.}
+\item{panaroo_output_path}{Path to a Panaroo result directory.}
 
-\item{duckdb_path}{Character scalar. Path to the DuckDB database file to open.}
+\item{duckdb_path}{Path to a DuckDB database file.}
 }
 \value{
-A tibble with:
-\describe{
-\item{genome_id}{Character column of normalized genome IDs.}
-\item{\if{html}{\out{<gene struct columns>}}}{Integer counts per gene (0 if absent, 1 if present).}
-}
-(writing table into DuckDB).
+A tibble containing the struct matrix.
 }
 \description{
-Reads \code{struct_presence_absence.Rtab} (from \code{runPanaroo()} or \code{mergePanaroo()} outputs),
-reshapes it into a genome-by-struct matrix, and writes the result to DuckDB
-as a table named \code{"gene_struct"}. Returns the reshaped tibble for immediate use.
+Reads \code{struct_presence_absence.Rtab} and constructs a genome-by-struct
+presence/absence matrix, writing the result to \code{gene_struct} in DuckDB.
 }
+\keyword{internal}
