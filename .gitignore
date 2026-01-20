@@ -6,3 +6,8 @@
 .DS_Store
 .quarto
 inst/doc
+/data/Shigella_flexneri
+/inst/extdata/interpro
+/results/Shigella_flexneri
+/data/tmp
+/data/Staphylococcus_epidermidis
