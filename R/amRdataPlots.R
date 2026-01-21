@@ -212,7 +212,7 @@ generatePlots <- function(metadata_parquet,
     dplyr::filter(!is.na(genome.collection_year)) |>
     dplyr::select(
       genome_drug.genome_id,
-      genome_drug.antibiotic,
+      drug_abbr,
       genome_drug.resistant_phenotype,
       genome.isolation_country,
       genome.collection_year
@@ -220,7 +220,7 @@ generatePlots <- function(metadata_parquet,
   
   summary_year <- df_year |>
     dplyr::group_by(
-      genome_drug.antibiotic,
+      drug_abbr,
       genome_drug.resistant_phenotype,
       genome.collection_year
     ) |>
@@ -234,7 +234,7 @@ generatePlots <- function(metadata_parquet,
   ) +
     ggplot2::geom_line() +
     ggplot2::geom_point() +
-    ggplot2::facet_wrap(~ genome_drug.antibiotic, scales = "free_y") +
+    ggplot2::facet_wrap(~ drug_abbr, scales = "free_y") +
     ggplot2::labs(
       title = "Resistant phenotypes across antibiotics and time",
       x = "Year", y = "Number of isolates",
@@ -252,9 +252,9 @@ generatePlots <- function(metadata_parquet,
   # 1) Levels for antibiotics (from the same subset used in p2)
   abx_levels <- summary_year |>
     dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
-    dplyr::distinct(genome_drug.antibiotic) |>
-    dplyr::arrange(genome_drug.antibiotic) |>
-    dplyr::pull(genome_drug.antibiotic)
+    dplyr::distinct(drug_abbr) |>
+    dplyr::arrange(drug_abbr) |>
+    dplyr::pull(drug_abbr)
   
   # 2) Base Okabe–Ito (CVD-friendly) and pastelizer
   okabe_ito_base <- c(
@@ -293,7 +293,7 @@ generatePlots <- function(metadata_parquet,
     summary_year |>
       dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
       dplyr::mutate(
-        antibiotic_fac = factor(genome_drug.antibiotic, levels = abx_levels)
+        antibiotic_fac = factor(drug_abbr, levels = abx_levels)
       ),
     ggplot2::aes(x = genome.collection_year, y = count,
                  colour = antibiotic_fac)
@@ -318,7 +318,7 @@ generatePlots <- function(metadata_parquet,
     dplyr::filter(genome.isolation_country != "") |>
     dplyr::select(
       genome_drug.genome_id,
-      genome_drug.antibiotic,
+      drug_abbr,
       genome_drug.resistant_phenotype,
       genome.isolation_country,
       genome.collection_year
@@ -354,7 +354,7 @@ generatePlots <- function(metadata_parquet,
   # 4) Phenotype proportion per antibiotic (stacked, normalized)
   p4 <- ggplot2::ggplot(
     metadata,
-    ggplot2::aes(x = genome_drug.antibiotic,
+    ggplot2::aes(x = drug_abbr,
                  fill = genome_drug.resistant_phenotype)
   ) +
     ggplot2::geom_bar(position = "fill") +
