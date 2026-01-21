@@ -34,7 +34,7 @@ amRdata provides functions to:
 - Store data efficiently in Parquet and DuckDB formats
 
 See the [package
-vignette](https://jravilab.github.io/amR_data/articles/intro.html) for
+vignette](https://jravilab.github.io/amRdata/articles/intro.html) for
 detailed usage.
 
 ## Installation
@@ -44,7 +44,7 @@ detailed usage.
 if (!requireNamespace("remotes", quietly = TRUE))
     install.packages("remotes")
 
-remotes::install_github("JRaviLab/amR_data")
+remotes::install_github("JRaviLab/amRdata")
 ```
 
 ## Quick start
@@ -224,8 +224,8 @@ launch_dashboard()
 ## Related packages
 
 - [amR](https://github.com/JRaviLab/amR): Suite metapackage
-- [amRml](https://github.com/JRaviLab/amR_ml): ML for AMR prediction
-- [amRshiny](https://github.com/JRaviLab/amR_shiny): Interactive
+- [amRml](https://github.com/JRaviLab/amRml): ML for AMR prediction
+- [amRshiny](https://github.com/JRaviLab/amRshiny): Interactive
   dashboard
 
 ## Citation
@@ -245,7 +245,7 @@ for guidelines.
 ## Reporting issues
 
 Report bugs and request features at:
-<https://github.com/JRaviLab/amR_ml/issues>
+<https://github.com/JRaviLab/amRml/issues>
 
 ## License
 
