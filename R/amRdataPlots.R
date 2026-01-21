@@ -1,70 +1,96 @@
-
 #' Generate a summary report for AMR metadata
 #'
 #' @param metadata_parquet Character string. Path to a Parquet file containing
 #'   standardized AMR metadata.
+#' @param out_path Character string. Directory where the Markdown report is written.
 #'
-#' @return Prints a structured, human‑readable summary report.
+#' @return Writes a structured, human‑readable summary report to
+#'   "<out_path>/amr_metadata_summary.md".
 #'
 #' @import dplyr
 #' @import arrow
 #' @import kableExtra
-#' 
+#'
 #' @examples
 #' generateSummary(metadata_parquet = "results/metadata.parquet",
-#' out_path = "results/")
-#' 
+#'                 out_path = "results/")
+#'
 #' @export
-generateSummary <- function(metadata_parquet, 
-                            out_path) {
+generateSummary <- function(metadata_parquet, out_path) {
   
-  # Normalize path and load metadata table
+  # Little helper to apply distinct + non-empty + sorted vector
+  clean_distinct <- function(df, col) {
+    df |>
+      dplyr::distinct({{col}}) |>
+      dplyr::filter(!is.na({{col}}), {{col}} != "") |>
+      dplyr::arrange({{col}}) |>
+      dplyr::pull({{col}})
+  }
+  
+  # Format for Markdown
+  md_tbl <- function(df) {
+    knitr::kable(df, format = "pipe")
+  }
+  
+  # Create a file
+  write_new <- function(path, lines) {
+    con <- file(path, open = "w", encoding = "UTF-8")
+    on.exit(close(con), add = TRUE)
+    writeLines(lines, con = con, sep = "\n", useBytes = TRUE)
+  }
+  
+  # Add lines to file
+  append_lines <- function(path, lines) {
+    con <- file(path, open = "a", encoding = "UTF-8")
+    on.exit(close(con), add = TRUE)
+    writeLines(lines, con = con, sep = "\n", useBytes = TRUE)
+  }
+  
+  # Setting paths
+  if (!dir.exists(out_path)) dir.create(out_path, recursive = TRUE, showWarnings = FALSE)
   metadata_parquet <- normalizePath(metadata_parquet)
   metadata <- arrow::read_parquet(metadata_parquet)
-  md_path  <- file.path(out_path, paste0("amr_metadata_summary.md"))
-  # Error if metadata table is empty
+  md_path  <- file.path(out_path, "amr_metadata_summary.md")
+  
+  # Validation (got any data?)
   if (nrow(metadata) == 0) {
     stop("The output table is empty. Please check your query or input data.")
   }
   
-  # Total and unique genomes
-  TotalEntryCount  <- metadata |> dplyr::count()
-  CleanEntryCount  <- metadata |> dplyr::distinct(genome_drug.genome_id) |> dplyr::count()
+  # Core summaries
+  TotalEntryCount <- metadata |> dplyr::count()
+  CleanEntryCount <- metadata |>
+    dplyr::distinct(genome_drug.genome_id) |>
+    dplyr::count()
   
-  # Antibiotics and classes
-  Antibiotics <- metadata |> dplyr::distinct(genome_drug.antibiotic) |> dplyr::pull() |> sort()
-  AntibioticClasses <- metadata |> dplyr::distinct(drug_class) |> dplyr::pull() |> sort()
+  Antibiotics       <- clean_distinct(metadata, genome_drug.antibiotic)
+  AntibioticClasses <- clean_distinct(metadata, drug_class)
   
-  # Lab methods
   LabMethods <- metadata |>
     dplyr::group_by(genome_drug.laboratory_typing_method) |>
-    dplyr::count()
+    dplyr::count() |>
+    dplyr::ungroup()
   
-  # PubMed IDs
-  PubMed_ids <- metadata |>
-    dplyr::distinct(genome_drug.pmid) |>
-    dplyr::filter(!is.na(genome_drug.pmid), genome_drug.pmid != "") |>
-    dplyr::pull()
+  PubMed_ids <- clean_distinct(metadata, genome_drug.pmid)
   
-  # Phenotype counts
   PhenotypeCount <- metadata |>
     dplyr::group_by(genome_drug.resistant_phenotype) |>
-    dplyr::count()
+    dplyr::count() |>
+    dplyr::ungroup()
   
-  # Phenotype × Drug
   PhenotypebyDrugCount <- metadata |>
     dplyr::group_by(genome_drug.resistant_phenotype, genome_drug.antibiotic) |>
-    dplyr::count()
+    dplyr::count() |>
+    dplyr::ungroup()
   
-  # Resistance proportion per drug
   ResPropbyDrug <- metadata |>
     dplyr::group_by(genome_drug.antibiotic) |>
     dplyr::count(genome_drug.resistant_phenotype) |>
     dplyr::mutate(prop = n / sum(n)) |>
     dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
-    dplyr::transmute(res_prop = round(prop, 3))
+    dplyr::transmute(genome_drug.antibiotic, res_prop = round(prop, 3)) |>
+    dplyr::ungroup()
   
-  # Phenotype × Antibiotic Class (with consistency filtering)
   PhenotypebyDrugClassCount <- metadata |>
     dplyr::group_by(genome_drug.genome_id, drug_class) |>
     dplyr::filter(!(any(genome_drug.resistant_phenotype == "Resistant") &
@@ -74,111 +100,95 @@ generateSummary <- function(metadata_parquet,
     dplyr::slice_head(n = 1) |>
     dplyr::ungroup() |>
     dplyr::group_by(genome_drug.resistant_phenotype, drug_class) |>
-    dplyr::count()
+    dplyr::count() |>
+    dplyr::ungroup()
   
-  # Resistance proportion × drug class
   ResPropbyDrugClass <- metadata |>
     dplyr::group_by(drug_class) |>
     dplyr::count(genome_drug.resistant_phenotype) |>
     dplyr::mutate(prop = n / sum(n)) |>
     dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
-    dplyr::transmute(res_prop = round(prop, 3))
+    dplyr::transmute(drug_class, res_prop = round(prop, 3)) |>
+    dplyr::ungroup()
   
-  # Year summaries
   Year <- metadata |>
     dplyr::distinct(genome.collection_year) |>
     dplyr::filter(!is.na(genome.collection_year)) |>
-    dplyr::pull() |> sort()
+    dplyr::pull() |>
+    sort()
   
   YearCount <- metadata |>
     dplyr::group_by(genome.collection_year) |>
     dplyr::filter(!is.na(genome.collection_year)) |>
-    dplyr::count()
+    dplyr::count() |>
+    dplyr::ungroup()
   
-  # Country summaries
-  Country <- metadata |>
-    dplyr::distinct(genome.isolation_country) |>
-    dplyr::filter(!is.na(genome.isolation_country), genome.isolation_country != "") |>
-    dplyr::pull() |> sort()
-  
+  Country <- clean_distinct(metadata, genome.isolation_country)
   CountryCount <- metadata |>
     dplyr::group_by(genome.isolation_country) |>
     dplyr::filter(!is.na(genome.isolation_country), genome.isolation_country != "") |>
-    dplyr::count()
+    dplyr::count() |>
+    dplyr::ungroup()
   
-  # Isolation sources
-  Source <- metadata |>
-    dplyr::distinct(genome.isolation_source) |>
-    dplyr::filter(!is.na(genome.isolation_source), genome.isolation_source != "") |>
-    dplyr::pull() |> sort()
-  
+  Source <- clean_distinct(metadata, genome.isolation_source)
   SourceCount <- metadata |>
     dplyr::group_by(genome.isolation_source) |>
     dplyr::filter(!is.na(genome.isolation_source), genome.isolation_source != "") |>
-    dplyr::count()
+    dplyr::count() |>
+    dplyr::ungroup()
   
-  # Host names
-  Host <- metadata |>
-    dplyr::distinct(genome.host_common_name) |>
-    dplyr::filter(!is.na(genome.host_common_name), genome.host_common_name != "") |>
-    dplyr::pull() |> sort()
+  Host <- clean_distinct(metadata, genome.host_common_name)
   
-  # helper to write markdown tables  
-  md_tbl <- function(df) {    
-    knitr::kable(df, format = "pipe")  
+  # Header
+  write_new(md_path, "# AMR summary report\n")
+  
+  # Basic stats
+  append_lines(
+    md_path,
+    c(
+      sprintf("- **Entries**: %s", TotalEntryCount[[1]]),
+      sprintf("- **Unique genome IDs**: %s", CleanEntryCount[[1]]),
+      "",
+      sprintf(
+        "- **Publications** (%d): %s",
+        length(PubMed_ids),
+        if (length(PubMed_ids)) paste(PubMed_ids, collapse = ", ") else "None"
+      ),
+      ""
+    )
+  )
+  
+  # Lists
+  append_lines(
+    md_path,
+    c(
+      sprintf("## Antibiotics (%d)", length(Antibiotics)),
+      "",
+      paste(Antibiotics, collapse = ", "),
+      "",
+      sprintf("## Antibiotic classes (%d)", length(AntibioticClasses)),
+      "",
+      paste(AntibioticClasses, collapse = ", "),
+      ""
+    )
+  )
+  
+  # Tables!
+  append_lines(md_path, c("## Phenotype counts", "", md_tbl(PhenotypeCount), "", ""))
+  append_lines(md_path, c("## Phenotype x antibiotic", "", md_tbl(PhenotypebyDrugCount), "", ""))
+  append_lines(md_path, c("## Resistant proportion per antibiotic", "", md_tbl(ResPropbyDrug), "", ""))
+  append_lines(md_path, c("## Phenotype x antibiotic class", "", md_tbl(PhenotypebyDrugClassCount), "", ""))
+  append_lines(md_path, c("## Resistant proportion per antibiotic class", "", md_tbl(ResPropbyDrugClass), "", ""))
+  append_lines(md_path, c("## Laboratory methods", "", md_tbl(LabMethods), "", ""))
+  append_lines(md_path, c("## Year counts", "", md_tbl(YearCount), "", ""))
+  append_lines(md_path, c("## Country counts", "", md_tbl(CountryCount), "", ""))
+  append_lines(md_path, c("## Isolation sources", "", md_tbl(SourceCount), "", ""))
+  
+  # Hosts as a simple list
+  if (length(Host)) {
+    append_lines(md_path, c("## Hosts", "", paste0("- ", Host), "", ""))
   }
-  
-  # --------- PRINT SUMMARY ---------
-  # ---- Write Markdown (clean tables) ----  
-  cat("# AMR Summary Report\n\n", file = md_path)  
-  cat(sprintf("- **Entries**: %s\n- **Unique genome IDs**: %s\n\n",              
-              TotalEntryCount[[1]], CleanEntryCount[[1]]), 
-      file = md_path, append = TRUE)  
-  cat(sprintf("- **Publications** (%d): %s\n\n",              
-              length(PubMed_ids),              
-              if (length(PubMed_ids)) paste(PubMed_ids, collapse = ", ") 
-              else "None"),      
-      file = md_path, append = TRUE)  
-  cat(sprintf("## Antibiotics (%d)\n\n%s\n\n",              
-              length(Antibiotics), paste(Antibiotics, collapse = ", ")),      
-      file = md_path, append = TRUE)  
-  cat(sprintf("## Antibiotic Classes (%d)\n\n%s\n\n",              
-              length(AntibioticClasses), 
-              paste(AntibioticClasses, collapse = ", ")),      
-      file = md_path, append = TRUE)  
-  cat("## Phenotype Counts\n\n", 
-      md_tbl(PhenotypeCount), "\n\n", 
-      file = md_path, append = TRUE)  
-  cat("## Phenotype × Antibiotic\n\n", 
-      md_tbl(PhenotypebyDrugCount), "\n\n", 
-      file = md_path, append = TRUE)  
-  cat("## Resistant Proportion per Antibiotic\n\n", 
-      md_tbl(ResPropbyDrug), "\n\n", 
-      file = md_path, append = TRUE)  
-  cat("## Phenotype × Antibiotic Class\n\n", 
-      md_tbl(PhenotypebyDrugClassCount), "\n\n", 
-      file = md_path, append = TRUE)  
-  cat("## Resistant Proportion per Antibiotic Class\n\n", 
-      md_tbl(ResPropbyDrugClass), "\n\n", 
-      file = md_path, append = TRUE)  
-  cat("## Laboratory Methods\n\n", 
-      md_tbl(LabMethods), "\n\n", 
-      file = md_path, append = TRUE)  
-  cat("## Year Counts\n\n", 
-      md_tbl(YearCount), "\n\n", 
-      file = md_path, append = TRUE)  
-  cat("## Country Counts\n\n", 
-      md_tbl(CountryCount), "\n\n", 
-      file = md_path, append = TRUE)  
-  cat("## Isolation Sources\n\n", 
-      md_tbl(SourceCount), "\n\n", 
-      file = md_path, append = TRUE)  
-  if (length(Host)) {    
-    cat("## Hosts\n\n", 
-        paste("- ", Host, collapse = "\n"), "\n", 
-        file = md_path, append = TRUE)  
-  }  
-  }
+}
 
 
 #' Write all summary plots to file(s)

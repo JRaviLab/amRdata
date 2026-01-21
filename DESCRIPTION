@@ -42,7 +42,8 @@ Imports:
     reshape2,
     stringr,
     tibble,
-    tidyr
+    tidyr,
+    treemapify
 biocViews: GenomeAssembly, Annotation, Sequencing
 VignetteBuilder: knitr
 Suggests:
