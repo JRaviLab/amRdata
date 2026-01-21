@@ -13,7 +13,7 @@
 # Map host paths under mounted root to container path
 #' .to_container()
 #'
-#' Used for OS-agnostic mapping of Docker directories and mount paths 
+#' Used for OS-agnostic mapping of Docker directories and mount paths
 #'
 #' @keywords internal
 #' @examples NULL
@@ -26,7 +26,7 @@
 
 # Launch Panaroo to build a pangenome (per batch)
 #' processPanaroo()
-#' 
+#'
 #' See Panaroo's documentation for details on how the parameters affect your
 #' pangenome output: https://gthlab.au/panaroo/#/gettingstarted/params
 #'
@@ -51,12 +51,12 @@
                             panaroo_threads_per_job) {
   output_path <- .docker_path(output_path)
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
-  
+
   # Fail fast if Docker is missing
   if (!nzchar(Sys.which("docker"))) {
     stop("Docker is not available on your PATH but is required to run Panaroo.")
   }
-  
+
   # Host mount root = bug directory
   mount_host <- output_path
   mount_cont <- "/work"
@@ -188,17 +188,17 @@
     output_path <- dirname(duckdb_path)
   }
   output_path <- normalizePath(output_path)
-  
+
   genome_query_output <- DBI::dbReadTable(con, "files")
-  
+
   panaroo_input_files <- genome_query_output |>
     dplyr::pull(panaroo_input)
-  
+
   # Drop true NAs
   panaroo_input_files <- panaroo_input_files[!is.na(panaroo_input_files)]
-  
+
   split_files <- strsplit(panaroo_input_files, " ")
-  
+
   # Plan for filtering
   .with_future_plan(workers = threads)
   valid_entries <- furrr::future_map(split_files, function(paths) {
@@ -256,9 +256,9 @@
 #' @param cluster_threshold Numeric. Sequence identity threshold (`--threshold`). Default `0.95`.
 #' @param family_seq_identity Numeric. Gene family clustering identity (`-f`). Default `0.5`.
 #' @param threads Integer. Number of threads for Panaroo and parallel execution. Default `8`.
-#' 
+#'
 #' @returns A a single combined pangenome.
-#' 
+#'
 #' @keywords internal
 .mergePanaroo <- function(input_path,
                           core_threshold = 0.90,
@@ -266,29 +266,29 @@
                           cluster_threshold = 0.95,
                           family_seq_identity = 0.5,
                           threads = 8){
-  
+
   input_path <- .docker_path(input_path)
-  
+
   # Fail fast if Docker is missing
   if (!nzchar(Sys.which("docker"))) {
     stop("Docker is not available on your PATH but is required to run panaroo-merge.")
   }
-  
+
   merge_dir <- file.path(input_path, "merge_output")
   dir.create(merge_dir, recursive = TRUE, showWarnings = FALSE)
-  
+
   all_dirs <- list.dirs(input_path, recursive = FALSE, full.names = TRUE)
   all_dirs <- all_dirs[grepl("^panaroo_out_", basename(all_dirs))]
-  
+
   valid_dirs <- all_dirs[file.exists(file.path(all_dirs, "final_graph.gml"))]
-  
+
   if (length(valid_dirs) > 1) {
     mount_host <- input_path
     mount_cont <- "/work"
-    
+
     # Provide each dir as a separate argv token after "-d"
     dir_args <- as.vector(t(.to_container(valid_dirs, host_root = mount_host, container_root = mount_cont)))
-    
+
     cmd_args <- c(
       "run",
       "--platform", "linux/amd64",
@@ -306,7 +306,7 @@
       "-f",               as.character(family_seq_identity),
       "-t",               as.character(threads)
     )
-    
+
     system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
   } else {
     stop("No valid Panaroo batch directories found (need >= 2 with final_graph.gml).")
@@ -484,7 +484,7 @@
                       threads = 0,
                       memory = 0,
                       extra_args = c("-g", "1")) {
-  
+
   # Fail fast if Docker is missing
   if (!nzchar(Sys.which("docker"))) {
     stop("Docker is not available on your PATH but is required to run CD-HIT.")
@@ -545,7 +545,7 @@
   }, error = function(e) {
     stop("cd-hit execution failed: ", e$message)
   })
-  
+
   if (!file.exists(clustered_faa)) {
     stop("cd-hit failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
   }
@@ -554,7 +554,7 @@
     stop("cd-hit did not produce the expected .clstr file at: ", paste0(clustered_faa, ".clstr"),
          "\nFull output:\n", paste(output, collapse = "\n"))
   }
-  
+
   message("cd-hit completed successfully.")
   list(
     cdhit_input_faa = cdhit_input_faa,
@@ -568,7 +568,7 @@
 #' `runPanaroo2Duckdb()` executes Panaroo on the genomes registered in a
 #' per-selection DuckDB (created earlier by `prepareGenomes()`), optionally in
 #' multiple batches, and imports all resulting pangenome tables into the same
-#' DuckDB database.  
+#' DuckDB database.
 #'
 #' It acts as a high-level wrapper around:
 #' * **`.runPanaroo()`** — runs Panaroo (single or multi-batch)
@@ -633,10 +633,10 @@
 #' and modeling steps in `amRdata` and `amRml`.
 #'
 #' @seealso
-#' * `.runPanaroo()` — core Panaroo execution  
-#' * `.mergePanaroo()` — merge multiple Panaroo batches  
-#' * `.panaroo2duckdb()` — import Panaroo results into DuckDB  
-#' * [runDataProcessing()] — full pipeline including CD-HIT & InterProScan  
+#' * `.runPanaroo()` — core Panaroo execution
+#' * `.mergePanaroo()` — merge multiple Panaroo batches
+#' * `.panaroo2duckdb()` — import Panaroo results into DuckDB
+#' * [runDataProcessing()] — full pipeline including CD-HIT & InterProScan
 #'
 #' @examples
 #' \dontrun{
@@ -733,7 +733,7 @@ runPanaroo2Duckdb <- function(duckdb_path,
     stop("CD-HIT cluster file not found: ", clstr,
          "\nEnsure .runCDHIT() completed successfully and produced the .clstr file.")
   }
-  
+
   lines <- data.table::fread(clstr, sep = "\n", header = FALSE)$V1
   cluster_ids <- grep("^>Cluster", lines)
   cluster_map <- data.table::data.table()
@@ -893,26 +893,26 @@ CDHIT2duckdb <- function(duckdb_path,
     verbose      = TRUE
 ) {
   msg <- function(...) if (verbose) message(sprintf(...))
-  
+
   if (!dir.exists(dest_dir)) dir.create(dest_dir, recursive = TRUE, showWarnings = FALSE)
   dest_dir <- normalizePath(dest_dir, mustWork = TRUE)
-  
+
   root_dir <- file.path(dest_dir, sprintf("interproscan-%s", version))
   data_dir <- file.path(root_dir, "data")
-  
+
   # Simple existence check
   if (dir.exists(data_dir) && length(list.files(data_dir, recursive = TRUE)) > 0) {
     msg("InterProScan data already present at: %s", data_dir)
     return(list(data_dir = normalizePath(data_dir), ready = TRUE))
   }
-  
+
   # Download bundle if needed
   tar_url  <- sprintf("http://ftp.ebi.ac.uk/pub/software/unix/iprscan/5/%s/alt/interproscan-data-%s.tar.gz",
                       version, version)
   md5_url  <- paste0(tar_url, ".md5")
   tar_path <- file.path(dest_dir, basename(tar_url))
   md5_path <- paste0(tar_path, ".md5")
-  
+
   if (!file.exists(tar_path)) {
     msg("Downloading InterProScan data bundle.")
     status_tar  <- system2(curl_bin, c("-L", "-o", tar_path, tar_url))
@@ -920,16 +920,16 @@ CDHIT2duckdb <- function(duckdb_path,
     if (status_tar != 0 || status_md5 != 0)
       stop("Failed to download InterProScan data bundle.")
   }
-  
+
   msg("Verifying MD5 checksum.")
   md5_expected <- sub("\\s+.*$", "", readLines(md5_path)[1])
   md5_actual   <- tools::md5sum(tar_path)[[1]]
   if (!identical(tolower(md5_expected), tolower(md5_actual)))
     stop("MD5 checksum mismatch for InterProScan data bundle.")
-  
+
   msg("Extracting InterProScan data bundle.")
   utils::untar(tar_path, exdir = dest_dir, tar = "internal")
-  
+
   msg("Data unpacked successfully.")
   return(list(data_dir = normalizePath(data_dir), ready = TRUE))
 }
@@ -1057,7 +1057,7 @@ CDHIT2duckdb <- function(duckdb_path,
     "-b", chunk_out_file_base_cont
   )
 
-  
+
   status <- tryCatch({
     system2(
       "docker",
@@ -1107,15 +1107,15 @@ domainFromIPR <- function(duckdb_path,
                           threads = 8,
                           file_format = "TSV",
                           docker_repo = "interpro/interproscan") {
-  
+
   duckdb_path <- normalizePath(duckdb_path)
   if (missing(path) || path %in% c(".", "results", "results/")) {
     path <- dirname(duckdb_path)
   }
   path <- normalizePath(path)
-  
+
   ipr_image <- sprintf("%s:%s", docker_repo, ipr_version)
-  
+
   # Prepare data if needed
   ipr_info <- if (isTRUE(auto_prepare_data)) {
     .checkInterProData(
@@ -1130,31 +1130,31 @@ domainFromIPR <- function(duckdb_path,
          ready = NA)
   }
   ipr_data_path <- ipr_info$data_dir
-  
+
   # Pull image once
   try(suppressWarnings(system2("docker", args = c("pull", ipr_image))), silent = TRUE)
-  
+
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
-  
+
   sequences_df <- dplyr::tbl(con, "protein_cluster_seq") |> tibble::as_tibble()
   if (nrow(sequences_df) == 0L)
     stop("No sequences found in 'protein_cluster_seq'. Please run CDHIT2duckdb() first.")
-  
+
   # Chunking for parallel (not currently implemented due to memory limits)
   chunks <- list(sequences_df)   # Force 1 chunk for RAM limits
-  
+
   # Forcing 1 container operation for RAM limits
   workers <- 1
   cpu_per_container <- threads
-  
+
   message(sprintf(
     "InterPro: running in single-container mode with %d CPU(s).",
     cpu_per_container
   ))
-  
+
   .with_future_plan(workers = 1)
-  
+
   results <- future.apply::future_lapply(seq_along(chunks), function(i) {
     res <- try(
       .process_chunk(
@@ -1176,20 +1176,20 @@ domainFromIPR <- function(duckdb_path,
     }
     res
   })
-  
+
   # Combine results
   tsvs <- Filter(function(x) !is.null(x) && file.exists(x), results)
   if (length(tsvs) == 0L)
     stop("InterProScan produced no usable outputs. Check Docker logs above.")
-  
+
   df_iprscan <- do.call(rbind, lapply(tsvs, .readIPRscanTsv))
-  
+
   # Load processed tables (unchanged)
   DBI::dbWriteTable(con, "domain_names",
                     df_iprscan |>
                       dplyr::select(AccNum, DB.ID, SignDesc, IPRAcc, IPRDesc, StartLoc, StopLoc),
                     overwrite = TRUE)
-  
+
   df_protein_domain_pa <- df_iprscan |>
     dplyr::select(AccNum, DB.ID, IPRAcc, placeholder) |>
     dplyr::mutate(domain_ID = stringr::str_glue("{DB.ID}_{IPRAcc}")) |>
@@ -1200,24 +1200,24 @@ domainFromIPR <- function(duckdb_path,
     dplyr::group_by(AccNum) |>
     dplyr::summarize(across(everything(), ~ ifelse(any(. == "1"), "1", "0")), .groups = "drop") |>
     dplyr::mutate(across(-AccNum, as.numeric))
-  
+
   protein_filter <- dplyr::tbl(con, "protein_count") |> tibble::as_tibble()
   accs <- unique(df_protein_domain_pa$AccNum)
   accs_in_matrix <- intersect(accs, colnames(protein_filter))
   if (length(accs_in_matrix) == 0L)
     stop("No InterPro accessions match protein_count columns.")
-  
+
   protein_filter <- protein_filter |> dplyr::select(genome_id, dplyr::all_of(accs_in_matrix))
   df_protein_domain_pa <- df_protein_domain_pa |>
     dplyr::filter(AccNum %in% accs_in_matrix) |>
     dplyr::arrange(match(AccNum, accs_in_matrix))
-  
+
   domain_count <- as.matrix(protein_filter |> dplyr::select(-genome_id)) %*%
     as.matrix(df_protein_domain_pa |> dplyr::select(-AccNum)) |>
     tibble::as_tibble() |>
     dplyr::mutate(genome_id = protein_filter |> dplyr::pull(genome_id)) |>
     dplyr::relocate(genome_id, .before = dplyr::everything())
-  
+
   DBI::dbWriteTable(conn = con, name = "domain_count", domain_count, overwrite = TRUE)
   invisible(TRUE)
 }
@@ -1515,16 +1515,16 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/"){
 #'
 #' **Input Requirements**
 #' * The `duckdb_path` must reference a per-selection DuckDB that contains:
-#'   `files` (paths to `.gff`, `.fna`, `.PATRIC.faa`),  
-#'   `filtered` (genomes selected for download/filtering), and  
+#'   `files` (paths to `.gff`, `.fna`, `.PATRIC.faa`),
+#'   `filtered` (genomes selected for download/filtering), and
 #'   BV-BRC metadata tables written by earlier steps.
 #'
 #' **Outputs & Side Effects**
 #' * Writes tool-specific intermediate outputs under `output_path` (e.g., `panaroo_out_*`, CD-HIT files).
 #' * Writes Parquet files to `output_path`:
-#'   `gene_count.parquet`, `protein_count.parquet`, `domain_count.parquet`, `struct.parquet`,  
-#'   `gene_names.parquet`, `protein_names.parquet`, `domain_names.parquet`,  
-#'   `gene_seqs.parquet`, `protein_seqs.parquet`, `genome_gene_protein.parquet`,  
+#'   `gene_count.parquet`, `protein_count.parquet`, `domain_count.parquet`, `struct.parquet`,
+#'   `gene_names.parquet`, `protein_names.parquet`, `domain_names.parquet`,
+#'   `gene_seqs.parquet`, `protein_seqs.parquet`, `genome_gene_protein.parquet`,
 #'   `metadata.parquet`, `amr_phenotype.parquet`, `genome_data.parquet`, `original_metadata.parquet`.
 #' * Creates a new Parquet-backed DuckDB (`*_parquet.duckdb`) with read-only views pointing to those Parquets.
 #'
@@ -1638,7 +1638,7 @@ runDataProcessing <- function(duckdb_path,
     message("Completed data-processing pipeline successfully.")
     message("Parquet-backed DuckDB created at:")
     message("  ", normalizePath(parquet_duckdb_path))
-    message("\nYou can use the amR_ml package to train machine")
+    message("\nYou can use the amRml package to train machine")
     message("learning models for AMR using this file path.")
     message("For example:")
     message("  runMLmodels(\"", normalizePath(parquet_duckdb_path), "\")")
