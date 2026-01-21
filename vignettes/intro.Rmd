@@ -23,31 +23,31 @@ library(amRdata)
 
 `amRdata` is part of a 3-package suite for predicting antimicrobial resistance (AMR) using machine learning models trained on bacterial genomic features.
 
-This vignette demonstrates how to download, process and visualize metadata and genomics data. 
+This vignette demonstrates how to download, process and visualize metadata and genomics data.
 
 ## Data Curation
 
-For meta data curation with `amRdata`, use `retrieveMetadata()` to create a DuckDB containing metadata tables.
+For metadata curation with `amRdata`, use `retrieveMetadata()` to create a DuckDB containing metadata tables.
 
 ```{r}
 # Download all AMR data for a species from BV-BRC
 retrieveMetadata(user_bacs = "Shigella flexneri",
                              filter_type = "AMR",
-                             base_dir = ".",
+                             base_dir = "../data/",
                              abx = "All",
                              overwrite = FALSE,
                              image = "danylmb/bvbrc:5.3",
-                             verbose = TRUE)
+                             verbose = FALSE)
 ```
 
 This wrote tables 'amr_phenotype', 'genome_data', and 'metadata' to a DuckDB
 
-For downloading genomes with proper AMR phenotype data, use `retrieveGenomes()`
+For downloading genomes with paired AMR phenotype data, use `retrieveGenomes()`
 
 ```{r }
-retrieveGenomes <- function(base_dir = ".",
+retrieveGenomes(base_dir = "../data/",
                             user_bacs = "Shigella flexneri",
-                            method = c("ftp", "cli"),
+                            method = c("cli"),
                             image = "danylmb/bvbrc:5.3",
                             skip_existing = TRUE,
                             ftp_workers = 8L,
@@ -56,39 +56,46 @@ retrieveGenomes <- function(base_dir = ".",
                             chunk_size = 50L,
                             verbose = TRUE)
 ```
+
 This returns character vector of genome IDs and wrote complete file sets on disk.
 
-to write a .txt file with downloaded genome file paths (.fna, .faa, .gff) 
+To write a .txt file listing downloaded genome filepaths (.fna, .faa, .gff)
 
 ```{r }
-genomeList(base_dir = ".",
+genomeList(base_dir = "../data/",
                        user_bacs = "Shigella flexneri",
                        verbose = TRUE)
+
 ```
 
 #### A wrapper for downloading genomes and listing the paths
-Internally runs:
-1. `retrieveGenomes()`  
-2. `genomeList()`  
+
+Internally runs: 
+1. `retrieveGenomes()`\
+2. `genomeList()`
+
+Allows users to input a species or taxon ID and automate all data downloading and curation steps.
 
 ```{r }
 prepareGenomes(user_bacs = "Shigella flexneri",
-                           base_dir = ".",
-                           method = c("ftp", "cli"),
+                           base_dir = "../data/",
+                           method = c("cli"),
                            overwrite = FALSE,
                            verbose = TRUE)
 ```
 
 ## Data Processing
+
 #### A wrapper for creating pangenome, protein clusters and annotate domains
-Internally runs:
-1. `.runPanaroo2Duckdb()` -> run Panaroo (optional panaroo-merge) to generate pangenome and create genomes by genes table
-2. `CDHIT2duckdb()` -> run CDHIT to cluster proteins and create genomes by proteins table 
-3. `domainFromIPR()` -> run IPRScan to annotate proteins to domains and create genomes by domains table
-4. `cleanData()` -> Clean metadata and export the feature tables to Parquet + Parquet-backed DuckDB
+
+Internally runs: 
+1. `runPanaroo2Duckdb()` -\> run Panaroo (optional panaroo-merge) to generate pangenome and create genomes by genes table 
+2. `CDHIT2duckdb()` -\> run CDHIT to cluster proteins and create genomes by proteins table 
+3. `domainFromIPR()` -\> run IPRScan to annotate proteins to domains and create genomes by domains table 
+4. `cleanData()` -\> Clean metadata and export the feature tables to Parquet + Parquet-backed DuckDB
 
 ```{r}
-runDataProcessing(duckdb_path = "data/",
+runDataProcessing(duckdb_path = "../data/Shigella_flexneri/Sfl.duckdb",
                               output_path = NULL,
                               # unified threads for all tools
                               threads = 16,
@@ -112,7 +119,7 @@ runDataProcessing(duckdb_path = "data/",
                               ipr_platform = "linux/amd64",
                               auto_prepare_data = TRUE,
                               # Metadata cleaning
-                              ref_file_path = "data_raw/",
+                              ref_file_path = "../data_raw/",
                               verbose = TRUE)
 ```
 
