@@ -32,7 +32,7 @@
     <span class="caret"></span>
   </a>
   <ul class="dropdown-menu" role="menu"><li>
-      <a href="../articles/intro.html">intro</a>
+      <a href="../articles/intro.html">Introduction to amRdata</a>
     </li>
   </ul></li>
       </ul><ul class="nav navbar-nav navbar-right"><li>
@@ -62,21 +62,9 @@
         </td>
         <td><p>Cluster proteins with CD-HIT and write results to DuckDB</p></td>
       </tr><tr><td>
-          <p><code><a href="buildMatrices.html">buildMatrices()</a></code> </p>
-        </td>
-        <td><p>Build genome-by-cluster count matrix</p></td>
-      </tr><tr><td>
-          <p><code><a href="checkInterProData.html">checkInterProData()</a></code> </p>
-        </td>
-        <td><p>Check if InterProScan data are ready for use</p></td>
-      </tr><tr><td>
           <p><code><a href="class_abbr.html">class_abbr</a></code> </p>
         </td>
         <td><p>Drug class abbreviations</p></td>
-      </tr><tr><td>
-          <p><code><a href="cleanData.html">cleanData()</a></code> </p>
-        </td>
-        <td><p>Clean BV-BRC metadata, then save as Parquet files</p></td>
       </tr><tr><td>
           <p><code><a href="clean_drug.html">clean_drug</a></code> </p>
         </td>
@@ -85,10 +73,6 @@
           <p><code><a href="cleaned_bvbrc_countries.html">cleaned_bvbrc_countries</a></code> </p>
         </td>
         <td><p>Cleaned BV-BRC country names</p></td>
-      </tr><tr><td>
-          <p><code><a href="clusterNames.html">clusterNames()</a></code> </p>
-        </td>
-        <td><p>Get cluster names from CD-HIT output</p></td>
       </tr><tr><td>
           <p><code><a href="domainFromIPR.html">domainFromIPR()</a></code> </p>
         </td>
@@ -102,37 +86,17 @@
         </td>
         <td><p>This function retrieves metadata for the given genome IDs.</p></td>
       </tr><tr><td>
+          <p><code><a href="dot-filterGenomes.html">.filterGenomes()</a></code> </p>
+        </td>
+        <td><p>Filter genomes by AMR phenotype and metadata, and store results in DuckDB</p></td>
+      </tr><tr><td>
           <p><code><a href="dot-generateDBname.html">.generateDBname()</a></code> </p>
         </td>
         <td><p>Generate a shortened database name from taxon IDs or species names</p></td>
       </tr><tr><td>
-          <p><code><a href="dot-getDfIPRColNames.html">.getDfIPRColNames()</a></code> </p>
+          <p><code><a href="dot-getGenomeIDs.html">.getGenomeIDs()</a></code> </p>
         </td>
-        <td><p>Title</p></td>
-      </tr><tr><td>
-          <p><code><a href="dot-getDfIPRColTypes.html">.getDfIPRColTypes()</a></code> </p>
-        </td>
-        <td><p>construct column types for reading interproscan output TSVs (based upon the global variable written in molevol_scripts/R/colnames_molevol.R)</p></td>
-      </tr><tr><td>
-          <p><code><a href="dot-panaroo2OtherTables.html">.panaroo2OtherTables()</a></code> </p>
-        </td>
-        <td><p>Write Panaroo reference FASTA and long presence/absence to DuckDB tables</p></td>
-      </tr><tr><td>
-          <p><code><a href="dot-panaroo2StructTable.html">.panaroo2StructTable()</a></code> </p>
-        </td>
-        <td><p>Convert Panaroo gene struct presence/absence matrix to a per-genome struct table</p></td>
-      </tr><tr><td>
-          <p><code><a href="dot-panaroo2geneNames.html">.panaroo2geneNames()</a></code> </p>
-        </td>
-        <td><p>Extract gene name and annotations from Panaroo gene presence/absence matrix</p></td>
-      </tr><tr><td>
-          <p><code><a href="dot-panaroo2geneTable.html">.panaroo2geneTable()</a></code> </p>
-        </td>
-        <td><p>Convert Panaroo gene presence/absence matrix to a per-genome gene count table</p></td>
-      </tr><tr><td>
-          <p><code><a href="dot-readIPRscanTsv.html">.readIPRscanTsv()</a></code> </p>
-        </td>
-        <td><p>Read an interproscan output TSV with standardized column names and types</p></td>
+        <td><p>Retrieve genome IDs from BV-BRC and store them in DuckDB</p></td>
       </tr><tr><td>
           <p><code><a href="dot-retrieveCustomQuery.html">.retrieveCustomQuery()</a></code> </p>
         </td>
@@ -154,45 +118,29 @@
         </td>
         <td><p>Drug class mappings</p></td>
       </tr><tr><td>
-          <p><code><a href="filterGenomes.html">filterGenomes()</a></code> </p>
-        </td>
-        <td><p>Filter genomes by AMR phenotype and metadata, and store results in DuckDB</p></td>
-      </tr><tr><td>
           <p><code><a href="genomeList.html">genomeList()</a></code> </p>
         </td>
         <td><p>Build a table of local genome file paths and write to DuckDB</p></td>
       </tr><tr><td>
-          <p><code><a href="getGenomeIDs.html">getGenomeIDs()</a></code> </p>
+          <p><code><a href="prepareGenomes.html">prepareGenomes()</a></code> </p>
         </td>
-        <td><p>Retrieve genome IDs from BV-BRC and store them in DuckDB</p></td>
-      </tr><tr><td>
-          <p><code><a href="mergePanaroo.html">mergePanaroo()</a></code> </p>
-        </td>
-        <td><p>Merge multiple Panaroo batch outputs into a single pangenome result</p></td>
-      </tr><tr><td>
-          <p><code><a href="panaroo2duckdb.html">panaroo2duckdb()</a></code> </p>
-        </td>
-        <td><p>Consolidate Panaroo outputs into DuckDB tables</p></td>
-      </tr><tr><td>
-          <p><code><a href="parseProteinClusters.html">parseProteinClusters()</a></code> </p>
-        </td>
-        <td><p>Parse CD-HIT protein cluster output</p></td>
+        <td><p>Download and prepare all files for a chosen bacterial species or TaxID</p></td>
       </tr><tr><td>
           <p><code><a href="retrieveGenomes.html">retrieveGenomes()</a></code> </p>
         </td>
-        <td><p>Download genome files (PATRIC.GFF, FNA, PATRIC.FAA) for filtered BV-BRC genomes</p></td>
+        <td><p>Download .fna, .faa, .gff files for filtered BV-BRC genomes</p></td>
       </tr><tr><td>
           <p><code><a href="retrieveMetadata.html">retrieveMetadata()</a></code> </p>
         </td>
         <td><p>Retrieve AMR or Microtrait metadata from BV-BRC and store in DuckDB</p></td>
       </tr><tr><td>
-          <p><code><a href="runCDHIT.html">runCDHIT()</a></code> </p>
+          <p><code><a href="runDataProcessing.html">runDataProcessing()</a></code> </p>
         </td>
-        <td><p>Run CD-HIT (via Docker) on concatenated protein FASTA and return output paths</p></td>
+        <td><p>Run the full amRdata processing pipeline (Panaroo → CD-HIT → InterProScan → Parquet)</p></td>
       </tr><tr><td>
-          <p><code><a href="runPanaroo.html">runPanaroo()</a></code> </p>
+          <p><code><a href="runPanaroo2Duckdb.html">runPanaroo2Duckdb()</a></code> </p>
         </td>
-        <td><p>Run Panaroo for Pangenome Analysis in Parallel Batches</p></td>
+        <td><p>Run Panaroo and import pangenome outputs into DuckDB</p></td>
       </tr></tbody></table></div>
 
   <div class="col-md-3 hidden-xs hidden-sm" id="pkgdown-sidebar">

@@ -34,7 +34,7 @@ case-insensitive substrings against genome.species."><!-- mathjax --><script src
     <span class="caret"></span>
   </a>
   <ul class="dropdown-menu" role="menu"><li>
-      <a href="../articles/intro.html">intro</a>
+      <a href="../articles/intro.html">Introduction to amRdata</a>
     </li>
   </ul></li>
       </ul><ul class="nav navbar-nav navbar-right"><li>
@@ -65,7 +65,7 @@ case-insensitive substrings against <code>genome.species</code>.</p>
 
     <div id="ref-usage">
     <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">.retrieveCustomQuery</span><span class="op">(</span></span>
-<span>  base_path <span class="op">=</span> <span class="st">"."</span>,</span>
+<span>  base_dir <span class="op">=</span> <span class="st">"."</span>,</span>
 <span>  user_bacs <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"90371"</span>, <span class="st">"Bacillus subtilis"</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -74,9 +74,9 @@ case-insensitive substrings against <code>genome.species</code>.</p>
     <h2>Arguments</h2>
 
 
-<dl><dt id="arg-base-path">base_path<a class="anchor" aria-label="anchor" href="#arg-base-path"></a></dt>
+<dl><dt id="arg-base-dir">base_dir<a class="anchor" aria-label="anchor" href="#arg-base-dir"></a></dt>
 <dd><p>Character. Project root. BV-BRC cache is expected at
-<code>file.path(base_path, "data", "bvbrc", "bvbrcData.duckdb")</code>.</p></dd>
+<code>file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")</code>.</p></dd>
 
 
 <dt id="arg-user-bacs">user_bacs<a class="anchor" aria-label="anchor" href="#arg-user-bacs"></a></dt>

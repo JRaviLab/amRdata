@@ -33,7 +33,7 @@ It uses BV-BRC tools within a Docker container to fetch and process the data bas
     <span class="caret"></span>
   </a>
   <ul class="dropdown-menu" role="menu"><li>
-      <a href="../articles/intro.html">intro</a>
+      <a href="../articles/intro.html">Introduction to amRdata</a>
     </li>
   </ul></li>
       </ul><ul class="nav navbar-nav navbar-right"><li>
@@ -63,7 +63,7 @@ It uses BV-BRC tools within a Docker container to fetch and process the data bas
 
     <div id="ref-usage">
     <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">.extractAMRtable</span><span class="op">(</span></span>
-<span>  <span class="va">base_path</span>,</span>
+<span>  <span class="va">base_dir</span>,</span>
 <span>  <span class="va">batch_genome_IDs</span>,</span>
 <span>  <span class="va">abx_filter</span>,</span>
 <span>  <span class="va">drug_fields</span>,</span>
@@ -76,11 +76,7 @@ It uses BV-BRC tools within a Docker container to fetch and process the data bas
     <h2>Arguments</h2>
 
 
-<dl><dt id="arg-base-path">base_path<a class="anchor" aria-label="anchor" href="#arg-base-path"></a></dt>
-<dd><p>A string representing the file path to a directory where temporary files and data will be stored.</p></dd>
-
-
-<dt id="arg-batch-genome-ids">batch_genome_IDs<a class="anchor" aria-label="anchor" href="#arg-batch-genome-ids"></a></dt>
+<dl><dt id="arg-batch-genome-ids">batch_genome_IDs<a class="anchor" aria-label="anchor" href="#arg-batch-genome-ids"></a></dt>
 <dd><p>A character vector containing genome IDs to query.</p></dd>
 
 
@@ -100,6 +96,10 @@ This corresponds to the attributes retrieved by the <code>p3-get-genome-drugs</c
 
 <dt id="arg-verbose">verbose<a class="anchor" aria-label="anchor" href="#arg-verbose"></a></dt>
 <dd><p>Logical. If TRUE, prints concise messages.</p></dd>
+
+
+<dt id="arg-path">path<a class="anchor" aria-label="anchor" href="#arg-path"></a></dt>
+<dd><p>A string representing the file path to a directory where temporary files and data will be stored.</p></dd>
 
 </dl></div>
     <div id="value">

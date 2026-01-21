@@ -50,7 +50,7 @@
   </a>
   <ul class="dropdown-menu" role="menu">
 <li>
-      <a href="articles/intro.html">intro</a>
+      <a href="articles/intro.html">Introduction to amRdata</a>
     </li>
   </ul>
 </li>
@@ -75,96 +75,360 @@
       </header><div class="row">
   <div class="contents col-md-9">
 <div class="section level1">
-<div class="page-header"><h1 id="newpackage">NewPackage<a class="anchor" aria-label="anchor" href="#newpackage"></a>
+<div class="page-header"><h1 id="amrdata">amRdata<a class="anchor" aria-label="anchor" href="#amrdata"></a>
 </h1></div>
 <!-- badges: start -->
 
-<p>The goal of NewPackage is to … &lt; <em>your awesome package description here!</em> &gt;</p>
+<p>amRdata is the first package in the <a href="https://github.com/JRaviLab/amR" class="external-link">amR suite</a> for antimicrobial resistance (AMR) prediction. It takes a user‑provided species or taxon ID, downloads the corresponding genomes and AST data from BV‑BRC, constructs pangenomes, extracts features at multiple molecular scales, and prepares a unified Parquet‑backed DuckDB file for downstream ML modeling in <strong>amRml</strong>.</p>
+<p>The workflow is comprised of 6 primary processes:</p>
+<ol style="list-style-type: decimal">
+<li>BV‑BRC metadata (isolate metadata + AMR phenotypic labels) →</li>
+<li>BV-BRC genomes (sequence data) →</li>
+<li>Panaroo pangenome (genes, struct) →<br>
+</li>
+<li>CD‑HIT protein clusters (proteins) →</li>
+<li>Pfam domain extraction (domains) →</li>
+<li>Database formatting</li>
+</ol>
 <div class="section level2">
-<h2 id="github-setup">GitHub Setup<a class="anchor" aria-label="anchor" href="#github-setup"></a>
+<h2 id="overview">Overview<a class="anchor" aria-label="anchor" href="#overview"></a>
 </h2>
-<div class="section level3">
-<h3 id="repository">Repository<a class="anchor" aria-label="anchor" href="#repository"></a>
-</h3>
-<p>Initial Repository Configuration:</p>
+<p>amRdata includes functions to:</p>
 <ul>
-<li>Enable Git: <code>usethis::use_git()</code>
-</li>
-<li>Configure Remote: <code>usethis::use_github(organisation = "JRaviLab", private = TRUE, protocol = "https")</code>
-</li>
-<li>Contributor Code of Conduct: <code>usethis::use_code_of_conduct(contact = "janani.ravi@cuanschutz.edu")</code>
-</li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="github-actions">GitHub Actions<a class="anchor" aria-label="anchor" href="#github-actions"></a>
-</h3>
-<p>These functions will enable common package development GitHub Actions is desired:</p>
+<li>Query and download bacterial genome data from BV-BRC</li>
+<li>Acquire paired antimicrobial susceptibility testing (AST) results</li>
+<li>Extract molecular features across scales:
 <ul>
-<li>R CMD Check (multiplatform): <code>usethis::use_github_action("check_standard")</code>
-</li>
-<li>Build Pkgdown: <code>use_github_action("pkgdown")</code>
-</li>
-<li>lint code: <code>use_github_action("lint")</code>
-</li>
-<li>style code: <code>use_github_action("style")</code>
-</li>
+<li>Gene clusters (Panaroo pangenome analysis)</li>
+<li>Protein clusters (CD-HIT sequence similarity)</li>
+<li>Protein domains (Pfam annotations)</li>
+<li>Structural variants (Panaroo pangenome rearrangements)</li>
 </ul>
-<p>Example GitHub Actions workflows have been incorporated into this template. Modify workflows in <code>.github/workflows/</code> or delete if these are not required.</p>
-</div>
-</div>
-<div class="section level2">
-<h2 id="development">Development<a class="anchor" aria-label="anchor" href="#development"></a>
-</h2>
-<ul>
-<li>new function: <code>usethis::use_r("hello")</code>
 </li>
-<li>add package dependency: <code>usethis::use_package("rlang")</code>
-</li>
-<li>render documentation/update NAMESPACE: <code>devtools::document()</code>
-</li>
-<li>load changes without install: <code>devtools::load_all()</code>
-</li>
-<li>Local R CMD Check: <code>devtools::check()</code>
-</li>
+<li>Store all data in highly efficient Parquet and DuckDB formats</li>
 </ul>
+<p>See the <a href="https://jravilab.github.io/amRdata/articles/intro.html" class="external-link">package vignette</a> for detailed usage.</p>
 </div>
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
-<p>You can install the development version of NewPackage like so:</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="co"># GitHub</span></span>
-<span><span class="fu">devtools</span><span class="fu">::</span><span class="fu">install_github</span><span class="op">(</span><span class="st">"JRaviLab/NewPackage"</span>, auth_token <span class="op">=</span> <span class="st">"&lt;PersonalAccessToken&gt;"</span><span class="op">)</span></span>
-<span><span class="co"># If Bioconductor Dependencies</span></span>
-<span><span class="fu">BiocManager</span><span class="fu">::</span><span class="fu">install</span><span class="op">(</span><span class="st">"JRaviLab/NewPackage"</span>, auth_token <span class="op">=</span> <span class="st">"&lt;PersonalAccessToken&gt;"</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="co"># Install from GitHub</span></span>
+<span><span class="kw">if</span> <span class="op">(</span><span class="op">!</span><span class="fu"><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace</a></span><span class="op">(</span><span class="st">"remotes"</span>, quietly <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span></span>
+<span>    <span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"remotes"</span><span class="op">)</span></span>
+<span></span>
+<span><span class="fu">remotes</span><span class="fu">::</span><span class="fu">install_github</span><span class="op">(</span><span class="st">"JRaviLab/amRdata"</span><span class="op">)</span></span></code></pre></div>
 </div>
 <div class="section level2">
-<h2 id="example">Example<a class="anchor" aria-label="anchor" href="#example"></a>
+<h2 id="quick-start">Quick start<a class="anchor" aria-label="anchor" href="#quick-start"></a>
 </h2>
-<p>This is a basic example which shows you how to solve a common problem:</p>
-<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va">NewPackage</span><span class="op">)</span></span>
-<span><span class="co">## basic example code</span></span></code></pre></div>
-<p>What is special about using <code>README.Rmd</code> instead of just <code>README.md</code>? You can include R chunks like so:</p>
-<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/summary.html" class="external-link">summary</a></span><span class="op">(</span><span class="va">cars</span><span class="op">)</span></span>
-<span><span class="co">#&gt;      speed           dist       </span></span>
-<span><span class="co">#&gt;  Min.   : 4.0   Min.   :  2.00  </span></span>
-<span><span class="co">#&gt;  1st Qu.:12.0   1st Qu.: 26.00  </span></span>
-<span><span class="co">#&gt;  Median :15.0   Median : 36.00  </span></span>
-<span><span class="co">#&gt;  Mean   :15.4   Mean   : 42.98  </span></span>
-<span><span class="co">#&gt;  3rd Qu.:19.0   3rd Qu.: 56.00  </span></span>
-<span><span class="co">#&gt;  Max.   :25.0   Max.   :120.00</span></span></code></pre></div>
-<p>You’ll still need to render <code>README.Rmd</code> regularly, to keep <code>README.md</code> up-to-date. <code>devtools::build_readme()</code> is handy for this.</p>
-<p>You can also embed plots, for example:</p>
-<p><img src="reference/figures/README-pressure-1.png" width="100%"></p>
-<p>In that case, don’t forget to commit and push the resulting figure files, so they display on GitHub and CRAN.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a></span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="fu">library</span>(amRdata)</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a><span class="co"># Step 1: Download and prepare genomes with paired AST data from BV-BRC</span></span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a><span class="fu">prepareGenomes</span>(</span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>  <span class="at">user_bacs =</span> <span class="fu">c</span>(<span class="st">"Shigella flexneri"</span>),</span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a>  <span class="at">base_dir  =</span> <span class="st">"data/Shigella_flexneri"</span>,</span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a>  <span class="at">method    =</span> <span class="st">"ftp"</span>,   <span class="co"># or "cli"</span></span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a>  <span class="at">verbose   =</span> <span class="cn">TRUE</span></span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a>)</span>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a></span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="co"># Step 2: Run full feature extraction (Panaroo → CD-HIT → InterProScan → metadata cleaning)</span></span>
+<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a><span class="fu">runDataProcessing</span>(</span>
+<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a>  <span class="at">duckdb_path =</span> <span class="st">"data/Shigella_flexneri/Sfl.duckdb"</span>,</span>
+<span id="cb2-15"><a href="#cb2-15" tabindex="-1"></a>  <span class="at">output_path =</span> <span class="st">"data/Shigella_flexneri"</span>,</span>
+<span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a>  <span class="at">threads     =</span> <span class="dv">16</span>,</span>
+<span id="cb2-17"><a href="#cb2-17" tabindex="-1"></a>  <span class="at">ref_file_path =</span> <span class="st">"data_raw/"</span></span>
+<span id="cb2-18"><a href="#cb2-18" tabindex="-1"></a>)</span>
+<span id="cb2-19"><a href="#cb2-19" tabindex="-1"></a></span>
+<span id="cb2-20"><a href="#cb2-20" tabindex="-1"></a><span class="co"># A final Parquet-backed DuckDB is created:</span></span>
+<span id="cb2-21"><a href="#cb2-21" tabindex="-1"></a><span class="co">#   data/Shigella_flexneri/Sfl_parquet.duckdb</span></span>
+<span id="cb2-22"><a href="#cb2-22" tabindex="-1"></a></span>
+<span id="cb2-23"><a href="#cb2-23" tabindex="-1"></a>This contains data <span class="cf">for</span> feature presence<span class="sc">/</span>absence and counts across scales <span class="cf">in</span> genome by feature matrices, as well as all available sample metadata. </span></code></pre></div>
 </div>
 <div class="section level2">
-<h2 id="code-of-conduct">Code of Conduct<a class="anchor" aria-label="anchor" href="#code-of-conduct"></a>
+<h2 id="package-features">Package features<a class="anchor" aria-label="anchor" href="#package-features"></a>
 </h2>
-<p>Please note that the NewPackage project is released with a <a href="https://contributor-covenant.org/version/2/1/CODE_OF_CONDUCT.html" class="external-link">Contributor Code of Conduct</a>. By contributing to this project, you agree to abide by its terms.</p>
+<div class="section level3">
+<h3 id="data-curation">Data curation<a class="anchor" aria-label="anchor" href="#data-curation"></a>
+</h3>
+<ol style="list-style-type: decimal">
+<li>BV‑BRC data access amRdata uses the BV‑BRC CLI (via Docker) or FTP server to access:</li>
+</ol>
+<ul>
+<li>Genome metadata</li>
+<li>AMR phenotype data</li>
+<li>Genome assemblies (<code>.fna</code>, <code>.faa</code>, <code>.gff</code>)</li>
+</ul>
+<p>Functions involved:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="fu">.updateBVBRCdata</span>()</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="fu">.retrieveCustomQuery</span>()</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a><span class="fu">.retrieveQueryIDs</span>()</span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a><span class="fu">retrieveGenomes</span>()</span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a><span class="fu">.filterGenomes</span>()</span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a><span class="fu">prepareGenomes</span>()</span></code></pre></div>
+<p>After initial download, all BV-BRC metadata is cached automatically under: <code>data/bvbrc/bvbrcData.duckdb</code></p>
+<p>The package interfaces with BV-BRC (Bacterial and Viral Bioinformatics Resource Center) to access bacterial genome sequences and antimicrobial susceptibility testing data either using FTP or the BV-BRC CLI wrapped in a Docker container for reproducible access:</p>
+<ul>
+<li>Query isolate metadata with flexible filtering</li>
+<li>Download genome files (<code>.fna</code>, <code>.faa</code>, <code>.gff</code>)</li>
+<li>Retrieve AST results linking genotypes to phenotypes</li>
+<li>Apply quality control filters (assembly quality, metadata completeness)</li>
+</ul>
+</div>
+<div class="section level3">
+<h3 id="feature-extraction">Feature extraction<a class="anchor" aria-label="anchor" href="#feature-extraction"></a>
+</h3>
+<p>Features are extracted at four complementary molecular scales:</p>
+<div class="section level4">
+<h4 id="id_1-gene-clusters">1. Gene clusters<a class="anchor" aria-label="anchor" href="#id_1-gene-clusters"></a>
+</h4>
+<p>Panaroo is executed inside a container using <code><a href="reference/dot-runPanaroo.html">.runPanaroo()</a></code>.</p>
+<p>Our pangenome creation approach:</p>
+<ul>
+<li>Allows end-to-end single pangenome runs</li>
+<li>Offers parallelized multi-batch pangenomes for large isolate sets (&gt;5,000 genomes)
+<ul>
+<li>Supports automated pangenome merging through <code><a href="reference/dot-mergePanaroo.html">.mergePanaroo()</a></code>
+</li>
+</ul>
+</li>
+<li>Generates gene presence/absence and count matrices per isolate</li>
+<li>Identifies structural variants (gene triplets indicating genome rearrangements)</li>
+</ul>
+<p>Outputs are written into the per-taxon DuckDB for efficient storage and querying.</p>
+</div>
+<div class="section level4">
+<h4 id="id_2-protein-clusters">2. Protein clusters<a class="anchor" aria-label="anchor" href="#id_2-protein-clusters"></a>
+</h4>
+<p>CD-HIT is executed inside a container using <code><a href="reference/dot-runCDHIT.html">.runCDHIT()</a></code>.</p>
+<p>Our protein clustering approach:</p>
+<ul>
+<li>Clusters proteins across all isolates from BV-BRC .faa files</li>
+<li>Creates protein presence/absence and count matrices per isolate</li>
+<li>Saves cluster names and annotations</li>
+</ul>
+</div>
+<div class="section level4">
+<h4 id="id_3-pfam-domains">3. Pfam domains<a class="anchor" aria-label="anchor" href="#id_3-pfam-domains"></a>
+</h4>
+<p>InterProScan is executed inside a container using <code><a href="reference/domainFromIPR.html">domainFromIPR()</a></code>.</p>
+<p>Our Pfam domain extraction approach:</p>
+<ul>
+<li>Automatically configures InterPro’s databases for use</li>
+<li>Runs parallelized and containerized domain annotation</li>
+<li>Maps domain presence/absence and counts to genomes and proteins</li>
+<li>Provides another functional annotation layer</li>
+</ul>
+</div>
+<div class="section level4">
+<h4 id="id_4-data-cleaning-and-storage">4. Data cleaning and storage<a class="anchor" aria-label="anchor" href="#id_4-data-cleaning-and-storage"></a>
+</h4>
+<p>Final data formatting and storage is executed using <code>cleanData()</code>.</p>
+<p>Our final data storage script:</p>
+<ul>
+<li>Harmonizes drug names, classes, and countries in BV-BRC metadata</li>
+<li>Generates temporal bins to stratify analysis across time</li>
+<li>Summarizes AMR information across the dataset</li>
+<li>Writes all data into highly compressed data structures
+<ul>
+<li>
+<strong>Parquet</strong>: Binary, columnar storage for large matrices
+<ul>
+<li>These can be made human-readable by calling <code><a href="https://arrow.apache.org/docs/r/reference/read_parquet.html" class="external-link">arrow::read_parquet</a></code>
+</li>
+</ul>
+</li>
+<li>
+<strong>DuckDB</strong>: SQL-queryable database for rapid filtering of linked Parquets</li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="section level2">
+<h2 id="workflow-example">Workflow example<a class="anchor" aria-label="anchor" href="#workflow-example"></a>
+</h2>
+<p>An example of the process for downloading and processing all data and metadata for <em>Shigella flexneri</em> genomes with paired AST metadata.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">library</span>(amRdata)</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="co"># 1. Download &amp; filter genomes</span></span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="fu">prepareGenomes</span>(</span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>  <span class="at">user_bacs  =</span> <span class="fu">c</span>(<span class="st">"Shigella flexneri"</span>),</span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>  <span class="at">base_dir   =</span> <span class="st">"data/Shigella_flexneri"</span>,</span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>  <span class="at">method     =</span> <span class="st">"ftp"</span></span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>)</span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a></span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="co"># 2. Run multi-scale feature extraction</span></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="fu">runDataProcessing</span>(</span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a>  <span class="at">duckdb_path    =</span> <span class="st">"data/Shigella_flexneri.duckdb"</span>,</span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a>  <span class="at">output_path    =</span> <span class="st">"data/Shigella_flexneri"</span>,</span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a>  <span class="at">threads        =</span> <span class="dv">8</span>, <span class="co"># Or whatever your system supports</span></span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a>  <span class="at">ref_file_path  =</span> <span class="st">"data_raw/"</span></span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a>)</span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a></span>
+<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a><span class="co"># 3. Load final data</span></span>
+<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a></span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="fu">library</span>(DBI)</span>
+<span id="cb4-22"><a href="#cb4-22" tabindex="-1"></a><span class="fu">library</span>(arrow)</span>
+<span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a></span>
+<span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a><span class="co"># To view all attached data tables in the database</span></span>
+<span id="cb4-25"><a href="#cb4-25" tabindex="-1"></a></span>
+<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a>con <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbConnect</span>(duckdb<span class="sc">::</span><span class="fu">duckdb</span>(), <span class="st">"Shigella_flexneri/Sfl_parquet.duckdb"</span>)</span>
+<span id="cb4-27"><a href="#cb4-27" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbListTables</span>(con)</span>
+<span id="cb4-28"><a href="#cb4-28" tabindex="-1"></a></span>
+<span id="cb4-29"><a href="#cb4-29" tabindex="-1"></a></span>
+<span id="cb4-30"><a href="#cb4-30" tabindex="-1"></a><span class="co"># To load human-readable data tables into R</span></span>
+<span id="cb4-31"><a href="#cb4-31" tabindex="-1"></a></span>
+<span id="cb4-32"><a href="#cb4-32" tabindex="-1"></a><span class="co"># e.g., Looking at gene cluster counts per isolate</span></span>
+<span id="cb4-33"><a href="#cb4-33" tabindex="-1"></a>Sfl_gene_counts <span class="ot">&lt;-</span> arrow<span class="sc">::</span><span class="fu">read_parquet</span>(<span class="st">"data/Shigella_flexneri/gene_count.parquet"</span>)</span>
+<span id="cb4-34"><a href="#cb4-34" tabindex="-1"></a>  </span>
+<span id="cb4-35"><a href="#cb4-35" tabindex="-1"></a>  <span class="co"># To connect gene cluster IDs to their annotated names</span></span>
+<span id="cb4-36"><a href="#cb4-36" tabindex="-1"></a>  Sfl_gene_names <span class="ot">&lt;-</span> arrow<span class="sc">::</span><span class="fu">read_parquet</span>(<span class="st">"data/Shigella_flexneri/gene_names.parquet"</span>)</span></code></pre></div>
+</div>
+<div class="section level2">
+<h2 id="data-requirements">Data requirements<a class="anchor" aria-label="anchor" href="#data-requirements"></a>
+</h2>
+<p>External dependencies (managed through Docker) <br></p>
+<ul>
+<li>BV‑BRC CLI</li>
+<li>Panaroo</li>
+<li>CD‑HIT</li>
+<li>InterProScan</li>
+<li>DuckDB</li>
+<li>Arrow (Parquet)</li>
+</ul>
+<p>The user does not need to install these manually.</p>
+<p>The package requires:</p>
+<ul>
+<li>An internet connection to access BV-BRC data and metadata</li>
+<li>A local Docker installation
+<ul>
+<li>Containers for internal tools are pulled automatically and do not require configuration</li>
+<li>Make sure Docker is running before you start processing data!</li>
+</ul>
+</li>
+<li>Sufficient storage for databases, downloaded files, and processed output (we recommend 20GB+)</li>
+<li>Multicore processing and sufficient (16GB+) of RAM are highly recommended
+<ul>
+<li>Species with many isolates may run poorly or fail to complete on older hardware</li>
+</ul>
+</li>
+</ul>
+<div class="section level3">
+<h3 id="output">Output<a class="anchor" aria-label="anchor" href="#output"></a>
+</h3>
+<p>Feature matrices dimensions depend on species:</p>
+<ul>
+<li>Rows: Number of isolates (typically &lt;10,000)</li>
+<li>Columns: Number of features (ballpark estimates)
+<ul>
+<li>Genes: 5,000-50,000</li>
+<li>Proteins: 5,000-50,000</li>
+<li>Domains: 500-10,000</li>
+<li>Structural variants: 1,000-10,000</li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section level3">
+<h3 id="external-dependencies">External dependencies<a class="anchor" aria-label="anchor" href="#external-dependencies"></a>
+</h3>
+<p>The package uses established bioinformatics tools:</p>
+<ul>
+<li>
+<strong>Panaroo</strong> (≥1.3.0): Pangenome analysis</li>
+<li>
+<strong>CD-HIT</strong> (≥4.8.1): Protein clustering</li>
+<li>
+<strong>InterProScan</strong> (≥5.0): Domain annotation</li>
+<li>
+<strong>Docker</strong>: For BV-BRC CLI container</li>
+</ul>
+<p>These are automatically managed through the Docker container.</p>
+</div>
+</div>
+<div class="section level2">
+<h2 id="performance">Performance<a class="anchor" aria-label="anchor" href="#performance"></a>
+</h2>
+<p>Processing times vary by species and isolate count:</p>
+<ul>
+<li><p>Data download: 0-1 hours</p></li>
+<li><p>Pangenome construction: 0-6 hours</p></li>
+<li><p>Protein clustering: 0-3 hours</p></li>
+<li><p>Domain annotation: 0-1 hours</p></li>
+<li><p>Total: 1-12 hours for a complete species analysis</p></li>
+<li><p>These numbers will all vary greatly based on isolate number, genome complexity, and available hardware.</p></li>
+<li><p>Parallelization significantly reduces processing time when multiple cores are available.</p></li>
+</ul>
+<div class="section level3">
+<h3 id="integration-with-amr-suite">Integration with amR suite<a class="anchor" aria-label="anchor" href="#integration-with-amr-suite"></a>
+</h3>
+<p>amRdata is designed to work seamlessly with other amR packages:</p>
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://github.com/JRaviLab/amR_data" class="external-link">amRdata</a></span><span class="op">)</span></span>
+<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va">amRml</span><span class="op">)</span></span>
+<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va">amRshiny</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># 1. Curate data</span></span>
+<span><span class="fu"><a href="reference/prepareGenomes.html">prepareGenomes</a></span><span class="op">(</span><span class="st">"Shigella flexneri"</span><span class="op">)</span></span>
+<span><span class="fu"><a href="reference/runDataProcessing.html">runDataProcessing</a></span><span class="op">(</span><span class="st">"amRdata/data/Shigella_flexneri/Sfl.duckdb"</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># 2. Train models</span></span>
+<span><span class="fu">runMLmodels</span><span class="op">(</span><span class="st">"amRdata/data/Shigella_flexneri/Sfl_parquet.duckdb"</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># 3. Visualize ### To add</span></span>
+<span><span class="fu">launch_dashboard</span><span class="op">(</span><span class="op">)</span></span></code></pre></div>
+</div>
+</div>
+<div class="section level2">
+<h2 id="related-packages">Related packages<a class="anchor" aria-label="anchor" href="#related-packages"></a>
+</h2>
+<ul>
+<li>
+<a href="https://github.com/JRaviLab/amR" class="external-link">amR</a>: Suite metapackage</li>
+<li>
+<a href="https://github.com/JRaviLab/amRml" class="external-link">amRml</a>: ML for AMR prediction</li>
+<li>
+<a href="https://github.com/JRaviLab/amRshiny" class="external-link">amRshiny</a>: Interactive dashboard</li>
+</ul>
+</div>
+<div class="section level2">
+<h2 id="citation">Citation<a class="anchor" aria-label="anchor" href="#citation"></a>
+</h2>
+<p>If you use <code>amRdata</code> in your research, please cite:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>Brenner E, Ghosh A, Wolfe E, Boyer E, Vang C, Lesiyon R, Mayer D, Ravi <span class="fu">J.</span> (<span class="dv">2026</span>).</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>amR<span class="sc">:</span> an R package suite to predict antimicrobial resistance <span class="cf">in</span> bacterial pathogens.</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>R package version <span class="dv">0</span>.<span class="dv">99</span>.<span class="fl">0.</span></span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>https<span class="sc">:</span><span class="er">//</span>github.com<span class="sc">/</span>JRaviLab<span class="sc">/</span>amR</span></code></pre></div>
+</div>
+<div class="section level2">
+<h2 id="contributing">Contributing<a class="anchor" aria-label="anchor" href="#contributing"></a>
+</h2>
+<p>We welcome contributions! Please see <a href="CONTRIBUTING.html">CONTRIBUTING.md</a> for guidelines.</p>
+</div>
+<div class="section level2">
+<h2 id="reporting-issues">Reporting issues<a class="anchor" aria-label="anchor" href="#reporting-issues"></a>
+</h2>
+<p>Report bugs and request features at: <a href="https://github.com/JRaviLab/amRml/issues" class="external-link uri">https://github.com/JRaviLab/amRml/issues</a></p>
+</div>
+<div class="section level2">
+<h2 id="license">License<a class="anchor" aria-label="anchor" href="#license"></a>
+</h2>
+<p>BSD 3-Clause License. See <a href="LICENSE">LICENSE</a> for details.</p>
+</div>
+<div class="section level2">
+<h2 id="contact">Contact<a class="anchor" aria-label="anchor" href="#contact"></a>
+</h2>
+<p><strong>Corresponding author</strong>: Janani Ravi (<a href="mailto:janani.ravi@cuanschutz.edu" class="email">janani.ravi@cuanschutz.edu</a>)</p>
+<p><strong>Lab website</strong>: <a href="https://jravilab.github.io" class="external-link uri">https://jravilab.github.io</a></p>
+</div>
+<div class="section level2">
+<h2 id="code-of-conduct">Code of conduct<a class="anchor" aria-label="anchor" href="#code-of-conduct"></a>
+</h2>
+<p>Please note that <code>amRml</code> is released with a <a href="https://contributor-covenant.org/version/2/1/CODE_OF_CONDUCT.html" class="external-link">Contributor Code of Conduct</a>. By contributing to this project, you agree to abide by its terms.</p>
 </div>
 </div>
   </div>
@@ -213,8 +477,6 @@
 <h2 data-toc-skip>Dev status</h2>
 <ul class="list-unstyled">
 <li><a href="https://lifecycle.r-lib.org/articles/stages.html#experimental" class="external-link"><img src="https://img.shields.io/badge/lifecycle-experimental-orange.svg" alt="Lifecycle: experimental"></a></li>
-<li><a href="https://CRAN.R-project.org/package=NewPackage" class="external-link"><img src="https://www.r-pkg.org/badges/version/NewPackage" alt="CRAN status"></a></li>
-<li><a href="https://github.com/JRaviLab/NewPackage/actions/workflows/R-CMD-check.yaml" class="external-link"><img src="https://github.com/JRaviLab/NewPackage/actions/workflows/R-CMD-check.yaml/badge.svg" alt="R-CMD-check"></a></li>
 </ul>
 </div>
 
