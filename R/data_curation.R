@@ -953,7 +953,7 @@ retrieveMetadata <- function(user_bacs,
     NULL
   }, add = TRUE)
   
-  # Happy path: metadata present -> apply AMR-aware filters
+  # Good metadata present? Apply AMR filters
   if ("metadata" %in% DBI::dbListTables(con)) {
     if (isTRUE(verbose)) message("Loading metadata for filtering.")
     initial_metadata <- DBI::dbReadTable(con, "metadata")
@@ -1014,25 +1014,37 @@ retrieveMetadata <- function(user_bacs,
   
   bv <- tibble::as_tibble(DBI::dbReadTable(con_cache, "bvbrc_bac_data"))
   
+  
   # Derive matches from user_bacs (taxon IDs or species)
   sel <- tibble::tibble(`genome.genome_id` = character())
+  
   for (v in user_bacs) {
     if (suppressWarnings(!is.na(as.numeric(v)))) {
-      # taxon id match
-      matches <- bv[bv$taxon_id == v | bv$taxon_id == as.numeric(v), , drop = FALSE]
+      # numeric taxon_id match
+      matches <- bv[bv$`genome.taxon_id` == v |
+                      bv$`genome.taxon_id` == as.numeric(v), , drop = FALSE]
     } else {
-      # species substring (case-insensitive) match
-      matches <- bv[stringr::str_detect(bv$species, stringr::fixed(v, ignore_case = TRUE)), , drop = FALSE]
+      # species substring (case-insensitive)
+      matches <- bv[stringr::str_detect(
+        bv$`genome.species`,
+        stringr::fixed(v, ignore_case = TRUE)
+      ), , drop = FALSE]
     }
+    
     if (nrow(matches)) {
-      sel <- dplyr::bind_rows(sel, tibble::tibble(`genome.genome_id` = as.character(matches$genome_id)))
+      sel <- dplyr::bind_rows(
+        sel,
+        tibble::tibble(
+          `genome.genome_id` = as.character(matches$`genome.genome_id`)
+        )
+      )
     }
   }
   sel <- dplyr::distinct(sel)
   
   if (nrow(sel) == 0L) {
     DBI::dbDisconnect(con, shutdown = TRUE)
-    stop("No genomes matched user_bacs in BV-BRC cache. (Cache present but no hits.)")
+    stop("No genomes matched user_bacs in BV-BRC cache.")
   }
   
   # Minimal 'filtered' for downstream steps (downloaders & genomeList)
