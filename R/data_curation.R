@@ -1,3 +1,166 @@
+#' Helps ensure trailing 0s are retained in genome IDs for proper downloading
+#' @keywords internal
+.id_checker <- function(x) {
+  # Taxon IDs are just numbers, genome IDs have decimals, this tells them apart
+  grepl("^[0-9]+$", x)
+}
+
+#' Helps tag genomes with their AMR evidence for parsing
+#' @keywords internal
+.create_amr_tagged_view <- function(con) {
+  lab_methods  <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution")
+  lab_list_sql <- paste(DBI::dbQuoteString(con, lab_methods), collapse = ", ")
+  comp_str_sql <- DBI::dbQuoteString(con, "Computational Method")
+
+  DBI::dbExecute(
+    con,
+    sprintf(
+      "CREATE OR REPLACE VIEW amr_phenotype_tagged AS
+       SELECT
+         *,
+         CASE WHEN \"genome_drug.laboratory_typing_method\" IN (%s) THEN 1 ELSE 0 END AS is_lab_row,
+         CASE WHEN
+           (\"genome_drug.evidence\" = %s)
+           OR (COALESCE(\"genome_drug.computational_method\", '') <> '')
+           OR (\"genome_drug.laboratory_typing_method\" = 'Computational Prediction')
+         THEN 1 ELSE 0 END AS is_comp_row
+       FROM amr_phenotype",
+      lab_list_sql, comp_str_sql
+    )
+  )
+}
+
+#' Helps appropriately interface with BV-BRC FTPS server, and avoids getting stuck
+#' when malformed files can hang an FTPS connection by introducing safeguards
+#' @keywords internal
+.ftpes_download_one <- function(genomeID, out_dir,
+                                connect_timeout = 10L,
+                                max_time        = 30L,
+                                speed_time      = 30L,    # end if <speed_limit for >speed_time
+                                speed_limit     = 2048L,  # B/s
+                                min_bytes       = 100L) {
+
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  exts <- c(".fna", ".PATRIC.faa", ".PATRIC.gff")
+  for (ext in exts) {
+    dest     <- file.path(out_dir, paste0(genomeID, ext))
+    dest_tmp <- paste0(dest, ".tmp")
+
+    # Skip if we already completed these
+    if (file.exists(dest) && file.info(dest)$size > min_bytes) next
+    if (file.exists(dest) && file.info(dest)$size == 0) try(unlink(dest), silent = TRUE)
+    if (file.exists(dest_tmp)) try(unlink(dest_tmp), silent = TRUE)
+
+    url <- sprintf("ftp://ftp.bv-brc.org/genomes/%s/%s%s", genomeID, genomeID, ext)
+
+    args <- c(
+      "--fail", "--silent", "--show-error", "-L",
+      "--connect-timeout", as.character(connect_timeout),
+      "--max-time",        as.character(max_time),
+      "--speed-time",      as.character(speed_time),
+      "--speed-limit",     as.character(speed_limit),
+      "--ftp-ssl",                 # AUTH TLS on port 21 works in testing
+      "--ftp-pasv", "--disable-epsv", "--ipv4",
+      "--user", "anonymous:",
+      "-o", shQuote(dest_tmp), shQuote(url)
+    )
+
+    res <- suppressWarnings(system2("curl", args = args, stdout = TRUE, stderr = TRUE))
+    status <- attr(res, "status"); if (is.null(status)) status <- 0L
+
+    # Avoiding 0B files cluttering up results -- atomic rename on successful tmp DL
+    ok <- (status == 0L && file.exists(dest_tmp) && file.info(dest_tmp)$size > min_bytes)
+    if (ok) {
+      if (!file.rename(dest_tmp, dest)) {
+        # If rename fails for some reason, copy + unlink
+        file.copy(dest_tmp, dest, overwrite = TRUE)
+        unlink(dest_tmp)
+      }
+    } else {
+      try(unlink(dest_tmp), silent = TRUE)
+      return(FALSE)  # Abort early, don't accept partial set
+    }
+  }
+
+  # Do we have all 3 present?
+  .is_complete_set(out_dir, genomeID, min_bytes = min_bytes)
+}
+
+#' Helps manage FTPS downloading from BV-BRC, tryng a quick download first, and
+#' if that fails, trying a longer timeout 2nd pass at the end in case it was a
+#' hiccup. If 2nd pass fails, log and give up on that file.
+#' @keywords internal
+.ftpes_download_two_pass <- function(genome_ids, out_dir,
+                                     workers_first  = 4L,
+                                     workers_second = 4L,
+                                     log_file       = NULL) {
+  genome_ids <- unique(as.character(genome_ids))
+  if (!length(genome_ids)) return(character(0))
+
+  if (!is.null(log_file)) {
+    dir.create(dirname(log_file), recursive = TRUE, showWarnings = FALSE)
+    cat(sprintf("[%s] FTPS run start: %d genomes\n", Sys.time(), length(genome_ids)),
+        file = log_file, append = TRUE)
+  }
+
+  # Pass 1: 30s per-file cap
+  message("FTPS pass 1 (30s timeout)")
+  future::plan(future::multisession, workers = max(1, workers_first))
+  res1 <- future.apply::future_lapply(
+    genome_ids,
+    function(gid) {
+      ok <- .ftpes_download_one(gid, out_dir,
+                                connect_timeout = 10L, max_time = 30L,
+                                speed_time = 30L, speed_limit = 2048L)
+      list(gid = gid, ok = ok)
+    },
+    future.seed = TRUE
+  )
+  ok1 <- vapply(res1, `[[`, logical(1), "ok")
+  ok_ids_1 <- genome_ids[ok1]
+  fail_ids <- genome_ids[!ok1]
+  message(sprintf("Pass 1: ok=%d, fail=%d", length(ok_ids_1), length(fail_ids)))
+  if (!is.null(log_file)) {
+    cat(sprintf("[%s] Pass1 ok=%d fail=%d\n", Sys.time(), length(ok_ids_1), length(fail_ids)),
+        file = log_file, append = TRUE)
+  }
+
+  if (!length(fail_ids)) {
+    if (!is.null(log_file)) cat(sprintf("[%s] FTPS run end: all OK\n", Sys.time()),
+                                file = log_file, append = TRUE)
+    return(ok_ids_1)
+  }
+
+  # Pass 2: 60s per-file cap where we retry any failures
+  message("FTPS pass 2 (60s timeout) for failed genomes")
+  future::plan(future::multisession, workers = max(1, workers_second))
+  res2 <- future.apply::future_lapply(
+    fail_ids,
+    function(gid) {
+      ok <- .ftpes_download_one(gid, out_dir,
+                                connect_timeout = 10L, max_time = 60L,
+                                speed_time = 30L, speed_limit = 2048L)
+      list(gid = gid, ok = ok)
+    },
+    future.seed = TRUE
+  )
+  ok2 <- vapply(res2, `[[`, logical(1), "ok")
+  ok_ids_2   <- fail_ids[ok2]
+  still_fail <- setdiff(fail_ids, ok_ids_2)
+  message(sprintf("Pass 2: ok=%d, still_fail=%d", length(ok_ids_2), length(still_fail)))
+  if (!is.null(log_file)) {
+    cat(sprintf("[%s] Pass2 ok=%d still_fail=%d\n", Sys.time(), length(ok_ids_2), length(still_fail)),
+        file = log_file, append = TRUE)
+    if (length(still_fail)) {
+      cat("Fail IDs (excluded): ", paste(head(still_fail, 50), collapse = ", "), "\n",
+          file = log_file, append = TRUE)
+    }
+  }
+
+  unique(c(ok_ids_1, ok_ids_2))
+}
+
 #' Fetch BV-BRC bacterial genome data
 #'
 #' Run the BV-BRC CLI (`p3-all-genomes`) inside a Docker image and return results as a tibble.
@@ -26,7 +189,8 @@
     "--in superkingdom,Bacteria ",
     "--eq genome_quality,Good ",
     "--in genome_status,WGS,Complete ",
-    "--attr genome_id,genome_name,taxon_id,species,strain,_version_,",
+    "--attr genome_id,genome_name,genome_quality,genome_status,",
+    "taxon_id,species,strain,_version_,",
     "collection_year,state_province,latitude,longitude,",
     "antimicrobial_resistance_evidence,assembly_accession,isolation_country,",
     "isolation_source,disease,host_common_name"
@@ -44,10 +208,10 @@
     stop("BV-BRC returned no data. The service may be unavailable.")
   }
 
-  # Parse
+  # Parse and coerce to character to avoid numeric interpretation losing trailing 0s
   df <- utils::read.table(
     text = raw_data, sep = "\t", header = TRUE, fill = TRUE,
-    quote = "", check.names = FALSE, comment.char = ""
+    quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
   )
   df <- tibble::as_tibble(df) |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
@@ -230,7 +394,7 @@
   )
 
   for (user_bac in user_bacs) {
-    if (suppressWarnings(!is.na(as.numeric(user_bac)))) {
+    if (.id_checker(user_bac)) {
       message("Numeric input detected: ", user_bac)
       if (user_bac %in% bvbrc_bacs$genome.taxon_id) {
         bac_name <- bvbrc_bacs$genome.species[bvbrc_bacs$genome.taxon_id == user_bac]
@@ -294,10 +458,11 @@
     return(cand)
   }
   if (query_type == "taxon_id") {
-    nums <- suppressWarnings(!is.na(as.numeric(user_bacs)))
+    nums <- .id_checker(user_bacs)
     if (!any(nums)) stop("Cannot infer taxon_id from user_bacs. Provide query_value.")
     return(as.character(user_bacs[which(nums)[1]]))
   }
+
   stop("Unsupported query_type: ", query_type)
 }
 
@@ -318,12 +483,12 @@
 #' @examples
 #' .generateDBname(c("90371", "Bacillus subtilis"))
 #' .generateDBname(c("12345", "Escherichia coli", "Lactobacillus"))
-#'
+#' @keywords internal
 .generateDBname <- function(user_bacs) {
   db_parts <- c()
 
   for (user_bac in user_bacs) {
-    if (suppressWarnings(!is.na(as.numeric(user_bac)))) {
+    if (.id_checker(user_bac)) {
       db_parts <- c(db_parts, paste0("tid_", user_bac))
     } else {
       parts <- stringr::str_split(user_bac, " ")[[1]]
@@ -437,7 +602,7 @@
   data_result <- tibble::as_tibble(
     utils::read.table(
       text = data_raw, sep = "\t", header = TRUE, fill = TRUE,
-      quote = "", check.names = FALSE, comment.char = ""
+      quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
     )
   ) |>
     dplyr::mutate(
@@ -462,17 +627,11 @@
 
 #' Retrieve genome IDs for each taxon via BV-BRC and DuckDB
 #'
-#' Resolves user-provided taxa to taxon IDs, queries BV-BRC per unique taxon ID,
-#' and returns distinct genome IDs. Uses a per-selection DuckDB located under:
-#'   <base_dir>/data/<bug_dir>/<abbrev>.duckdb
-#' BV-BRC column names are preserved.
+#' Resolves user-provided taxa to taxon IDs using the local BV-BRC cache, then
+#' returns distinct genome IDs (Good + WGS/Complete). Also writes a 'bac_data'
+#' table to the per-selection DuckDB with a cache snapshot of core fields.
 #'
-#' @param base_dir Character. Project root directory. Default ".".
-#' @param user_bacs Character vector. Mixed inputs of taxon IDs and/or species names.
-#' @param overwrite Logical. If FALSE and the DuckDB already exists for this selection, abort. Default: FALSE.
-#' @param verbose Logical.
-#'
-#' @return A numeric vector of distinct `genome.genome_id`, or NULL if none found.
+#' @return A character vector of distinct `genome.genome_id`, or NULL if none found.
 .retrieveQueryIDs <- function(base_dir = ".",
                               user_bacs,
                               overwrite = FALSE,
@@ -481,60 +640,68 @@
 
   if (isTRUE(verbose)) message("Resolving input taxa.")
   bac_input_data <- .retrieveCustomQuery(base_dir = base_dir, user_bacs = user_bacs)
-
   if (is.null(bac_input_data) || nrow(bac_input_data) == 0) {
     message("No valid input provided or no matches found.")
     return(NULL)
   }
 
-  # Resolve per-bug DB path
-  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
+  # Per-selection DB path
+  paths   <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
   db_path <- paths$db_path
 
-  bac_data <- tibble::tibble()
-  taxon_ids <- unique(bac_input_data$genome.taxon_id)
-
-  if (isTRUE(verbose)) message("Querying BV-BRC for ", length(taxon_ids), " taxon IDs.")
-
-  for (i in seq_along(taxon_ids)) {
-    tax <- taxon_ids[i]
-    if (isTRUE(verbose)) message("Taxon ", i, "/", length(taxon_ids), ": ", tax)
-
-    res <- .getGenomeIDs(
-      base_dir    = base_dir,
-      query_type  = "taxon_id",
-      query_value = as.character(tax),
-      user_bacs   = user_bacs,
-      overwrite   = TRUE,
-      verbose     = verbose
-    )
-
-    con <- res$duckdbConnection
-    tbl <- res$table_name
-    each_bac_data <- tibble::as_tibble(DBI::dbReadTable(con, tbl))
-    bac_data <- dplyr::bind_rows(bac_data, each_bac_data)
-
-    # Close per-iteration connection to avoid open handles piling up
-    try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)
+  # Got a cache? Use that, it's fast
+  cache_db <- file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")
+  if (!file.exists(cache_db)) {
+    stop("BV-BRC cache not found at: ", cache_db, ". Run .updateBVBRCdata() first.")
   }
+  con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
+  on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
 
-  if (nrow(bac_data) > 0) {
-    genome_ids <- bac_data |>
-      dplyr::distinct(`genome.genome_id`) |>
-      dplyr::pull(`genome.genome_id`)
-    genome_ids <- genome_ids[!is.na(genome_ids)]
+  taxon_ids <- unique(bac_input_data$genome.taxon_id)
+  if (isTRUE(verbose)) message("Querying cache for ", length(taxon_ids), " taxon IDs.")
 
-    if (length(genome_ids) > 0) {
-      if (isTRUE(verbose)) message("Collected ", length(genome_ids), " distinct genome IDs.")
-      return(genome_ids)
-    } else {
-      message("No valid genome IDs found.")
-      return(NULL)
-    }
-  } else {
-    message("No valid genome data found for any input.")
+  taxon_list_sql <- paste(DBI::dbQuoteString(con_cache, taxon_ids), collapse = ", ")
+  sql_ids <- sprintf(
+    "SELECT DISTINCT
+       \"genome.genome_id\"   AS gid,
+       \"genome.genome_name\" AS genome_name,
+       \"genome.taxon_id\"    AS taxon_id,
+       \"genome.species\"     AS species,
+       \"genome.strain\"      AS strain
+     FROM bvbrc_bac_data
+     WHERE \"genome.taxon_id\" IN (%s)
+       AND \"genome.genome_quality\" = 'Good'
+       AND \"genome.genome_status\"  IN ('WGS','Complete')",
+    taxon_list_sql
+  )
+  cache_rows <- DBI::dbGetQuery(con_cache, sql_ids)
+  valid_id_re <- "^[0-9]+\\.[0-9]+$"
+  cache_rows <- cache_rows[grepl(valid_id_re, cache_rows$gid), , drop = FALSE]
+
+  if (nrow(cache_rows) == 0L) {
+    message("No valid genome IDs found.")
     return(NULL)
   }
+
+  genome_ids <- unique(cache_rows$gid)
+  if (isTRUE(verbose)) message("Collected ", length(genome_ids), " distinct genome IDs (cache).")
+
+  # Write 'bac_data' from cache
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  bac_data_tbl <- data.frame(
+    `genome.genome_id`   = cache_rows$gid,
+    `genome.genome_name` = cache_rows$genome_name,
+    `genome.taxon_id`    = cache_rows$taxon_id,
+    `genome.species`     = cache_rows$species,
+    `genome.strain`      = cache_rows$strain,
+    stringsAsFactors = FALSE
+  )
+  DBI::dbWriteTable(con, "bac_data", bac_data_tbl, overwrite = TRUE)
+  if (isTRUE(verbose)) message("Wrote table 'bac_data' to: ", db_path)
+
+  genome_ids
 }
 
 #' Extract AMR Data Table
@@ -685,7 +852,7 @@
   writeLines(genome_ids_output, con = tmp_in)
   tmp_in_mounted <- file.path("/data", "tmp", basename(tmp_in))
 
-  # Choose attributes (AMR for this pipeline)
+  # Choose attributes (AMR for this workflow)
   chosen_fields <- if (identical(filter_type, "AMR")) amr_fields else microtrait_fields
 
   get_args <- c(
@@ -707,7 +874,6 @@
   return(genome_data)
 }
 
-
 #' Retrieve AMR or Microtrait metadata from BV-BRC and store in DuckDB
 #'
 #' Queries BV-BRC for AMR or microtrait metadata for genomes corresponding to user inputs.
@@ -716,7 +882,7 @@
 #' Tables written:
 #'   - amr_phenotype
 #'   - genome_data
-#'   - metadata (inner join on genome ID field names as returned by BV-BRC)
+#'   - metadata (join on genome IDs returned by BV-BRC)
 #'
 #' @param user_bacs Character vector. Mixed taxon IDs and/or species strings (used for naming).
 #' @param filter_type Character. "AMR" or "microTraits". Default "AMR".
@@ -748,7 +914,7 @@ retrieveMetadata <- function(user_bacs,
     return(NULL)
   }
 
-  # Fields (unchanged BV-BRC names)
+  # Desired fields from BV-BRC
   drug_fields <- paste0(
     "antibiotic,computational_method,",
     "evidence,genome_name,id,",
@@ -798,7 +964,7 @@ retrieveMetadata <- function(user_bacs,
     "trna"
   )
 
-  # Batching
+  # Batching downloads and parallel implementation
   batch_size <- 500L
   genome_ids <- as.character(genome_ids)
   genome_batches <- split(genome_ids, ceiling(seq_along(genome_ids) / batch_size))
@@ -818,10 +984,10 @@ retrieveMetadata <- function(user_bacs,
     envir = environment()
   )
   parallel::clusterEvalQ(cluster, {
-    library(tibble)
-    library(dplyr)
+    library(tibble); library(dplyr)
   })
 
+  # Pull AMR metadata
   if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
   batch_drug_data <- parallel::parLapply(cluster, genome_batches, function(batch) {
     .extractAMRtable(
@@ -838,17 +1004,15 @@ retrieveMetadata <- function(user_bacs,
     message("No drug data returned.")
     return(NULL)
   }
-
-  combined_drug_data_tbl <- tibble::as_tibble(
-    utils::read.table(
-      text = combined_drug_data,
-      sep = "\t", header = TRUE, fill = TRUE,
-      quote = "", check.names = FALSE, comment.char = ""
-    )
-  ) |>
+  combined_drug_data_tbl <- tibble::as_tibble(utils::read.table(
+    text = combined_drug_data,
+    sep = "\t", header = TRUE, fill = TRUE,
+    quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
+  )) |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = ""))) |>
     dplyr::mutate(`genome_drug.genome_id` = as.character(`genome_drug.genome_id`))
 
+  # Pull genome metadata
   if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
   batch_genome_data <- parallel::parLapply(cluster, genome_batches, function(batch) {
     .extractGenomeData(
@@ -866,48 +1030,80 @@ retrieveMetadata <- function(user_bacs,
     message("No genome data returned.")
     return(NULL)
   }
-
-  combined_genome_data_tbl <- tibble::as_tibble(
-    utils::read.table(
-      text = combined_genome_data,
-      sep = "\t", header = TRUE, fill = TRUE,
-      quote = "", check.names = FALSE, comment.char = ""
-    )
-  ) |>
+  combined_genome_data_tbl <- tibble::as_tibble(utils::read.table(
+    text = combined_genome_data,
+    sep = "\t", header = TRUE, fill = TRUE,
+    quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
+  )) |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = ""))) |>
     dplyr::mutate(`genome.genome_id` = as.character(`genome.genome_id`))
 
-  # Per-bug DB path
-  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
+  # Write & join
+  paths   <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
   db_path <- paths$db_path
-
   logs_dir <- file.path(base_dir, "data", "logs")
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
   cat(sprintf("[%s] Writing metadata DuckDB: %s\n", Sys.time(), db_path),
-    file = file.path(logs_dir, "bvbrc.log"), append = TRUE
-  )
+      file = file.path(logs_dir, "bvbrc.log"), append = TRUE)
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+
   DBI::dbWriteTable(con, "amr_phenotype", combined_drug_data_tbl, overwrite = TRUE)
-  DBI::dbWriteTable(con, "genome_data", combined_genome_data_tbl, overwrite = TRUE)
+  DBI::dbWriteTable(con, "genome_data",  combined_genome_data_tbl, overwrite = TRUE)
 
   if (isTRUE(verbose)) message("Joining AMR phenotype and genome metadata.")
-  initial_metadata <- tibble::as_tibble(DBI::dbGetQuery(
+  DBI::dbExecute(con, '
+    CREATE OR REPLACE TABLE metadata AS
+    SELECT *
+    FROM amr_phenotype
+    INNER JOIN genome_data
+      ON amr_phenotype."genome_drug.genome_id" = genome_data."genome.genome_id"
+  ')
+
+  # Debug summary after writes
+  n_targets   <- length(genome_ids)
+  n_amr_ids   <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype')$n
+  n_gmeta_ids <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id")      AS n FROM genome_data')$n
+  if (isTRUE(verbose)) {
+    message("Initial summary: targets=", n_targets,
+            " | AMR genomes=", n_amr_ids,
+            " | genome_data genomes=", n_gmeta_ids)
+  }
+
+  # Tagged view
+  .create_amr_tagged_view(con)
+
+  # Final debug summary
+  n_bac <- if ("bac_data" %in% DBI::dbListTables(con))
+    DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM bac_data')$n else NA_integer_
+  n_amr_ids   <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype')$n
+  n_gmeta_ids <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id")      AS n FROM genome_data')$n
+
+  ids_zero_amr <- DBI::dbGetQuery(
     con,
-    'SELECT *
-     FROM amr_phenotype
-     INNER JOIN genome_data
-     ON amr_phenotype."genome_drug.genome_id" = genome_data."genome.genome_id"'
-  ))
-  DBI::dbWriteTable(con, "metadata", initial_metadata, overwrite = TRUE)
+    'WITH sel AS (SELECT DISTINCT "genome.genome_id" AS gid FROM genome_data),
+          got AS (SELECT DISTINCT "genome_drug.genome_id" AS gid FROM amr_phenotype)
+     SELECT sel.gid
+     FROM sel LEFT JOIN got USING (gid)
+     WHERE got.gid IS NULL
+     ORDER BY sel.gid'
+  )$gid
 
   if (isTRUE(verbose)) {
-    message("Wrote tables 'amr_phenotype', 'genome_data', and 'metadata' to: ", db_path)
+    message("Final summary:")
+    message("  targets      : ", length(genome_ids))
+    message("  bac_data     : ", n_bac)
+    message("  genome_data  : ", n_gmeta_ids)
+    message("  amr_phenotype: ", n_amr_ids)
+    message("  genomes with 0 AMR rows: ", length(ids_zero_amr))
+    if (length(ids_zero_amr)) {
+      message("  e.g.: ", paste(utils::head(ids_zero_amr, 10), collapse = ", "))
+    }
   }
 
   list(duckdbConnection = con, table_name = "metadata")
 }
-
 
 # FASTA sanitizer to ensure Panaroo compatibility with BV-BRC CLI downloads
 .strip_fasta_preamble <- function(fna_path) {
@@ -966,37 +1162,70 @@ retrieveMetadata <- function(user_bacs,
 #' derive genome IDs from user_bacs (taxon IDs or species substring), and
 #' write a minimal "filtered" table (without AMR evidence filtering).
 #'
+#' @param evidence_mode Character. Either "lab_only" (default), "lab_or_comp" (all),
+#' "comp_only" (BV-BRC-predicted without lab labels), or "any" (no AMR data required).
+#' @return A list with a DuckDB connection and table_name = "filtered"
+#' Filter genomes by AMR phenotype and metadata, and store results in DuckDB
+#'
+#' Preferred path: use per-selection DB "metadata" table (from retrieveMetadata()) and
+#' apply evidence & genome_quality filters.
+#'
+#' Fallback path: if "metadata" is missing and fallback_to_bvbrc_cache = TRUE,
+#' read BV-BRC cache at <base_dir>/data/bvbrc/bvbrcData.duckdb ("bvbrc_bac_data"),
+#' derive genome IDs from user_bacs (taxon IDs or species substring), and
+#' write a minimal "filtered" table (without AMR evidence filtering).
+#'
+#' @param evidence_mode Character. One of:
+#'   "lab_only"   (default) -> only laboratory evidence
+#'   "lab_or_comp"          -> laboratory OR computational evidence
+#'   "comp_only"            -> only computational evidence
+#'   "any"                  -> no AMR required (from genome_data; Good only)
 #' @return A list with a DuckDB connection and table_name = "filtered"
 .filterGenomes <- function(user_bacs,
                            base_dir = ".",
+                           evidence_mode = c("lab_only","lab_or_comp","comp_only","any"),
                            verbose = TRUE,
                            fallback_to_bvbrc_cache = TRUE) {
+  evidence_mode <- match.arg(evidence_mode)
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
-  db_path <- paths$db_path
+  paths    <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
+  db_path  <- paths$db_path
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
+  on.exit({ NULL }, add = TRUE)  # keep open for caller
 
-  on.exit(
-    {
-      # Keep connection open for caller
-      NULL
-    },
-    add = TRUE
-  )
-
-  # Good metadata present? Apply AMR filters
+  # The convenient "Metadata Exists" path
   if ("metadata" %in% DBI::dbListTables(con)) {
     if (isTRUE(verbose)) message("Loading metadata for filtering.")
-    initial_metadata <- DBI::dbReadTable(con, "metadata")
-    if (is.null(initial_metadata) || nrow(initial_metadata) == 0) {
+
+    # If "any", AMR data not needed, just fetch qualifying genome_data
+    if (evidence_mode == "any") {
+      gd <- DBI::dbReadTable(con, "genome_data")
+      if (is.null(gd) || nrow(gd) == 0) {
+        DBI::dbDisconnect(con, shutdown = TRUE)
+        stop("No data available in 'genome_data'.")
+      }
+      gd <- tibble::as_tibble(gd) |>
+        dplyr::filter(`genome.genome_quality` == "Good") |>
+        dplyr::distinct(`genome.genome_id`)
+      # Keep BV-BRC column name
+      DBI::dbWriteTable(con, "filtered", gd, overwrite = TRUE)
+      if (isTRUE(verbose)) {
+        message("Post-filter distinct genomes (any): ", nrow(gd))
+        message("Wrote table 'filtered' to: ", db_path)
+      }
+      return(list(duckdbConnection = con, table_name = "filtered"))
+    }
+
+    # Otherwise, open up the metadata and start interrogating the AMR data
+    md <- DBI::dbReadTable(con, "metadata")
+    if (is.null(md) || nrow(md) == 0) {
       DBI::dbDisconnect(con, shutdown = TRUE)
       message("No data available in 'metadata'.")
       return(NULL)
     }
 
-    # Normalize evidence labels
-    initial_metadata <- tibble::as_tibble(initial_metadata) |>
+    md <- tibble::as_tibble(md) |>
       dplyr::mutate(
         `genome_drug.evidence` = dplyr::case_when(
           `genome_drug.laboratory_typing_method` %in%
@@ -1006,29 +1235,39 @@ retrieveMetadata <- function(user_bacs,
         )
       )
 
-    # AMR and quality filtering
-    filtered_metadata <- initial_metadata |>
-      dplyr::filter(`genome_drug.evidence` == "Laboratory Method") |>
-      dplyr::filter(`genome.genome_quality` == "Good") |>
-      dplyr::filter(`genome_drug.resistant_phenotype` %in% c("Resistant", "Susceptible", "Intermediate"))
+    if (evidence_mode == "lab_only") {
+      md <- dplyr::filter(md, `genome_drug.evidence` == "Laboratory Method")
+    } else if (evidence_mode == "comp_only") {
+      md <- dplyr::filter(
+        md,
+        `genome_drug.evidence` == "Computational Method" |
+          (!is.na(`genome_drug.computational_method`) & nzchar(`genome_drug.computational_method`)) |
+          (`genome_drug.laboratory_typing_method` == "Computational Prediction")
+      )
+    } else {
+      # Lab_or_comp: Doesn't matter, keep any predictions
+      md <- md
+    }
 
-    DBI::dbWriteTable(con, "filtered", filtered_metadata, overwrite = TRUE)
+    md <- md |>
+      dplyr::filter(`genome.genome_quality` == "Good") |>
+      dplyr::filter(`genome_drug.resistant_phenotype` %in% c("Resistant","Susceptible","Intermediate")) |>
+      dplyr::distinct(`genome.genome_id`)  # keep BV-BRC column name
+
+    DBI::dbWriteTable(con, "filtered", md, overwrite = TRUE)
     if (isTRUE(verbose)) {
-      message("Post-filter rows: ", nrow(filtered_metadata))
+      message("Post-filter distinct genomes: ", nrow(md))
       message("Wrote table 'filtered' to: ", db_path)
     }
     return(list(duckdbConnection = con, table_name = "filtered"))
   }
 
-  # Attempt BV-BRC cache location
+  # No metadata fallback
   if (!isTRUE(fallback_to_bvbrc_cache)) {
     DBI::dbDisconnect(con, shutdown = TRUE)
     stop("No 'metadata' table found in ", db_path, ". Run retrieveMetadata() first.")
   }
-
-  if (isTRUE(verbose)) {
-    message("No 'metadata' in per-selection DB. Falling back to BV-BRC cache at data/bvbrc/.")
-  }
+  if (isTRUE(verbose)) message("No 'metadata' in per-selection DB. Falling back to BV-BRC cache at data/bvbrc/.")
 
   cache_db <- file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")
   if (!file.exists(cache_db)) {
@@ -1036,7 +1275,7 @@ retrieveMetadata <- function(user_bacs,
     stop("BV-BRC cache not found at: ", cache_db, ". Run .updateBVBRCdata() first.")
   }
 
-  con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db)
+  con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
   on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
 
   if (!"bvbrc_bac_data" %in% DBI::dbListTables(con_cache)) {
@@ -1044,32 +1283,22 @@ retrieveMetadata <- function(user_bacs,
     stop("Table 'bvbrc_bac_data' not found in BV-BRC cache: ", cache_db)
   }
 
-  bv <- tibble::as_tibble(DBI::dbReadTable(con_cache, "bvbrc_bac_data"))
-
-
-  # Derive matches from user_bacs (taxon IDs or species)
+  bv  <- tibble::as_tibble(DBI::dbReadTable(con_cache, "bvbrc_bac_data"))
   sel <- tibble::tibble(`genome.genome_id` = character())
 
   for (v in user_bacs) {
-    if (suppressWarnings(!is.na(as.numeric(v)))) {
-      # numeric taxon_id match
-      matches <- bv[bv$`genome.taxon_id` == v |
-        bv$`genome.taxon_id` == as.numeric(v), , drop = FALSE]
+    if (.id_checker(v)) {
+      v_chr   <- as.character(v)
+      matches <- bv[bv$`genome.taxon_id` == v_chr, , drop = FALSE]
     } else {
-      # species substring (case-insensitive)
       matches <- bv[stringr::str_detect(
         bv$`genome.species`,
         stringr::fixed(v, ignore_case = TRUE)
       ), , drop = FALSE]
     }
-
     if (nrow(matches)) {
-      sel <- dplyr::bind_rows(
-        sel,
-        tibble::tibble(
-          `genome.genome_id` = as.character(matches$`genome.genome_id`)
-        )
-      )
+      sel <- dplyr::bind_rows(sel,
+                              tibble::tibble(`genome.genome_id` = as.character(matches$`genome.genome_id`)))
     }
   }
   sel <- dplyr::distinct(sel)
@@ -1079,37 +1308,14 @@ retrieveMetadata <- function(user_bacs,
     stop("No genomes matched user_bacs in BV-BRC cache.")
   }
 
-  # Minimal 'filtered' for downstream steps (downloaders & genomeList)
-  minimal_filtered <- sel
-  # Ensure expected column name used downstream:
-  # retrieveGenomes() reads "filtered" and expects `genome.genome_id` to exist.
-  DBI::dbWriteTable(con, "filtered", minimal_filtered, overwrite = TRUE)
-
-  if (isTRUE(verbose)) {
-    message("Wrote table 'filtered' to: ", db_path)
-  }
+  DBI::dbWriteTable(con, "filtered", sel, overwrite = TRUE)
+  if (isTRUE(verbose)) message("Wrote table 'filtered' to: ", db_path)
 
   list(duckdbConnection = con, table_name = "filtered")
 }
 
-
-# BV-BRC downloader block
-# Normalize Docker path
-.docker_path <- function(p) gsub("\\\\", "/", normalizePath(p, mustWork = FALSE))
-
-# Prefer bash
-.pick_shell <- function(image) {
-  chk <- suppressWarnings(system2("docker",
-    c(
-      "run", "--rm", image, "sh", "-lc",
-      "command -v bash >/dev/null || echo NOBASH"
-    ),
-    stdout = TRUE, stderr = TRUE
-  ))
-  if (length(chk) && any(grepl("NOBASH", chk))) "sh" else "bash"
-}
-
-# Check if a complete set (.fna + .PATRIC.faa + .PATRIC.gff) exists after DL
+#' Helps check if a complete set exists after DL (.fna + .PATRIC.faa + .PATRIC.gff)
+#' @keywords internal
 .is_complete_set <- function(dir, genomeID, min_bytes = 100) {
   fna <- file.path(dir, paste0(genomeID, ".fna"))
   faa <- file.path(dir, paste0(genomeID, ".PATRIC.faa"))
@@ -1119,17 +1325,14 @@ retrieveMetadata <- function(user_bacs,
     all(vapply(paths, function(x) file.info(x)$size, numeric(1)) > min_bytes)
 }
 
-# List genomes already completed
+#' Helps collate completed genomes into a set
+#' @keywords internal
 .list_complete <- function(dir, genome_ids, min_bytes = 100) {
   genome_ids[vapply(genome_ids, .is_complete_set, logical(1), dir = dir, min_bytes = min_bytes)]
 }
 
-# Any genomes missing bits or pieces? Find em
-.missing_any <- function(dir, genome_ids, min_bytes = 100) {
-  genome_ids[!vapply(genome_ids, .is_complete_set, logical(1), dir = dir, min_bytes = min_bytes)]
-}
-
-# Audit function
+#' Helps in auditing downloaded files to ensure everything's complete per ID
+#' @keywords internal
 .audit_gaps <- function(out_dir, ids, min_bytes = 100) {
   out_dir <- normalizePath(out_dir, mustWork = FALSE)
   df <- data.frame(
@@ -1148,68 +1351,27 @@ retrieveMetadata <- function(user_bacs,
   df
 }
 
-# FTPS preferred! HTTPS as a fallback to see if it's just an FTPS issue
-.ftp_download_one <- function(genomeID, out_dir, tries = 3L, min_bytes = 100) {
-  files <- c(".fna", ".PATRIC.faa", ".PATRIC.gff")
-  dests <- file.path(out_dir, paste0(genomeID, files))
-  if (.is_complete_set(out_dir, genomeID, min_bytes)) {
-    return(TRUE)
-  }
+### BV-BRC CLI downloader [slower by comparison, but does not need FTP server]
 
-  get_one <- function(url, dest) {
-    if (nzchar(Sys.which("wget"))) {
-      res <- suppressWarnings(system2("wget",
-        c("-q", "-O", shQuote(dest), shQuote(url)),
-        stdout = TRUE, stderr = TRUE
-      ))
-      st <- attr(res, "status")
-      if (is.null(st)) st <- 0L
-      return(st == 0L && file.exists(dest) && file.info(dest)$size > min_bytes)
-    } else if (nzchar(Sys.which("curl"))) {
-      curl_args <- if (startsWith(url, "ftps://")) {
-        c("--ssl-reqd", "-L", "-o", shQuote(dest), shQuote(url))
-      } else {
-        c("-L", "-o", shQuote(dest), shQuote(url))
-      }
-      res <- suppressWarnings(system2("curl", curl_args, stdout = TRUE, stderr = TRUE))
-      st <- attr(res, "status")
-      if (is.null(st)) st <- 0L
-      return(st == 0L && file.exists(dest) && file.info(dest)$size > min_bytes)
-    }
-    FALSE
-  }
+#' Helps normalize Docker paths
+#' @keywords internal
+.docker_path <- function(p) gsub("\\\\", "/", normalizePath(p, mustWork = FALSE))
 
-  for (ext_i in seq_along(files)) {
-    dest <- dests[ext_i]
-    if (file.exists(dest) && file.info(dest)$size > min_bytes) next
-    ftps <- sprintf("ftps://ftp.bv-brc.org/genomes/%s/%s%s", genomeID, genomeID, files[ext_i])
-    https <- sprintf("https://ftp.bv-brc.org/genomes/%s/%s%s", genomeID, genomeID, files[ext_i])
-
-    ok <- FALSE
-    for (k in 1:tries) {
-      if (get_one(ftps, dest)) {
-        ok <- TRUE
-        break
-      }
-    }
-    if (!ok) {
-      for (k in 1:2) {
-        if (get_one(https, dest)) {
-          ok <- TRUE
-          break
-        }
-      }
-    }
-    if (!ok) {
-      return(FALSE)
-    }
-  }
-  .is_complete_set(out_dir, genomeID, min_bytes)
+#' Helps run a shell inside a container, and prefers bash (don't we all?)
+#' @keywords internal
+.pick_shell <- function(image) {
+  chk <- suppressWarnings(system2("docker",
+                                  c(
+                                    "run", "--rm", image, "sh", "-lc",
+                                    "command -v bash >/dev/null || echo NOBASH"
+                                  ),
+                                  stdout = TRUE, stderr = TRUE
+  ))
+  if (length(chk) && any(grepl("NOBASH", chk))) "sh" else "bash"
 }
 
-# BV-BRC CLI downloader [very slow by comparison, but does not need FTP server]
-
-# p3-dump-genomes to fetch FASTA and .gto files
+#' Using p3-dump-genomes in CLI to fetch FASTA and .gto files
+#' @keywords internal
 .cli_dump_fastas_gto_chunk <- function(image, out_dir, genome_ids, tag, tries = 3L) {
   out_dir <- normalizePath(out_dir, mustWork = FALSE)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
@@ -1254,7 +1416,8 @@ retrieveMetadata <- function(user_bacs,
   st == 0L
 }
 
-# Export GFF from GTO per genomes in each chunk
+#' Exports GFF files from the downloaded GTO per genome in each chunk
+#' @keywords internal
 .cli_export_gff_chunk <- function(image, out_dir, genome_ids, tag, tries = 3L) {
   out_dir <- normalizePath(out_dir, mustWork = FALSE)
   ids_file <- file.path(out_dir, paste0("ids_", tag, ".txt"))
@@ -1344,36 +1507,45 @@ retrieveGenomes <- function(base_dir = ".",
                             method = c("ftp", "cli"),
                             image = "danylmb/bvbrc:5.3",
                             skip_existing = TRUE,
-                            ftp_workers = 8L,
+                            ftp_workers = 4L,
                             cli_fasta_workers = 4L,
                             cli_gff_workers = 4L,
                             chunk_size = 50L,
+                            evidence_mode = c("lab_only","lab_or_comp","comp_only","any"),  # NEW
                             verbose = TRUE) {
   method <- match.arg(method)
+  evidence_mode <- match.arg(evidence_mode)
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
-  # IDs from .filterGenomes()
-  if (isTRUE(verbose)) message("Filtering genomes before download.")
-  f_out <- .filterGenomes(base_dir = base_dir, user_bacs = user_bacs, verbose = verbose)
-  if (is.null(f_out)) {
-    return(character())
+  # Use 'filtered' if already prepared, or start filtering
+  if (isTRUE(verbose)) message("Preparing download set (checking for existing 'filtered').")
+  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
+  db_path <- paths$db_path
+  con0 <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
+  has_filtered <- "filtered" %in% DBI::dbListTables(con0)
+  if (has_filtered) {
+    if (isTRUE(verbose)) message("Using existing 'filtered' table (skipping re-filter).")
+    con <- con0; tbl <- "filtered"
+  } else {
+    if (isTRUE(verbose)) message("No 'filtered' table found; filtering now.")
+    f_out <- .filterGenomes(base_dir = base_dir,
+                            user_bacs = user_bacs,
+                            evidence_mode = evidence_mode,
+                            verbose = verbose)
+    con <- f_out$duckdbConnection
+    tbl <- f_out$table_name
   }
 
-  con <- f_out$duckdbConnection
-  tbl <- f_out$table_name
   ids <- tibble::as_tibble(DBI::dbReadTable(con, tbl)) |>
     dplyr::distinct(`genome.genome_id`) |>
     dplyr::pull(`genome.genome_id`)
 
-  # Set up the paths and such
-  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
-  bug_dir <- dirname(paths$db_path)
+  bug_dir <- dirname(db_path)
   genome_path <- file.path(bug_dir, "genomes")
   logs_dir <- file.path(base_dir, "data", "logs")
   dir.create(genome_path, recursive = TRUE, showWarnings = FALSE)
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
 
-  # Adding support for resuming a download
   if (isTRUE(skip_existing)) {
     already <- .list_complete(genome_path, ids)
     if (isTRUE(verbose)) message(length(already), " genomes already completed; skipping.")
@@ -1391,60 +1563,59 @@ retrieveGenomes <- function(base_dir = ".",
     return(all_complete)
   }
 
-  # FTP method -- preferred if server is available
   if (identical(method, "ftp")) {
-    if (isTRUE(verbose)) message("Trying FTPS download. Workers=", ftp_workers)
-    future::plan(future::multisession, workers = max(1, ftp_workers))
-    ft_ok <- future.apply::future_lapply(ids, function(gid) .ftp_download_one(gid, genome_path),
-      future.seed = TRUE
+    if (isTRUE(verbose)) message("Downloading by FTPS.")
+    ok_ids <- .ftpes_download_two_pass(
+      genome_ids     = ids,
+      out_dir        = genome_path,
+      workers_first  = ftp_workers,
+      workers_second = ftp_workers,
+      log_file       = file.path(logs_dir, "ftp_download.log")
     )
-    ok_ids <- ids[unlist(ft_ok)]
-    if (isTRUE(verbose)) message("Complete file sets for ", length(ok_ids), " genomes (FTP).")
-    return(c(ok_ids, .list_complete(genome_path, setdiff(ids, ok_ids))))
+    if (isTRUE(verbose)) {
+      message("Complete file sets for ", length(ok_ids), " genomes total.")
+      miss <- setdiff(ids, ok_ids)
+      if (length(miss)) message("Excluded (failed after retry): ", length(miss))
+    }
+    return(ok_ids)
   }
 
-  # CLI for FASTA, FAA, and GTO, then GFF from GTO
-  chunks <- split(ids, ceiling(seq_along(ids) / chunk_size))
+  if (identical(method, "cli")) {
+    if (isTRUE(verbose)) {
+      message(
+        "CLI mode: downloading genomes in parallelized chunks. ",
+        "Chunks=", ceiling(length(ids)/chunk_size),
+        " | fasta_workers=", cli_fasta_workers,
+        " | gff_workers=", cli_gff_workers
+      )
+    }
 
-  # Parallel chunk containers
-  if (isTRUE(verbose)) {
-    message(
-      "CLI being run in parallel for ", length(chunks),
-      " data chunks."
-    )
-  }
-  future::plan(future::multisession, workers = max(1, cli_fasta_workers))
-  fa_res <- future.apply::future_mapply(
-    FUN = function(vec, tag) .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag),
-    vec = chunks, tag = paste0("fa", seq_along(chunks)),
-    SIMPLIFY = TRUE, future.seed = TRUE
-  )
-  if (!all(fa_res) && isTRUE(verbose)) warning(sum(!fa_res), " data chunks failed.")
+    chunks <- split(ids, ceiling(seq_along(ids) / chunk_size))
 
-  # GFF extraction in parallel containers
-  if (isTRUE(verbose)) {
-    message(
-      "GFF extraction being run in parallel for ",
-      length(chunks), " data chunks."
-    )
-  }
-  future::plan(future::multisession, workers = max(1, cli_gff_workers))
-  g_res <- future.apply::future_mapply(
-    FUN = function(vec, tag) .cli_export_gff_chunk(image, genome_path, vec, tag),
-    vec = chunks, tag = paste0("gff", seq_along(chunks)),
-    SIMPLIFY = TRUE, future.seed = TRUE
-  )
-  if (!all(g_res) && isTRUE(verbose)) warning(sum(!g_res), " GFF chunks had failures.")
+    # FASTA + GTO in parallel containers
+    future::plan(future::multisession, workers = max(1, cli_fasta_workers))
+    invisible(future.apply::future_mapply(
+      FUN = function(vec, tag) .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag),
+      vec = chunks, tag = paste0("fa", seq_along(chunks)),
+      SIMPLIFY = TRUE, future.seed = TRUE
+    ))
 
-  # Success set: .fna + .PATRIC.faa + .PATRIC.gff all present per isolate
-  ok_ids <- ids[vapply(ids, .is_complete_set, logical(1), dir = genome_path)]
-  if (isTRUE(verbose)) {
-    message(
-      "Complete file sets downloaded for ",
-      length(ok_ids), " genomes."
-    )
+    # GFF export in parallel containers
+    future::plan(future::multisession, workers = max(1, cli_gff_workers))
+    invisible(future.apply::future_mapply(
+      FUN = function(vec, tag) .cli_export_gff_chunk(image, genome_path, vec, tag),
+      vec = chunks, tag = paste0("gff", seq_along(chunks)),
+      SIMPLIFY = TRUE, future.seed = TRUE
+    ))
+
+    ok_ids <- ids[vapply(ids, .is_complete_set, logical(1), dir = genome_path)]
+    if (isTRUE(verbose)) {
+      message("CLI complete file sets for ", length(ok_ids), " genomes.")
+      miss <- setdiff(ids, ok_ids)
+      if (length(miss)) message("Excluded (CLI completion failed): ", length(miss))
+    }
+    return(ok_ids)
   }
-  ok_ids
 }
 
 #' Build a table of local genome file paths and write to DuckDB
@@ -1494,7 +1665,7 @@ genomeList <- function(base_dir = ".",
       faa_path = if (file.exists(faa_path) && file.info(faa_path)$size > 100) faa_path else NA,
       panaroo_input = if (
         file.exists(gff_path) && file.exists(fna_path) && file.exists(faa_path) &&
-          file.info(gff_path)$size > 100 && file.info(fna_path)$size > 100 && file.info(faa_path)$size > 100
+        file.info(gff_path)$size > 100 && file.info(fna_path)$size > 100 && file.info(faa_path)$size > 100
       ) {
         paste(gff_path, fna_path)
       } else {
@@ -1546,6 +1717,9 @@ genomeList <- function(base_dir = ".",
 #'   `"ftp"` (default) or `"cli"`.
 #' @param overwrite Logical. Passed to metadata filtering and DuckDB creation.
 #'   Default FALSE.
+#' @param evidence_mode Character. Sets what types of AMR evidence is acceptable.
+#'    Default `lab_only`. `any` will not require AMR data for downloads. This will
+#'    return very large download lists for many species!
 #' @param verbose Logical. Print progress messages. Default TRUE.
 #'
 #' @return A list (the output of `genomeList()`), containing:
@@ -1557,32 +1731,64 @@ prepareGenomes <- function(user_bacs,
                            base_dir = ".",
                            method = c("ftp", "cli"),
                            overwrite = FALSE,
+                           evidence_mode = c("lab_only","lab_or_comp","comp_only","any"),
                            verbose = TRUE) {
   method <- match.arg(method)
+  evidence_mode <- match.arg(evidence_mode)
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
-  # Ensure the BV-BRC metadata cache exists, fetch if missing
   .ensure_bvbrc_cache(base_dir = base_dir, verbose = verbose)
 
-  if (isTRUE(verbose)) message("Step 1: Downloading genomes from BV-BRC")
+  if (isTRUE(verbose)) message("Step 0: Building AMR metadata (retrieveMetadata)")
+  invisible(retrieveMetadata(
+    user_bacs = user_bacs,
+    filter_type = "AMR",
+    base_dir = base_dir,
+    abx = "All",
+    overwrite = overwrite,
+    verbose = verbose
+  ))
 
-  # Filter + download
+  if (isTRUE(verbose)) message("Step 1: Filtering genomes for download by evidence: ", evidence_mode)
+  f_out <- .filterGenomes(
+    base_dir      = base_dir,
+    user_bacs     = user_bacs,
+    evidence_mode = evidence_mode,
+    verbose       = verbose,
+    fallback_to_bvbrc_cache = FALSE
+  )
+  if (is.null(f_out)) {
+    message("No genomes available after evidence filtering.")
+    return(NULL)
+  }
+
+  # A little summary of what's left after filtering (or not)
+  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
+  con   <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path, read_only = TRUE)
+  n_filtered <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM filtered')$n
+  n_meta     <- if ("genome_data" %in% DBI::dbListTables(con)) DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM genome_data')$n else NA
+  n_amr      <- if ("amr_phenotype" %in% DBI::dbListTables(con)) DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype')$n else NA
+  DBI::dbDisconnect(con, shutdown = TRUE)
+  if (isTRUE(verbose)) {
+    message(sprintf("Evidence filter summary: filtered=%d | genomes with AMR=%s | genomes with genome_data=%s",
+                    n_filtered, ifelse(is.na(n_amr), "NA", n_amr), ifelse(is.na(n_meta), "NA", n_meta)))
+  }
+
+  if (isTRUE(verbose)) message("Step 2: Downloading genomes from BV-BRC (", method, ")")
   ids <- retrieveGenomes(
     base_dir      = base_dir,
     user_bacs     = user_bacs,
     method        = method,
     skip_existing = !overwrite,
+    evidence_mode = evidence_mode,
     verbose       = verbose
   )
-
   if (length(ids) == 0L) {
-    message("No genomes available after filtering.")
+    message("No genomes downloaded.")
     return(NULL)
   }
 
-  if (isTRUE(verbose)) message("Step 2: Formatting data into a database for further processing")
-
-  # List local files into per-selection DB
+  if (isTRUE(verbose)) message("Step 3: Formatting data into a database for further processing")
   out <- genomeList(
     base_dir  = base_dir,
     user_bacs = user_bacs,
@@ -1590,7 +1796,7 @@ prepareGenomes <- function(user_bacs,
   )
 
   if (isTRUE(verbose)) {
-    message("Done. Files are ready! Please continue to downstream processing by `runDataProcessing()`")
+    message("Done. Files are ready! Continue with downstream processing with runDataProcessing().")
   }
   out
 }
