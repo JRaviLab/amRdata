@@ -1,0 +1,147 @@
+---
+title: "bvbrc_stats"
+author: "Abhirupa"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+
+bvbrc <- read.table("bvbrc_data.tsv", sep = "\t", header = TRUE, fill = TRUE, 
+                    quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
+)
+```
+
+```{r functions}
+# Use your fix_utf8() if defined; otherwise a no-op fallback
+if (!exists("fix_utf8")) {
+  fix_utf8 <- function(x) x
+}
+
+# Tokens that should count as missing for text fields
+missing_tokens <- c(
+  "", " ", "NA", "N/A", "n/a", "na", "null", "Null", "NULL",
+  "unknown", "Unknown", "UNKNOWN",
+  "not provided", "Not provided", "NOT PROVIDED",
+  "not reported", "Not reported", "NOT REPORTED",
+  "unavailable", "Unspecified", "unspecified", "missing"
+)
+
+is_placeholder_na <- function(x) {
+  if (!is.character(x)) return(rep(FALSE, length(x)))
+  str_trim(x) %in% missing_tokens
+}
+
+# Clean ALL character/factor columns in the data frame
+clean_all_char_cols <- function(df) {
+  df %>%
+    mutate(across(
+      where(~ is.character(.x) || is.factor(.x)),
+      ~ {
+        x <- .
+        if (is.factor(x)) x <- as.character(x)
+        if (is.character(x)) {
+          x <- fix_utf8(x)
+          x <- str_squish(x)             # trim + collapse internal spaces
+          x[is_placeholder_na(x)] <- NA  # "", "N/A", "unknown", etc. -> NA
+        }
+        x
+      }
+    ))
+}
+
+# --- Block-level summaries ---------------------------------------------------
+summarize_block <- function(df, cols, block_name) {
+  if (length(cols) == 0) {
+    return(tibble(
+      block = block_name,
+      n_total = nrow(df),
+      n_rows_all_missing = nrow(df),
+      pct_all_missing = 100,
+      n_rows_any_present = 0,
+      pct_any_present = 0
+    ))
+  }
+  df %>%
+    transmute(
+      .row_any_present = if_any(all_of(cols), ~ !is.na(.x)),
+      .row_all_missing = if_all(all_of(cols), is.na)
+    ) %>%
+    summarise(
+      block = block_name,
+      n_total = n(),
+      n_rows_all_missing = sum(.row_all_missing),
+      pct_all_missing = 100 * n_rows_all_missing / n_total,
+      n_rows_any_present = sum(.row_any_present),
+      pct_any_present = 100 * n_rows_any_present / n_total,
+      .groups = "drop"
+    )
+}
+
+```
+
+```{r stats}
+# Apply to your table
+bvbrc_clean <- clean_all_char_cols(bvbrc)
+# --- Per-column stats --------------------------------------------------------
+col_stats <- tibble(column = colnames(bvbrc)) %>%
+  mutate(
+    n_total   = nrow(bvbrc),
+    n_missing = map_int(column, ~ sum(is.na(bvbrc[[.x]]))),
+    n_present = n_total - n_missing,
+    pct_missing = 100 * n_missing / n_total,
+    n_distinct_non_missing = map_int(column, ~ n_distinct(bvbrc[[.x]], na.rm = TRUE))
+  ) %>%
+  arrange(desc(pct_missing), column)
+
+# --- Define blocks -----------------------------------------------------------
+host_cols <- c(
+  "genome.host_common_name",
+  "genome.host_group",
+  "genome.host_name"
+)
+
+geo_cols <- c(
+  "genome.isolation_source",
+  "genome.geographic_location",
+  "genome.isolation_country",
+  "genome.state_province",
+  "genome.city",
+  "genome.county",
+  "genome.latitude",
+  "genome.longitude"
+)
+
+host_cols <- intersect(host_cols, colnames(bvbrc))
+geo_cols  <- intersect(geo_cols,  colnames(bvbrc))
+
+host_block_stats <- summarize_block(bvbrc_clean, host_cols, "host")
+geo_block_stats  <- summarize_block(bvbrc_clean,  geo_cols,  "geographic")
+
+# --- Quick diagnostics: check specific columns you care about ----------------
+diag_cols <- unique(c(host_cols, geo_cols))
+diag_table <- tibble(column = diag_cols) %>%
+  mutate(
+    n_total   = nrow(bvbrc_clean),
+    n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
+    n_present = n_total - n_missing,
+    pct_missing = 100 * n_missing / n_total
+  ) %>%
+  arrange(desc(pct_missing), column)
+```
+
+```{r}
+# --- Outputs -----------------------------------------------------------------
+cat("\n--- Per-column stats (whole table) ---\n"); print(col_stats, n = Inf)
+```
+```{r}
+cat("\n--- Host block stats ---\n");           print(host_block_stats)
+```
+```{r}
+cat("\n--- Geographic block stats ---\n");     print(geo_block_stats)
+```
+```{r}
+cat("\n--- Diagnostics for host + geo columns ---\n"); print(diag_table, n = Inf)
+
+```
