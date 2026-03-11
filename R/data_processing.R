@@ -791,8 +791,10 @@ runPanaroo2Duckdb <- function(duckdb_path,
 .extractMembersInClusters <- function(clustered_faa) {
   clstr <- paste0(clustered_faa, ".clstr")
   if (!file.exists(clstr)) {
-    stop("CD-HIT cluster file not found: ", clstr,
-         "\nEnsure .runCDHIT() completed successfully and produced the .clstr file.")
+    stop(
+      "CD-HIT cluster file not found: ", clstr,
+      "\nEnsure .runCDHIT() completed successfully and produced the .clstr file."
+    )
   }
 
   lines <- data.table::fread(clstr, sep = "\n", header = FALSE)$V1
@@ -801,7 +803,7 @@ runPanaroo2Duckdb <- function(duckdb_path,
 
   for (i in seq_along(cluster_ids)) {
     start <- cluster_ids[i] + 1
-    end   <- if (i < length(cluster_ids)) cluster_ids[i + 1] - 1 else length(lines)
+    end <- if (i < length(cluster_ids)) cluster_ids[i + 1] - 1 else length(lines)
     cluster_lines <- lines[start:end]
 
     # This finds the reference cluster ID and names the cluster with it
@@ -813,8 +815,10 @@ runPanaroo2Duckdb <- function(duckdb_path,
     }
 
     # Pull genome IDs
-    members <- stringr::str_match(cluster_lines,
-                                         "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+")[, 1]
+    members <- stringr::str_match(
+      cluster_lines,
+      "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+"
+    )[, 1]
     members <- members[!is.na(members)]
 
     if (length(members) > 0) {
@@ -826,7 +830,7 @@ runPanaroo2Duckdb <- function(duckdb_path,
   }
 
   tibble::as_tibble(cluster_member)
-}  
+}
 
 #' Build genome-by-protein-cluster count matrix
 #'
@@ -928,7 +932,7 @@ CDHIT2duckdb <- function(duckdb_path,
 
   cluster_member <- .extractMembersInClusters(cdhit_outputs$clustered_faa)
   DBI::dbWriteTable(con, "protein_members", cluster_member, overwrite = TRUE)
-  
+
   invisible(TRUE)
 }
 
@@ -1557,7 +1561,7 @@ cleanData <- function(duckdb_path, path) {
 
   DBI::dbReadTable(con, "protein_members") |> writeCompressedParquet(protein_cluster_member_parquet)
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_members AS SELECT * FROM read_parquet('%s')", protein_cluster_member_parquet))
-  
+
   DBI::dbReadTable(con, "genome_gene_protein") |> writeCompressedParquet(genome_gene_protein_parquet)
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_gene_protein AS SELECT * FROM read_parquet('%s')", genome_gene_protein_parquet))
 
