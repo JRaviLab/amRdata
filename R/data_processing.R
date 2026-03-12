@@ -779,6 +779,58 @@ runPanaroo2Duckdb <- function(duckdb_path,
   cluster_map
 }
 
+#' Parse CD-HIT `.clstr` output into a long-format mapping
+#'
+#' Reads a CD-HIT `.clstr` file and constructs a mapping of clusters to member feature ids.
+#'
+#' @param clustered_faa Base path to CD-HIT output (without `.clstr` extension).
+#'
+#' @return A tibble with columns `cluster` and `member`.
+#'
+#' @keywords internal
+.extractMembersInClusters <- function(clustered_faa) {
+  clstr <- paste0(clustered_faa, ".clstr")
+  if (!file.exists(clstr)) {
+    stop(
+      "CD-HIT cluster file not found: ", clstr,
+      "\nEnsure .runCDHIT() completed successfully and produced the .clstr file."
+    )
+  }
+
+  lines <- data.table::fread(clstr, sep = "\n", header = FALSE)$V1
+  cluster_ids <- grep("^>Cluster", lines)
+  cluster_member <- data.table::data.table()
+
+  for (i in seq_along(cluster_ids)) {
+    start <- cluster_ids[i] + 1
+    end <- if (i < length(cluster_ids)) cluster_ids[i + 1] - 1 else length(lines)
+    cluster_lines <- lines[start:end]
+
+    # This finds the reference cluster ID and names the cluster with it
+    ref_line <- grep("\\*$", cluster_lines, value = TRUE)
+    ref_id <- if (length(ref_line) > 0) {
+      stringr::str_extract(ref_line, "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+")
+    } else {
+      paste0("Cluster_", i - 1)
+    }
+
+    # Pull genome IDs
+    members <- stringr::str_match(
+      cluster_lines,
+      "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+"
+    )[, 1]
+    members <- members[!is.na(members)]
+
+    if (length(members) > 0) {
+      cluster_member <- data.table::rbindlist(list(
+        cluster_member,
+        data.table::data.table(cluster = ref_id, member = members)
+      ), use.names = TRUE)
+    }
+  }
+
+  tibble::as_tibble(cluster_member)
+}
 
 #' Build genome-by-protein-cluster count matrix
 #'
@@ -877,6 +929,10 @@ CDHIT2duckdb <- function(duckdb_path,
     ),
     overwrite = TRUE
   )
+
+  cluster_member <- .extractMembersInClusters(cdhit_outputs$clustered_faa)
+  DBI::dbWriteTable(con, "protein_members", cluster_member, overwrite = TRUE)
+
   invisible(TRUE)
 }
 
@@ -1254,7 +1310,16 @@ domainFromIPR <- function(duckdb_path,
 }
 
 # Clean BV-BRC metadata, then save as Parquet files
-cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
+#'
+#' @param duckdb_path
+#' @param path
+#' @param ref_file_path
+#'
+#' @returns
+#' @export
+#'
+#' @examples
+cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when
   # the DuckDB lives under data/<bug>/, or else fall back to the DuckDB directory.
@@ -1311,6 +1376,7 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     )
 
   year_breaks <- seq(1980, 2023, by = 5)
+
   dplyr::tbl(con, "filtered") |>
     tibble::as_tibble() |>
     dplyr::mutate(genome_drug.antibiotic = cleaned_drug) |>
@@ -1339,6 +1405,76 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     )) |>
     DBI::dbWriteTable(conn = con, name = "cleaned_metadata", overwrite = TRUE)
 
+  # Parquet output path
+  metadata_parquet <- file.path(path, "metadata.parquet") # cleaned_metadata exported as 'metadata'
+
+  # Also export AMR/genome/original metadata
+  amr_phenotype_parquet <- file.path(path, "amr_phenotype.parquet")
+  genome_data_parquet <- file.path(path, "genome_data.parquet")
+  original_metadata_parquet <- file.path(path, "original_metadata.parquet")
+
+  writeCompressedParquet <- function(df, path) {
+    arrow::write_parquet(
+      df,
+      path,
+      compression = "zstd",
+      compression_level = 9,
+      use_dictionary = TRUE
+    )
+  }
+
+  db_name <- duckdb_path |>
+    stringr::str_split_i(".duckdb", i = 1) |>
+    paste0("_parquet.duckdb")
+  con_new <- DBI::dbConnect(duckdb::duckdb(), db_name)
+  on.exit(try(DBI::dbDisconnect(con_new, shutdown = FALSE), silent = TRUE), add = TRUE)
+
+  # cleaned_metadata -> parquet + view (as metadata)
+  DBI::dbReadTable(con, "cleaned_metadata") |> writeCompressedParquet(metadata_parquet)
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW metadata AS SELECT * FROM read_parquet('%s')", metadata_parquet))
+
+  # debug/complete views: amr_phenotype, genome_data, original_metadata
+  DBI::dbReadTable(con, "amr_phenotype") |> writeCompressedParquet(amr_phenotype_parquet)
+  DBI::dbReadTable(con, "genome_data") |> writeCompressedParquet(genome_data_parquet)
+  DBI::dbReadTable(con, "metadata") |> writeCompressedParquet(original_metadata_parquet)
+
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW amr_phenotype AS SELECT * FROM read_parquet('%s')", amr_phenotype_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_data AS SELECT * FROM read_parquet('%s')", genome_data_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW original_metadata AS SELECT * FROM read_parquet('%s')", original_metadata_parquet))
+
+  invisible(TRUE)
+}
+
+# Clean feature matrices, then save as Parquet files
+#'
+#' @param duckdb_path
+#' @param path
+#'
+#' @returns
+#' @export
+#'
+#' @examples
+cleanData <- function(duckdb_path, path) {
+  duckdb_path <- normalizePath(duckdb_path)
+  # If no explicit path is provided (or a generic one), choose results/<bug>/ when
+  # the DuckDB lives under data/<bug>/, or else fall back to the DuckDB directory.
+  if (missing(path) || path %in% c(".", "results", "results/")) {
+    bug_dir <- dirname(duckdb_path)
+    mapped_results <- sub(
+      paste0(.Platform$file.sep, "data", .Platform$file.sep),
+      paste0(.Platform$file.sep, "results", .Platform$file.sep),
+      bug_dir,
+      fixed = TRUE
+    )
+    path <- if (!identical(mapped_results, bug_dir)) mapped_results else bug_dir
+  }
+
+  path <- normalizePath(path, mustWork = FALSE)
+  if (!dir.exists(path)) dir.create(path, recursive = TRUE)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
+
   # Parquet output paths
   genes_parquet <- file.path(path, "gene_count.parquet")
   gene_names_parquet <- file.path(path, "gene_names.parquet")
@@ -1349,17 +1485,11 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   proteins_parquet <- file.path(path, "protein_count.parquet")
   domains_parquet <- file.path(path, "domain_count.parquet")
 
-  metadata_parquet <- file.path(path, "metadata.parquet") # cleaned_metadata exported as 'metadata'
-
   domain_names_parquet <- file.path(path, "domain_names.parquet")
   protein_names_parquet <- file.path(path, "protein_names.parquet")
 
   protein_cluster_seq_parquet <- file.path(path, "protein_seqs.parquet")
-
-  # Also export AMR/genome/original metadata
-  amr_phenotype_parquet <- file.path(path, "amr_phenotype.parquet")
-  genome_data_parquet <- file.path(path, "genome_data.parquet")
-  original_metadata_parquet <- file.path(path, "original_metadata.parquet")
+  protein_cluster_member_parquet <- file.path(path, "protein_members.parquet")
 
   writeCompressedParquet <- function(df, path) {
     arrow::write_parquet(
@@ -1409,10 +1539,6 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     writeCompressedParquet(struct_parquet)
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW struct AS SELECT * FROM read_parquet('%s')", struct_parquet))
 
-  # cleaned_metadata -> parquet + view (as metadata)
-  DBI::dbReadTable(con, "cleaned_metadata") |> writeCompressedParquet(metadata_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW metadata AS SELECT * FROM read_parquet('%s')", metadata_parquet))
-
   # names/seq tables -> parquet + views
   DBI::dbReadTable(con, "gene_names") |> writeCompressedParquet(gene_names_parquet)
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_names AS SELECT * FROM read_parquet('%s')", gene_names_parquet))
@@ -1433,17 +1559,11 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   DBI::dbReadTable(con, "protein_cluster_seq") |> writeCompressedParquet(protein_cluster_seq_parquet)
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_seqs AS SELECT * FROM read_parquet('%s')", protein_cluster_seq_parquet))
 
+  DBI::dbReadTable(con, "protein_members") |> writeCompressedParquet(protein_cluster_member_parquet)
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_members AS SELECT * FROM read_parquet('%s')", protein_cluster_member_parquet))
+
   DBI::dbReadTable(con, "genome_gene_protein") |> writeCompressedParquet(genome_gene_protein_parquet)
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_gene_protein AS SELECT * FROM read_parquet('%s')", genome_gene_protein_parquet))
-
-  # debug/complete views: amr_phenotype, genome_data, original_metadata
-  DBI::dbReadTable(con, "amr_phenotype") |> writeCompressedParquet(amr_phenotype_parquet)
-  DBI::dbReadTable(con, "genome_data") |> writeCompressedParquet(genome_data_parquet)
-  DBI::dbReadTable(con, "metadata") |> writeCompressedParquet(original_metadata_parquet)
-
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW amr_phenotype AS SELECT * FROM read_parquet('%s')", amr_phenotype_parquet))
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_data AS SELECT * FROM read_parquet('%s')", genome_data_parquet))
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW original_metadata AS SELECT * FROM read_parquet('%s')", original_metadata_parquet))
 
   invisible(TRUE)
 }
