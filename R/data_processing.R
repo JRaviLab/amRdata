@@ -756,7 +756,7 @@ runPanaroo2Duckdb <- function(duckdb_path,
     # This finds the reference cluster ID and names the cluster with it
     ref_line <- grep("\\*$", cluster_lines, value = TRUE)
     ref_id <- if (length(ref_line) > 0) {
-      stringr::str_extract(ref_line, "fig\\|[0-9]+\\.[0-9]+\\.peg\\.[0-9]+")
+      stringr::str_extract(ref_line, "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+")
     } else {
       paste0("Cluster_", i - 1)
     }
@@ -764,7 +764,7 @@ runPanaroo2Duckdb <- function(duckdb_path,
     # Pull genome IDs
     genome_matches <- stringr::str_match(
       cluster_lines,
-      "fig\\|([0-9]+\\.[0-9]+)\\.peg\\.[0-9]+"
+      "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+"
     )[, 2]
     genome_matches <- genome_matches[!is.na(genome_matches)]
 
@@ -874,8 +874,8 @@ buildMatrices <- function(cluster_map) .buildProtMatrices(cluster_map)
   names_faa <- names(cdhit_output_faa) |>
     tibble::as_tibble() |>
     dplyr::mutate(
-      proteinID = stringr::str_extract(value, "^fig\\|[0-9]+\\.[0-9]+\\.peg\\.[0-9]+"),
-      locus_tag = stringr::str_match(value, "peg\\.[0-9]+\\|([^\\s]+)")[, 2],
+      proteinID = stringr::str_extract(value, "^fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+"),
+      locus_tag = stringr::str_match(value, "peg(?:sc)?\\.[0-9]+\\|([^\\s]+)")[, 2],
       proteinName = stringr::str_trim(stringr::str_match(value, "\\|[^\\s]+\\s+(.*?)\\s+\\[")[, 2])
     ) |>
     dplyr::select(-value)
@@ -924,7 +924,7 @@ CDHIT2duckdb <- function(duckdb_path,
   clustered_faa <- Biostrings::readAAStringSet(cdhit_outputs$clustered_faa)
   DBI::dbWriteTable(con, "protein_cluster_seq",
     tibble::tibble(
-      name     = names(clustered_faa) |> stringr::str_extract("fig\\|[0-9]+\\.[0-9]+\\.peg\\.[0-9]+"),
+      name     = names(clustered_faa) |> stringr::str_extract("fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+"),
       sequence = as.character(clustered_faa)
     ),
     overwrite = TRUE
