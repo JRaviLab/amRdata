@@ -1367,6 +1367,7 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::left_join(drug_class, by = c("cleaned_drug" = "drug")) |>
     dplyr::left_join(drug_abbr, by = c("cleaned_drug" = "drug")) |>
     dplyr::left_join(class_abbr, by = "drug_class") |>
+    dplyr::filter(genome_drug.resistant_phenotype %in% c("Resistant","Susceptible"))|>
     DBI::dbWriteTable(conn = con, name = "filtered_metadata", overwrite = TRUE)
 
   resistance_summary <- dplyr::tbl(con, "filtered_metadata") |>
