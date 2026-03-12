@@ -1351,15 +1351,17 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
 
   dplyr::tbl(con, "filtered") |>
     tibble::as_tibble() |>
-    dplyr::select("genome.genome_id") |> 
+    dplyr::select("genome.genome_id") |>
     dplyr::left_join(dplyr::tbl(con, "metadata") |>
-    tibble::as_tibble(), by = dplyr::join_by("genome.genome_id" == "genome_drug.genome_id")) |>
-    dplyr::select("genome.genome_id", "genome_drug.antibiotic",
-                  "genome_drug.genome_name", "genome_drug.laboratory_typing_method",
-                  "genome_drug.resistant_phenotype", "genome_drug.taxon_id",
-                  "genome_drug.pmid", "genome.collection_year",
-                  "genome.isolation_country", "genome.host_common_name",
-                  "genome.isolation_source", "genome.species") |>
+      tibble::as_tibble(), by = dplyr::join_by("genome.genome_id" == "genome_drug.genome_id")) |>
+    dplyr::select(
+      "genome.genome_id", "genome_drug.antibiotic",
+      "genome_drug.genome_name", "genome_drug.laboratory_typing_method",
+      "genome_drug.resistant_phenotype", "genome_drug.taxon_id",
+      "genome_drug.pmid", "genome.collection_year",
+      "genome.isolation_country", "genome.host_common_name",
+      "genome.isolation_source", "genome.species"
+    ) |>
     dplyr::left_join(clean_drug, by = c("genome_drug.antibiotic" = "original_drug")) |>
     dplyr::filter(!is.na(cleaned_drug)) |>
     dplyr::left_join(drug_class, by = c("cleaned_drug" = "drug")) |>
@@ -1368,7 +1370,7 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     DBI::dbWriteTable(conn = con, name = "filtered_metadata", overwrite = TRUE)
 
   resistance_summary <- dplyr::tbl(con, "filtered_metadata") |>
-    tibble::as_tibble()  |>
+    tibble::as_tibble() |>
     dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
     dplyr::group_by(genome.genome_id) |>
     dplyr::summarise(
@@ -1382,7 +1384,7 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::mutate(genome_drug.antibiotic = cleaned_drug) |>
     dplyr::select(-cleaned_drug) |>
     dplyr::left_join(clean_countries, by = c("genome.isolation_country" = "raw_entry")) |>
-    dplyr::rename("cleaned_country"="clean_name", "country_abbr"="short_name") |>
+    dplyr::rename("cleaned_country" = "clean_name", "country_abbr" = "short_name") |>
     dplyr::mutate(genome.isolation_country = cleaned_country) |>
     dplyr::select(-cleaned_country) |>
     dplyr::left_join(resistance_summary, by = "genome.genome_id") |>
@@ -1390,15 +1392,19 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
       is.na(resistant_classes) ~ genome_drug.resistant_phenotype,
       TRUE ~ resistant_classes
     )) |>
-    dplyr::mutate(num_resistant_classes= dplyr::case_when(
+    dplyr::mutate(num_resistant_classes = dplyr::case_when(
       is.na(num_resistant_classes) ~ 0,
       TRUE ~ num_resistant_classes
     )) |>
     dplyr::mutate(genome.collection_year = as.numeric(genome.collection_year)) |>
-    dplyr::mutate(year_bin = cut(genome.collection_year, breaks = year_breaks,
-                                 right = FALSE, include.lowest = TRUE,
-                                 labels = paste(year_breaks[-length(year_breaks)],
-                                                year_breaks[-1] - 1, sep = "-"))) |>
+    dplyr::mutate(year_bin = cut(genome.collection_year,
+      breaks = year_breaks,
+      right = FALSE, include.lowest = TRUE,
+      labels = paste(year_breaks[-length(year_breaks)],
+        year_breaks[-1] - 1,
+        sep = "-"
+      )
+    )) |>
     DBI::dbWriteTable(conn = con, name = "cleaned_metadata", overwrite = TRUE)
 
   # Parquet output path
@@ -1784,7 +1790,7 @@ runDataProcessing <- function(duckdb_path,
   cleanData(duckdb_path = duckdb_path, path = out_dir, ref_file_path = ref_file_path)
   cleanMetaData(duckdb_path = duckdb_path, path = out_dir, ref_file_path = ref_file_path)
   cleanData(duckdb_path = duckdb_path, path = out_dir)
-  
+
   parquet_duckdb_path <- paste0(
     stringr::str_split_i(duckdb_path, ".duckdb", i = 1),
     "_parquet.duckdb"
