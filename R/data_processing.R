@@ -1370,18 +1370,18 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::filter(genome_drug.resistant_phenotype %in% c("Resistant", "Susceptible")) |>
     DBI::dbWriteTable(conn = con, name = "filtered_metadata", overwrite = TRUE)
 
-   resistance_summary <- DBI::dbReadTable(con, "filtered_metadata") |>
-  dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
-  dplyr::group_by(genome.genome_id) |>
-  dplyr::summarise(
-    resistant_classes = paste(sort(unique(class_abbr)), collapse = "_"),
-    .groups = "drop"
-  ) |>
-  dplyr::collect() |>
-  dplyr::mutate(
-    num_resistant_classes = stringr::str_count(resistant_classes, "_") + 1
-  ) 
-  
+  resistance_summary <- DBI::dbReadTable(con, "filtered_metadata") |>
+    dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
+    dplyr::group_by(genome.genome_id) |>
+    dplyr::summarise(
+      resistant_classes = paste(sort(unique(class_abbr)), collapse = "_"),
+      .groups = "drop"
+    ) |>
+    dplyr::collect() |>
+    dplyr::mutate(
+      num_resistant_classes = stringr::str_count(resistant_classes, "_") + 1
+    )
+
   year_breaks <- seq(1980, 2026, by = 5)
   dplyr::tbl(con, "filtered_metadata") |>
     tibble::as_tibble() |>
