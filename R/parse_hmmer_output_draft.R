@@ -16,13 +16,15 @@ mapping <- read_tsv(mapping_file, show_col_types = FALSE)
 parse_hmmer_tbl <- function(tbl_file, source) {
   lines <- read_lines(tbl_file)
   lines <- lines[!str_starts(lines, "#")]
-  if (length(lines) == 0) return(tibble())
+  if (length(lines) == 0) {
+    return(tibble())
+  }
 
   df <- read_table2(paste(lines, collapse = "\n"), col_names = FALSE, comment = "#")
   colnames(df)[1:4] <- c("target_name", "target_accession", "query_name", "query_accession")
   df <- df %>%
     group_by(query_name) %>%
-    slice_min(order_by = X5, n = 1, with_ties = FALSE) %>%  # X5 is E-value
+    slice_min(order_by = X5, n = 1, with_ties = FALSE) %>% # X5 is E-value
     ungroup() %>%
     mutate(source = source)
   return(df)

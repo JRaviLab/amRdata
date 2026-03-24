@@ -7,10 +7,10 @@ library(purrr)
 
 # Set directories
 top_feat_dir <- "results/tsv"
-species <- "Aba"  # Change as needed
+species <- "Aba" # Change as needed
 seq_dir <- file.path("/pl/active/jravilab/AGhosh/AMR_data/v2_data", species)
 output_dir <- "hmmer_inputs"
-#dir_create(output_dir)
+# dir_create(output_dir)
 
 # Load all top feature files
 top_files <- dir_ls(top_feat_dir, regexp = "_top_features\\.tsv$")
@@ -18,8 +18,8 @@ top_files <- dir_ls(top_feat_dir, regexp = "_top_features\\.tsv$")
 # Step 1: Aggregate all unique feature IDs
 all_features <- top_files %>%
   map_dfr(~ read_tsv(.x, show_col_types = FALSE) %>%
-            select(Variable) %>%
-            mutate(source_file = path_file(.x))) %>%
+    select(Variable) %>%
+    mutate(source_file = path_file(.x))) %>%
   distinct()
 
 # Step 2: Load gene and protein sequences
@@ -119,10 +119,14 @@ for (species in species_list) {
     mutate(type = "protein")
 
   # Write full FASTA files
-  write_lines(paste0("> ", gene_seqs$name, "\n", gene_seqs$sequence),
-              file.path(input_dir, paste0(species, "_genes_for_hmmer.fasta")))
-  write_lines(paste0("> ", protein_seqs$name, "\n", protein_seqs$sequence),
-              file.path(input_dir, paste0(species, "_proteins_for_hmmer.fasta")))
+  write_lines(
+    paste0("> ", gene_seqs$name, "\n", gene_seqs$sequence),
+    file.path(input_dir, paste0(species, "_genes_for_hmmer.fasta"))
+  )
+  write_lines(
+    paste0("> ", protein_seqs$name, "\n", protein_seqs$sequence),
+    file.path(input_dir, paste0(species, "_proteins_for_hmmer.fasta"))
+  )
 
   # Chunking function
   split_fasta <- function(seqs, prefix) {

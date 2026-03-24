@@ -16,10 +16,10 @@ alpine <- TRUE
 ### --- This stuff should run unsupervised ---
 
 # Determine the input and output path stuff based on the variables set above
-if(alpine) {
+if (alpine) {
   base_path <- paste0("/pl/active/jravilab/AGhosh/AMR_data/v2_data/", bug)
 } else {
-  base_path = "inst/misc"
+  base_path <- "inst/misc"
 }
 
 mapping_file <- file.path(base_path, paste0("gene_", feature, "_mappings.tsv"))
