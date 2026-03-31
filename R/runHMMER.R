@@ -191,7 +191,9 @@ write_compressed_parquet <- function(df, path) {
     number_inc = readr::col_character(),
     description = readr::col_character()
   )
-
+ # the line delimiter should always be just "\n", even on Windows
+  lines <- readr::read_lines(file, lazy = FALSE, progress = FALSE)
+  
   # drop comment lines
   data_lines <- lines[!grepl("^#", lines)]
 
@@ -200,9 +202,6 @@ write_compressed_parquet <- function(df, path) {
 
   # count space separated fields
   N <- max(sapply(split_fields, length))
-
-  # the line delimiter should always be just "\n", even on Windows
-  lines <- readr::read_lines(file, lazy = FALSE, progress = FALSE)
 
   table <- sub(
     pattern = sprintf("(%s).*", paste0(rep("\\S+", N), collapse = " +")),
