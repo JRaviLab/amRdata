@@ -191,9 +191,9 @@ write_compressed_parquet <- function(df, path) {
     number_inc = readr::col_character(),
     description = readr::col_character()
   )
- # the line delimiter should always be just "\n", even on Windows
+  # the line delimiter should always be just "\n", even on Windows
   lines <- readr::read_lines(file, lazy = FALSE, progress = FALSE)
-  
+
   # drop comment lines
   data_lines <- lines[!grepl("^#", lines)]
 
