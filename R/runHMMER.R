@@ -1,5 +1,10 @@
-# hmmscan --cpu 32 --tblout "${BUG}_genes_COG.tbl" "$COG_DB" "${BUG}_translated_gene_seqs.fasta"
-write_compressed_parquet <- function(df, path) {
+#' Write a data frame to a compressed Parquet file
+#'
+#' @param df A data frame or tibble to write.
+#' @param path Output file path (`.parquet` extension).
+#'
+#' @keywords internal
+.write_compressed_parquet <- function(df, path) {
   arrow::write_parquet(
     df,
     path,
@@ -11,14 +16,16 @@ write_compressed_parquet <- function(df, path) {
 
 .runHMMER <- function(duckdb_path,
                       output_path,
-                      threads = 0,
+                      threads = 8L,
                       database_path,
+                      docker_image = "staphb/hmmer",
                       split_jobs = TRUE,
-                      num_of_splits = 20) {
+                      num_of_splits = 20L,
+                      n_workers = 4L) {
   # Fail fast if Docker is missing
-  #  if (!nzchar(Sys.which("docker"))) {
-  #    stop("Docker is not available on your PATH but is required to run CD-HIT.")
-  #  }
+  if (!nzchar(Sys.which("docker"))) {
+    stop("Docker is not available on your PATH but is required to run HMMER.")
+  }
 
   duckdb_path <- .docker_path(duckdb_path)
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
@@ -33,14 +40,14 @@ write_compressed_parquet <- function(df, path) {
   prot_seqs <- DBI::dbReadTable(con, "protein_cluster_seq") |>
     tibble::as_tibble()
 
-  # robust database name
+  # derive a clean label from the database filename
   database <- tools::file_path_sans_ext(basename(database_path))
 
-  # Chunking function
-  chunk_count <- num_of_splits
+  # clamp splits to the number of sequences available
+  chunk_count <- min(as.integer(num_of_splits), nrow(prot_seqs))
 
   split_fasta <- function(seqs, prefix) {
-    records <- paste0("> ", seqs$name, "\n", seqs$sequence)
+    records <- paste0(">", seqs$name, "\n", seqs$sequence)
     chunk_size <- ceiling(length(records) / chunk_count)
     chunks <- split(records, ceiling(seq_along(records) / chunk_size))
 
@@ -52,12 +59,8 @@ write_compressed_parquet <- function(df, path) {
 
   split_fasta(prot_seqs, "protein")
 
-  #  readr::write_lines(paste0("> ", prot_seqs$name, "\n", prot_seqs$sequence),
-  #            file.path(output_path, "proteins_for_hmmer.fasta"))
-
-  # Generate job list for ARG and COG
   job_list <- expand.grid(
-    chunk = sprintf("%02d", 1:chunk_count),
+    chunk = sprintf("%02d", seq_len(chunk_count)),
     db = database,
     stringsAsFactors = FALSE
   ) |>
@@ -67,16 +70,6 @@ write_compressed_parquet <- function(df, path) {
       DB = db
     ) |>
     dplyr::select(JOB_NAME, FASTA, DB)
-
-  # readr::write_tsv(job_list, file.path(output_path, paste0("hmmer_jobs_",database,".txt")))
-
-  # number of parallel jobs (NOT threads per hmmscan)
-  n_workers <- 4
-
-  # threads per hmmscan
-  threads <- 8
-
-  future::plan(future::multisession, workers = n_workers)
 
   .runHmmerJob <- function(JOB_NAME, FASTA, DB) {
     hmmer_input <- file.path(output_path, FASTA)
@@ -93,10 +86,10 @@ write_compressed_parquet <- function(df, path) {
     mount_cont <- "/work"
 
     cmd_args <- c(
-      "exec",
-      "-B", paste0(mount_host, ":", mount_cont),
-      "-B", paste0(db_host_dir, ":", db_cont_dir),
-      "/scratch/alpine/aghosh5@xsede.org/software/hmmer_latest.sif",
+      "run", "--rm",
+      "-v", paste0(mount_host, ":", mount_cont),
+      "-v", paste0(db_host_dir, ":", db_cont_dir),
+      docker_image,
       "hmmscan",
       "--cpu", as.character(threads),
       "--tblout", .to_container(hmmer_output, mount_host, mount_cont),
@@ -104,72 +97,78 @@ write_compressed_parquet <- function(df, path) {
       .to_container(hmmer_input, mount_host, mount_cont)
     )
 
-    message("Running hmmer via Docker...")
+    message("Running hmmscan via Docker...")
     output <- tryCatch(
       {
-        system2("apptainer", args = cmd_args, stdout = TRUE, stderr = TRUE)
+        system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
       },
       error = function(e) {
-        stop("hmmer execution failed: ", e$message)
+        stop("hmmscan execution failed: ", e$message)
       }
     )
 
     if (!file.exists(hmmer_output)) {
-      stop("hmmer failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
+      stop("hmmscan failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
     }
 
-    message("hmmer completed successfully.")
+    message("hmmscan completed successfully.")
 
-    hmmer_tbl <- .parse_hmmer_output(hmmer_output)
-
-    hmmer_tbl <- hmmer_tbl |>
+    hmmer_tbl <- parse_hmmer_output(hmmer_output) |>
       dplyr::select("name", "query_name", "description")
 
-    hmmer_tbl_filename <- file.path(dirname(hmmer_output), paste0(tools::file_path_sans_ext(basename(hmmer_output)), ".parquet"))
+    hmmer_tbl_filename <- file.path(
+      dirname(hmmer_output),
+      paste0(tools::file_path_sans_ext(basename(hmmer_output)), ".parquet")
+    )
 
-    hmmer_tbl |>
-      write_compressed_parquet(hmmer_tbl_filename)
+    .write_compressed_parquet(hmmer_tbl, hmmer_tbl_filename)
 
-    return(hmmer_tbl_filename)
+    hmmer_tbl_filename
   }
 
-  results <- furrr::future_pwalk(
-    job_list,
-    .runHmmerJob,
-    .progress = TRUE
+  parquet_files <- .with_future_plan(
+    future::multisession(workers = n_workers),
+    furrr::future_pmap_chr(job_list, .runHmmerJob, .progress = TRUE)
   )
-  parquet_files <- results |>
-    dplyr::mutate(parquet = paste0(JOB_NAME, ".parquet")) |>
-    dplyr::pull(parquet)
 
   final_parquet <- file.path(output_path, paste0("protein_", database, ".parquet"))
 
-  dataset <- arrow::open_dataset(
-    file.path(output_path, parquet_files),
-    format = "parquet"
-  )
+  purrr::map(parquet_files, arrow::read_parquet) |>
+    dplyr::bind_rows() |>
+    .write_compressed_parquet(final_parquet)
 
-  arrow::write_parquet(
-    dataset,
-    file.path(output_path, paste0("protein_", database, ".parquet"))
-  )
-
-  message("Combined parquet written")
-
-  # arrow::read_parquet("/scratch/alpine/aghosh5@xsede.org/AMR/data/Campylobacter_jejuni/protein_COG_count.parquet") |> DBI::dbWriteTable(conn=con, name="protein_COG_count")
+  message("Combined parquet written.")
 
   arrow::read_parquet(final_parquet) |>
     DBI::dbWriteTable(conn = con, name = tools::file_path_sans_ext(basename(final_parquet)), overwrite = TRUE)
 }
 
 
-#' Read a file created as HMMER output
-#' modified the rhmmer
-#' @param file Filename
-#' @return data.frame
-#' @export
+#' Parse HMMER tabular output into a tibble
 #'
-.parse_hmmer_output <- function(file) {
+#' Reads a HMMER `--tblout` file and returns a tidy tibble with one row per
+#' target-query hit. Comment lines are stripped and the free-text description
+#' field is reunited from the remaining whitespace-delimited columns.
+#'
+#' @param file Path to a HMMER `.tbl` output file produced with `--tblout`.
+#'
+#' @return A tibble with 19 columns matching the HMMER per-sequence hit table:
+#'   `name`, `accession`, `query_name`, `query_accession`, `sequence_evalue`,
+#'   `sequence_score`, `sequence_bias`, `best_evalue`, `best_score`,
+#'   `best_bias`, `number_exp`, `number_reg`, `number_clu`, `number_ov`,
+#'   `number_env`, `number_dom`, `number_rep`, `number_inc`, `description`.
+#'
+#' @references Adapted from the rhmmer package
+#'   (<https://github.com/arendsee/rhmmer>).
+#'
+#' @examples
+#' \dontrun{
+#' hits <- parse_hmmer_output("results/Ecoli/protein_chunk_01_COG.tbl")
+#' hits |> dplyr::filter(sequence_evalue < 1e-5)
+#' }
+#'
+#' @export
+parse_hmmer_output <- function(file) {
   col_types <- readr::cols(
     name = readr::col_character(),
     accession = readr::col_character(),
@@ -180,7 +179,7 @@ write_compressed_parquet <- function(df, path) {
     sequence_bias = readr::col_double(),
     best_evalue = readr::col_double(),
     best_score = readr::col_double(),
-    best_bis = readr::col_double(),
+    best_bias = readr::col_double(),
     number_exp = readr::col_double(),
     number_reg = readr::col_integer(),
     number_clu = readr::col_integer(),
@@ -225,21 +224,43 @@ write_compressed_parquet <- function(df, path) {
   table
 }
 
+#' Map HMMER protein annotations to genome-level count matrix and load into DuckDB
+#'
+#' Reads a Parquet file of HMMER hits (produced by [.runHMMER()]), joins the
+#' annotations to the protein-cluster count matrix already in DuckDB, aggregates
+#' counts per genome and annotation, and writes the result both as a Parquet file
+#' and as a new table in the DuckDB database.
+#'
+#' @param annotated_parquet Path to the combined HMMER results Parquet file
+#'   (e.g. `"results/Ecoli/protein_COG.parquet"`). The filename stem is used as
+#'   the table name in DuckDB.
+#' @param duckdb_path Path to the per-selection DuckDB database containing a
+#'   `protein_count` table (created by [CDHIT2duckdb()]).
+#'
+#' @return Invisibly returns the path to the written count Parquet file.
+#'
+#' @seealso [CDHIT2duckdb()], [runDataProcessing()]
+#'
+#' @examples
+#' \dontrun{
+#' proteinAnnotations2Duckdb(
+#'   annotated_parquet = "results/Ecoli/protein_COG.parquet",
+#'   duckdb_path       = "data/Ecoli/Eco.duckdb"
+#' )
+#' }
+#'
+#' @export
 proteinAnnotations2Duckdb <- function(annotated_parquet, duckdb_path) {
   annotated_parquet <- .docker_path(annotated_parquet)
-
-  # robust database name
-  database <- tools::file_path_sans_ext(basename(annotated_parquet))
-
   duckdb_path <- .docker_path(duckdb_path)
+
+  # derive table name from the annotation filename stem
+  database <- tools::file_path_sans_ext(basename(annotated_parquet))
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
 
-  protein_count <- DBI::dbReadTable(con, "protein_count") |>
-    tibble::as_tibble()
-
-  protein_long <- protein_count |>
+  protein_long <- DBI::dbReadTable(con, "protein_count") |>
     tibble::as_tibble() |>
     tidyr::pivot_longer(
       cols = -genome_id,
@@ -248,34 +269,32 @@ proteinAnnotations2Duckdb <- function(annotated_parquet, duckdb_path) {
     ) |>
     dplyr::filter(count > 0)
 
-  # protein_COG <- arrow::read_parquet("data/Campylobacter_jejuni/protein_COG.parquet")
-  Annotation <- arrow::read_parquet(annotated_parquet)
+  annotation <- arrow::read_parquet(annotated_parquet)
 
-  protein_long_annot <- protein_long |>
+  genome_annot_matrix <- protein_long |>
+    # protein IDs are stored with "." separator in DuckDB but "|" in HMMER output
     dplyr::mutate(query_name = stringr::str_replace(query_name, "^fig\\.", "fig|")) |>
     dplyr::inner_join(
-      Annotation |>
-        dplyr::select(name, query_name),
+      dplyr::select(annotation, name, query_name),
       by = "query_name"
-    )
-  genome_annot_counts <- protein_long_annot |>
+    ) |>
     dplyr::group_by(genome_id, name) |>
-    dplyr::summarise(count = sum(count), .groups = "drop")
-
-  genome_annot_matrix <- genome_annot_counts |>
+    dplyr::summarise(count = sum(count), .groups = "drop") |>
     tidyr::pivot_wider(
       names_from = name,
       values_from = count,
       values_fill = 0
     )
 
-  arrow::write_parquet(
-    genome_annot_matrix,
-    file.path(dirname(duckdb_path), paste0(database, "_count", ".parquet"))
+  count_path <- file.path(dirname(duckdb_path), paste0(database, "_count.parquet"))
+  arrow::write_parquet(genome_annot_matrix, count_path)
+
+  DBI::dbWriteTable(
+    conn = con,
+    name = tools::file_path_sans_ext(basename(count_path)),
+    value = genome_annot_matrix,
+    overwrite = TRUE
   )
 
-  count_path <- file.path(dirname(duckdb_path), paste0(database, "_count", ".parquet"))
-
-  arrow::read_parquet(count_path) |>
-    DBI::dbWriteTable(conn = con, name = tools::file_path_sans_ext(basename(count_path)), overwrite = TRUE)
+  invisible(count_path)
 }
