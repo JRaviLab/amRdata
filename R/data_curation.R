@@ -108,13 +108,13 @@
   }
 
   # Pass 1: 30s per-file cap
-  message("FTPS pass 1 (30s timeout)")
+  message("FTPS pass 1 (45s timeout)")
   future::plan(future::multisession, workers = max(1, workers_first))
   res1 <- future.apply::future_lapply(
     genome_ids,
     function(gid) {
       ok <- .ftpes_download_one(gid, out_dir,
-        connect_timeout = 10L, max_time = 30L,
+        connect_timeout = 10L, max_time = 45L,
         speed_time = 30L, speed_limit = 2048L
       )
       list(gid = gid, ok = ok)
@@ -141,13 +141,13 @@
   }
 
   # Pass 2: 60s per-file cap where we retry any failures
-  message("FTPS pass 2 (60s timeout) for failed genomes")
+  message("FTPS pass 2 (120s timeout) for failed genomes")
   future::plan(future::multisession, workers = max(1, workers_second))
   res2 <- future.apply::future_lapply(
     fail_ids,
     function(gid) {
       ok <- .ftpes_download_one(gid, out_dir,
-        connect_timeout = 10L, max_time = 60L,
+        connect_timeout = 10L, max_time = 120L,
         speed_time = 30L, speed_limit = 2048L
       )
       list(gid = gid, ok = ok)

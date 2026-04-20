@@ -1,3 +1,6 @@
+#' @importFrom data.table :=
+NULL
+
 #' Normalize a host filesystem path for use in Docker
 #'
 #' Converts Windows and mixed-separator paths to forward slashes
@@ -431,12 +434,13 @@
       names_to = "genome_ids",
       values_to = "protein_ids"
     ) |>
-    dplyr::mutate(genome_ids = gsub(".PATRIC", "", genome_ids)) |>
+    dplyr::mutate(genome_ids = sub("\\.PATRIC\\.\\.\\..*$", "", genome_ids)) |>
     dplyr::select(genome_ids, Gene, protein_ids) |>
     dplyr::distinct() |>
     dplyr::filter(!is.na(protein_ids)) |>
     tidyr::separate_rows(protein_ids, sep = ";") |>
-    dplyr::filter(!stringr::str_detect(protein_ids, "_pseudo")) |>
+  # dplyr::filter(!stringr::str_detect(protein_ids, "_pseudo")) |>
+    dplyr::mutate(protein_ids = gsub("_pseudo", "", protein_ids)) |>
     DBI::dbWriteTable(conn = con, name = "genome_gene_protein", overwrite = TRUE)
 }
 
@@ -1791,7 +1795,6 @@ runDataProcessing <- function(duckdb_path,
     stop("`ref_file_path` (directory with reference TSVs) must be provided to cleanData().")
   }
   if (isTRUE(verbose)) message("Cleaning metadata and exporting Parquet-backed views.")
-  cleanData(duckdb_path = duckdb_path, path = out_dir, ref_file_path = ref_file_path)
   cleanMetaData(duckdb_path = duckdb_path, path = out_dir, ref_file_path = ref_file_path)
   cleanData(duckdb_path = duckdb_path, path = out_dir)
 
