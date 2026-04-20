@@ -113,7 +113,7 @@
 
     message("hmmscan completed successfully.")
 
-    hmmer_tbl <- parse_hmmer_output(hmmer_output) |>
+    hmmer_tbl <- .parseHMMEROutput(hmmer_output) |>
       dplyr::select("name", "query_name", "description")
 
     hmmer_tbl_filename <- file.path(
@@ -163,12 +163,12 @@
 #'
 #' @examples
 #' \dontrun{
-#' hits <- parse_hmmer_output("results/Ecoli/protein_chunk_01_COG.tbl")
+#' hits <- .parseHMMEROutput("results/Ecoli/protein_chunk_01_COG.tbl")
 #' hits |> dplyr::filter(sequence_evalue < 1e-5)
 #' }
 #'
 #' @export
-parse_hmmer_output <- function(file) {
+.parseHMMEROutput <- function(file) {
   col_types <- readr::cols(
     name = readr::col_character(),
     accession = readr::col_character(),
