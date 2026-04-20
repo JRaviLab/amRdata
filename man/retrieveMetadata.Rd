@@ -44,6 +44,6 @@ Tables written:
 \itemize{
 \item amr_phenotype
 \item genome_data
-\item metadata (inner join on genome ID field names as returned by BV-BRC)
+\item metadata (join on genome IDs returned by BV-BRC)
 }
 }
