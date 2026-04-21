@@ -121,30 +121,6 @@
 }
 
 
-#' Temporarily set a future plan for parallel execution
-#'
-#' Sets a `future` plan (sequential or multisession) for the duration of a block
-#' and automatically restores the previous plan on exit.
-#'
-#' @param workers Integer. Number of workers to use; if <= 1, uses sequential mode.
-#' @param plan Character. Either `"multisession"` or `"sequential"`.
-#'
-#' @return Invisibly returns `TRUE` after setting the plan.
-#'
-#' @keywords internal
-.with_future_plan <- function(workers, plan = c("multisession", "sequential")) {
-  plan <- match.arg(plan)
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-
-  if (is.null(workers) || workers <= 1L || identical(plan, "sequential")) {
-    future::plan(future::sequential)
-  } else {
-    future::plan(future::multisession, workers = workers)
-  }
-  invisible(TRUE)
-}
-
 
 #' Run Panaroo for Pangenome Analysis in Parallel Batches
 #'
@@ -189,7 +165,7 @@
   }
   output_path <- normalizePath(output_path)
 
-  genome_query_output <- DBI::dbReadTable(con, "files")
+  genome_query_output <- DBI::dbGetQuery(con, "SELECT * FROM files ORDER BY genome_id")
 
   panaroo_input_files <- genome_query_output |>
     dplyr::pull(panaroo_input)
@@ -199,16 +175,15 @@
 
   split_files <- strsplit(panaroo_input_files, " ")
 
-  # Plan for filtering
-  .with_future_plan(workers = threads)
-  valid_entries <- furrr::future_map(split_files, function(paths) {
+  param <- BiocParallel::SnowParam(workers = max(1L, threads))
+  valid_entries <- BiocParallel::bplapply(split_files, function(paths) {
     gff_file <- paths[1]
     if (file.exists(gff_file)) {
       length(readLines(gff_file, n = 5, warn = FALSE)) >= 5
     } else {
       FALSE
     }
-  })
+  }, BPPARAM = param)
 
   filtered_panaroo_input <- sapply(split_files[unlist(valid_entries)], paste, collapse = " ")
 
@@ -225,20 +200,21 @@
   # Ensure sum of per-job CPUs does not exceed `threads`
   panaroo_threads_per_job <- max(1L, floor(threads / n_jobs))
 
-  # One worker per batch
-  .with_future_plan(workers = n_jobs)
-  batch_panaroo_run <- furrr::future_map(
+  param <- BiocParallel::SnowParam(workers = max(1L, n_jobs))
+  batch_panaroo_run <- BiocParallel::bplapply(
     panaroo_batches,
-    ~ .processPanaroo(
-      batch_input             = .x,
-      output_path             = output_path,
-      core_threshold          = core_threshold,
-      len_dif_percent         = len_dif_percent,
-      cluster_threshold       = cluster_threshold,
-      family_seq_identity     = family_seq_identity,
-      panaroo_threads_per_job = panaroo_threads_per_job
-    ),
-    .options = furrr::furrr_options(seed = TRUE)
+    function(batch) {
+      .processPanaroo(
+        batch_input             = batch,
+        output_path             = output_path,
+        core_threshold          = core_threshold,
+        len_dif_percent         = len_dif_percent,
+        cluster_threshold       = cluster_threshold,
+        family_seq_identity     = family_seq_identity,
+        panaroo_threads_per_job = panaroo_threads_per_job
+      )
+    },
+    BPPARAM = param
   )
 
   invisible(batch_panaroo_run)
@@ -500,7 +476,7 @@
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
 
-  genome_query_output <- DBI::dbReadTable(con, "files")
+  genome_query_output <- DBI::dbGetQuery(con, "SELECT * FROM files ORDER BY genome_id")
 
   cdhit_input_files <- genome_query_output |>
     dplyr::filter(dplyr::if_all(dplyr::everything(), ~ . != "NA")) |>
@@ -1153,9 +1129,7 @@ domainFromIPR <- function(duckdb_path,
     cpu_per_container
   ))
 
-  .with_future_plan(workers = 1)
-
-  results <- future.apply::future_lapply(seq_along(chunks), function(i) {
+  results <- BiocParallel::bplapply(seq_along(chunks), function(i) {
     res <- try(
       .process_chunk(
         chunk         = chunks[[i]],
@@ -1175,7 +1149,7 @@ domainFromIPR <- function(duckdb_path,
       return(NULL)
     }
     res
-  })
+  }, BPPARAM = BiocParallel::SerialParam())
 
   # Combine results
   tsvs <- Filter(function(x) !is.null(x) && file.exists(x), results)
