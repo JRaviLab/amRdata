@@ -1,6 +1,6 @@
 .Rproj.user
 .Rhistory
-..Rcheck/
+*.Rcheck/
 .Rdata
 .httr-oauth
 .DS_Store

@@ -64,11 +64,11 @@
   # Write the genome list file (convert each "gff fna" to container-visible paths)
   genome_filepath_host <- tempfile(pattern = "genomeFilepath_", fileext = ".txt", tmpdir = output_path)
 
-  batch_input_cont <- vapply(unlist(batch_input), function(line) {
+  batch_input_cont <- purrr::map_chr(unlist(batch_input), function(line) {
     parts <- strsplit(line, " +")[[1]]
     parts_cont <- .to_container(parts, host_root = mount_host, container_root = mount_cont)
     paste(parts_cont, collapse = " ")
-  }, character(1), USE.NAMES = FALSE)
+  })
 
   # Write with Unix line endings to avoid issues inside Linux container
   con <- file(genome_filepath_host, open = "wb")
@@ -176,17 +176,16 @@
 
   split_files <- strsplit(panaroo_input_files, " ")
 
-  param <- BiocParallel::SnowParam(workers = max(1L, threads))
-  valid_entries <- BiocParallel::bplapply(split_files, function(paths) {
+  valid_entries <- purrr::map_lgl(split_files, function(paths) {
     gff_file <- paths[1]
     if (file.exists(gff_file)) {
       length(readLines(gff_file, n = 5, warn = FALSE)) >= 5
     } else {
       FALSE
     }
-  }, BPPARAM = param)
+  })
 
-  filtered_panaroo_input <- sapply(split_files[unlist(valid_entries)], paste, collapse = " ")
+  filtered_panaroo_input <- purrr::map_chr(split_files[valid_entries], paste, collapse = " ")
 
   total_lines <- length(filtered_panaroo_input)
   batch_size <- if (isTRUE(split_jobs)) ceiling(total_lines / 5) else total_lines
@@ -1182,7 +1181,7 @@ domainFromIPR <- function(duckdb_path,
     stop("InterProScan produced no usable outputs. Check Docker logs above.")
   }
 
-  df_iprscan <- do.call(rbind, lapply(tsvs, .readIPRscanTsv))
+  df_iprscan <- purrr::map(tsvs, .readIPRscanTsv) |> purrr::list_rbind()
 
   # Load processed tables (unchanged)
   DBI::dbWriteTable(con, "domain_names",

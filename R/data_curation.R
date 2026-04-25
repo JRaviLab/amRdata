@@ -316,8 +316,10 @@
 #' @return A single character string representing the combined shortened name.
 #'
 #' @examples
+#' \dontrun{
 #' .generateDBname(c("90371", "Bacillus subtilis"))
 #' .generateDBname(c("12345", "Escherichia coli", "Lactobacillus"))
+#' }
 #'
 .generateDBname <- function(user_bacs) {
   db_parts <- c()
@@ -925,7 +927,7 @@ retrieveMetadata <- function(user_bacs,
   if (!grepl("^##gff-version\\s*3", lines[1])) {
     lines <- c("##gff-version 3", lines)
   }
-  out <- vapply(lines, function(line) {
+  out <- purrr::map_chr(lines, function(line) {
     if (grepl("^#", line)) {
       return(line)
     }
@@ -935,7 +937,7 @@ retrieveMetadata <- function(user_bacs,
     } else {
       line
     }
-  }, character(1))
+  })
   writeLines(out, gff_path, sep = "\n", useBytes = TRUE)
   invisible(TRUE)
 }
@@ -1101,17 +1103,17 @@ retrieveMetadata <- function(user_bacs,
   gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
   paths <- c(fna, faa, gff)
   all(file.exists(paths)) &&
-    all(vapply(paths, function(x) file.info(x)$size, numeric(1)) > min_bytes)
+    all(purrr::map_dbl(paths, function(x) file.info(x)$size) > min_bytes)
 }
 
 # List genomes already completed
 .list_complete <- function(dir, genome_ids, min_bytes = 100) {
-  genome_ids[vapply(genome_ids, .is_complete_set, logical(1), dir = dir, min_bytes = min_bytes)]
+  genome_ids[purrr::map_lgl(genome_ids, .is_complete_set, dir = dir, min_bytes = min_bytes)]
 }
 
 # Any genomes missing bits or pieces? Find em
 .missing_any <- function(dir, genome_ids, min_bytes = 100) {
-  genome_ids[!vapply(genome_ids, .is_complete_set, logical(1), dir = dir, min_bytes = min_bytes)]
+  genome_ids[!purrr::map_lgl(genome_ids, .is_complete_set, dir = dir, min_bytes = min_bytes)]
 }
 
 # Audit function
@@ -1422,7 +1424,7 @@ retrieveGenomes <- function(base_dir = ".",
   if (!all(g_res) && isTRUE(verbose)) warning(sum(!g_res), " GFF chunks had failures.")
 
   # Success set: .fna + .PATRIC.faa + .PATRIC.gff all present per isolate
-  ok_ids <- ids[vapply(ids, .is_complete_set, logical(1), dir = genome_path)]
+  ok_ids <- ids[purrr::map_lgl(ids, .is_complete_set, dir = genome_path)]
   if (isTRUE(verbose)) {
     message(
       "Complete file sets downloaded for ",
@@ -1467,7 +1469,7 @@ genomeList <- function(base_dir = ".",
 
   genome_ids <- unique(c(gff_ids, fna_ids, faa_ids))
 
-  list_of_files <- lapply(genome_ids, function(genomeID) {
+  list_of_files <- purrr::map(genome_ids, function(genomeID) {
     gff_path <- file.path(genome_path, paste0(genomeID, ".PATRIC.gff"))
     fna_path <- file.path(genome_path, paste0(genomeID, ".fna"))
     faa_path <- file.path(genome_path, paste0(genomeID, ".PATRIC.faa"))
@@ -1487,8 +1489,7 @@ genomeList <- function(base_dir = ".",
       },
       stringsAsFactors = FALSE
     )
-  })
-  list_of_files <- do.call(rbind, list_of_files)
+  }) |> purrr::list_rbind()
   list_of_files <- tibble::as_tibble(list_of_files) |>
     dplyr::filter(!is.na(panaroo_input))
 

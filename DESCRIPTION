@@ -29,13 +29,12 @@ URL: https://github.com/JRaviLab/amR_data
 BugReports: https://github.com/JRaviLab/amR_data/issues
 Imports:
     arrow,
+    BiocParallel,
+    Biostrings,
     DBI,
     data.table,
     dplyr,
     duckdb,
-    furrr,
-    future,
-    future.apply,
     glue,
     purrr,
     readr,
@@ -46,7 +45,6 @@ Imports:
 biocViews: GenomeAssembly, Annotation, Sequencing
 VignetteBuilder: knitr
 Suggests:
-    Biostrings,
     knitr,
     rmarkdown,
     testthat (>= 3.0.0)
