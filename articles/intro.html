@@ -103,36 +103,42 @@ metadata and genomics data.</p>
 tables.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># Download all AMR data for a species from BV-BRC</span></span>
-<span><span class="fu"><a href="../reference/retrieveMetadata.html">retrieveMetadata</a></span><span class="op">(</span>user_bacs <span class="op">=</span> <span class="st">"Shigella flexneri"</span>,</span>
-<span>                             filter_type <span class="op">=</span> <span class="st">"AMR"</span>,</span>
-<span>                             base_dir <span class="op">=</span> <span class="st">"../data/"</span>,</span>
-<span>                             abx <span class="op">=</span> <span class="st">"All"</span>,</span>
-<span>                             overwrite <span class="op">=</span> <span class="cn">FALSE</span>,</span>
-<span>                             image <span class="op">=</span> <span class="st">"danylmb/bvbrc:5.3"</span>,</span>
-<span>                             verbose <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span></span></code></pre></div>
+<span><span class="fu"><a href="../reference/retrieveMetadata.html">retrieveMetadata</a></span><span class="op">(</span></span>
+<span>  user_bacs <span class="op">=</span> <span class="st">"Shigella flexneri"</span>,</span>
+<span>  filter_type <span class="op">=</span> <span class="st">"AMR"</span>,</span>
+<span>  base_dir <span class="op">=</span> <span class="st">"../data/"</span>,</span>
+<span>  abx <span class="op">=</span> <span class="st">"All"</span>,</span>
+<span>  overwrite <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  image <span class="op">=</span> <span class="st">"danylmb/bvbrc:5.3"</span>,</span>
+<span>  verbose <span class="op">=</span> <span class="cn">FALSE</span></span>
+<span><span class="op">)</span></span></code></pre></div>
 <p>This wrote tables ‘amr_phenotype’, ‘genome_data’, and ‘metadata’ to a
 DuckDB</p>
 <p>For downloading genomes with paired AMR phenotype data, use
 <code><a href="../reference/retrieveGenomes.html">retrieveGenomes()</a></code></p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="../reference/retrieveGenomes.html">retrieveGenomes</a></span><span class="op">(</span>base_dir <span class="op">=</span> <span class="st">"../data/"</span>,</span>
-<span>                            user_bacs <span class="op">=</span> <span class="st">"Shigella flexneri"</span>,</span>
-<span>                            method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"cli"</span><span class="op">)</span>,</span>
-<span>                            image <span class="op">=</span> <span class="st">"danylmb/bvbrc:5.3"</span>,</span>
-<span>                            skip_existing <span class="op">=</span> <span class="cn">TRUE</span>,</span>
-<span>                            ftp_workers <span class="op">=</span> <span class="fl">8L</span>,</span>
-<span>                            cli_fasta_workers <span class="op">=</span> <span class="fl">4L</span>,</span>
-<span>                            cli_gff_workers <span class="op">=</span> <span class="fl">4L</span>,</span>
-<span>                            chunk_size <span class="op">=</span> <span class="fl">50L</span>,</span>
-<span>                            verbose <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/retrieveGenomes.html">retrieveGenomes</a></span><span class="op">(</span></span>
+<span>  base_dir <span class="op">=</span> <span class="st">"../data/"</span>,</span>
+<span>  user_bacs <span class="op">=</span> <span class="st">"Shigella flexneri"</span>,</span>
+<span>  method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"cli"</span><span class="op">)</span>,</span>
+<span>  image <span class="op">=</span> <span class="st">"danylmb/bvbrc:5.3"</span>,</span>
+<span>  skip_existing <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  ftp_workers <span class="op">=</span> <span class="fl">8L</span>,</span>
+<span>  cli_fasta_workers <span class="op">=</span> <span class="fl">4L</span>,</span>
+<span>  cli_gff_workers <span class="op">=</span> <span class="fl">4L</span>,</span>
+<span>  chunk_size <span class="op">=</span> <span class="fl">50L</span>,</span>
+<span>  verbose <span class="op">=</span> <span class="cn">TRUE</span></span>
+<span><span class="op">)</span></span></code></pre></div>
 <p>This returns character vector of genome IDs and wrote complete file
 sets on disk.</p>
 <p>To write a .txt file listing downloaded genome filepaths (.fna, .faa,
 .gff)</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="../reference/genomeList.html">genomeList</a></span><span class="op">(</span>base_dir <span class="op">=</span> <span class="st">"../data/"</span>,</span>
-<span>                       user_bacs <span class="op">=</span> <span class="st">"Shigella flexneri"</span>,</span>
-<span>                       verbose <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/genomeList.html">genomeList</a></span><span class="op">(</span></span>
+<span>  base_dir <span class="op">=</span> <span class="st">"../data/"</span>,</span>
+<span>  user_bacs <span class="op">=</span> <span class="st">"Shigella flexneri"</span>,</span>
+<span>  verbose <span class="op">=</span> <span class="cn">TRUE</span></span>
+<span><span class="op">)</span></span></code></pre></div>
 <div class="section level4">
 <h4 id="a-wrapper-for-downloading-genomes-and-listing-the-paths">A wrapper for downloading genomes and listing the paths<a class="anchor" aria-label="anchor" href="#a-wrapper-for-downloading-genomes-and-listing-the-paths"></a>
 </h4>
@@ -141,11 +147,13 @@ sets on disk.</p>
 <p>Allows users to input a species or taxon ID and automate all data
 downloading and curation steps.</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="../reference/prepareGenomes.html">prepareGenomes</a></span><span class="op">(</span>user_bacs <span class="op">=</span> <span class="st">"Shigella flexneri"</span>,</span>
-<span>                           base_dir <span class="op">=</span> <span class="st">"../data/"</span>,</span>
-<span>                           method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"cli"</span><span class="op">)</span>,</span>
-<span>                           overwrite <span class="op">=</span> <span class="cn">FALSE</span>,</span>
-<span>                           verbose <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/prepareGenomes.html">prepareGenomes</a></span><span class="op">(</span></span>
+<span>  user_bacs <span class="op">=</span> <span class="st">"Shigella flexneri"</span>,</span>
+<span>  base_dir <span class="op">=</span> <span class="st">"../data/"</span>,</span>
+<span>  method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"cli"</span><span class="op">)</span>,</span>
+<span>  overwrite <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  verbose <span class="op">=</span> <span class="cn">TRUE</span></span>
+<span><span class="op">)</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -164,32 +172,34 @@ domains and create genomes by domains table 4. <code>cleanData()</code>
 -&gt; Clean metadata and export the feature tables to Parquet +
 Parquet-backed DuckDB</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="../reference/runDataProcessing.html">runDataProcessing</a></span><span class="op">(</span>duckdb_path <span class="op">=</span> <span class="st">"../data/Shigella_flexneri/Sfl.duckdb"</span>,</span>
-<span>                              output_path <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>                              <span class="co"># unified threads for all tools</span></span>
-<span>                              threads <span class="op">=</span> <span class="fl">16</span>,</span>
-<span>                              <span class="co"># Panaroo</span></span>
-<span>                              panaroo_split_jobs <span class="op">=</span> <span class="cn">FALSE</span>,</span>
-<span>                              panaroo_core_threshold <span class="op">=</span> <span class="fl">0.90</span>,</span>
-<span>                              panaroo_len_dif_percent <span class="op">=</span> <span class="fl">0.95</span>,</span>
-<span>                              panaroo_cluster_threshold <span class="op">=</span> <span class="fl">0.95</span>,</span>
-<span>                              panaroo_family_seq_identity <span class="op">=</span> <span class="fl">0.5</span>,</span>
-<span>                              <span class="co"># CD-HIT</span></span>
-<span>                              cdhit_identity <span class="op">=</span> <span class="fl">0.9</span>,</span>
-<span>                              cdhit_word_length <span class="op">=</span> <span class="fl">5</span>,</span>
-<span>                              cdhit_memory <span class="op">=</span> <span class="fl">0</span>,</span>
-<span>                              cdhit_extra_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"-g"</span>,<span class="st">"1"</span><span class="op">)</span>,</span>
-<span>                              cdhit_output_prefix <span class="op">=</span> <span class="st">"cdhit_out"</span>,</span>
-<span>                              <span class="co"># InterPro</span></span>
-<span>                              ipr_appl <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Pfam"</span><span class="op">)</span>,</span>
-<span>                              ipr_threads_unused <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>                              ipr_version <span class="op">=</span> <span class="st">"5.76-107.0"</span>,</span>
-<span>                              ipr_dest_dir <span class="op">=</span> <span class="st">"inst/extdata/interpro"</span>,</span>
-<span>                              ipr_platform <span class="op">=</span> <span class="st">"linux/amd64"</span>,</span>
-<span>                              auto_prepare_data <span class="op">=</span> <span class="cn">TRUE</span>,</span>
-<span>                              <span class="co"># Metadata cleaning</span></span>
-<span>                              ref_file_path <span class="op">=</span> <span class="st">"../data_raw/"</span>,</span>
-<span>                              verbose <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/runDataProcessing.html">runDataProcessing</a></span><span class="op">(</span></span>
+<span>  duckdb_path <span class="op">=</span> <span class="st">"../data/Shigella_flexneri/Sfl.duckdb"</span>,</span>
+<span>  output_path <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  <span class="co"># unified threads for all tools</span></span>
+<span>  threads <span class="op">=</span> <span class="fl">16</span>,</span>
+<span>  <span class="co"># Panaroo</span></span>
+<span>  panaroo_split_jobs <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  panaroo_core_threshold <span class="op">=</span> <span class="fl">0.90</span>,</span>
+<span>  panaroo_len_dif_percent <span class="op">=</span> <span class="fl">0.95</span>,</span>
+<span>  panaroo_cluster_threshold <span class="op">=</span> <span class="fl">0.95</span>,</span>
+<span>  panaroo_family_seq_identity <span class="op">=</span> <span class="fl">0.5</span>,</span>
+<span>  <span class="co"># CD-HIT</span></span>
+<span>  cdhit_identity <span class="op">=</span> <span class="fl">0.9</span>,</span>
+<span>  cdhit_word_length <span class="op">=</span> <span class="fl">5</span>,</span>
+<span>  cdhit_memory <span class="op">=</span> <span class="fl">0</span>,</span>
+<span>  cdhit_extra_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"-g"</span>, <span class="st">"1"</span><span class="op">)</span>,</span>
+<span>  cdhit_output_prefix <span class="op">=</span> <span class="st">"cdhit_out"</span>,</span>
+<span>  <span class="co"># InterPro</span></span>
+<span>  ipr_appl <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Pfam"</span><span class="op">)</span>,</span>
+<span>  ipr_threads_unused <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  ipr_version <span class="op">=</span> <span class="st">"5.76-107.0"</span>,</span>
+<span>  ipr_dest_dir <span class="op">=</span> <span class="st">"inst/extdata/interpro"</span>,</span>
+<span>  ipr_platform <span class="op">=</span> <span class="st">"linux/amd64"</span>,</span>
+<span>  auto_prepare_data <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  <span class="co"># Metadata cleaning</span></span>
+<span>  ref_file_path <span class="op">=</span> <span class="st">"../data_raw/"</span>,</span>
+<span>  verbose <span class="op">=</span> <span class="cn">TRUE</span></span>
+<span><span class="op">)</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -197,10 +207,12 @@ Parquet-backed DuckDB</p>
 </h2>
 <p>Simple stats and plots to explore metadata</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu">generateSummary</span><span class="op">(</span><span class="st">"data/metadata_parquet"</span>, </span>
-<span>                            out_path <span class="op">=</span> <span class="st">"data/"</span><span class="op">)</span></span>
-<span><span class="fu">generatePlots</span><span class="op">(</span><span class="st">"data/metadata_parquet"</span>, </span>
-<span>                            out_path <span class="op">=</span> <span class="st">"data/"</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="fu">generateSummary</span><span class="op">(</span><span class="st">"data/metadata_parquet"</span>,</span>
+<span>  out_path <span class="op">=</span> <span class="st">"data/"</span></span>
+<span><span class="op">)</span></span>
+<span><span class="fu">generatePlots</span><span class="op">(</span><span class="st">"data/metadata_parquet"</span>,</span>
+<span>  out_path <span class="op">=</span> <span class="st">"data/"</span></span>
+<span><span class="op">)</span></span></code></pre></div>
 </div>
   </div>
 
