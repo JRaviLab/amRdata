@@ -1349,13 +1349,17 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   con_new <- DBI::dbConnect(duckdb::duckdb(), db_name)
   on.exit(try(DBI::dbDisconnect(con_new, shutdown = FALSE), silent = TRUE), add = TRUE)
 
+  # Views below reference parquet files by bare filename. Point DuckDB at the
+  # parquet directory so schema inference at CREATE VIEW time can resolve them.
+  DBI::dbExecute(con_new, sprintf("SET file_search_path='%s'", path))
+
   # gene_count -> long parquet + view
   DBI::dbReadTable(con, "gene_count") |>
     tidyr::pivot_longer(-genome_id, names_to = "gene", values_to = "value") |>
     dplyr::filter(!is.na(value) & value != "") |>
     dplyr::mutate(value = as.integer(value)) |>
     writeCompressedParquet(genes_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_count AS SELECT * FROM read_parquet('%s')", genes_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_count AS SELECT * FROM read_parquet('%s')", basename(genes_parquet)))
 
   # protein_count -> long parquet + view
   DBI::dbReadTable(con, "protein_count") |>
@@ -1363,7 +1367,7 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::filter(!is.na(value) & value != "") |>
     dplyr::mutate(value = as.integer(value)) |>
     writeCompressedParquet(proteins_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_count AS SELECT * FROM read_parquet('%s')", proteins_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_count AS SELECT * FROM read_parquet('%s')", basename(proteins_parquet)))
 
   # domain_count -> long parquet + view
   DBI::dbReadTable(con, "domain_count") |>
@@ -1371,7 +1375,7 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::filter(!is.na(value) & value != "") |>
     dplyr::mutate(value = as.integer(value)) |>
     writeCompressedParquet(domains_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW domain_count AS SELECT * FROM read_parquet('%s')", domains_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW domain_count AS SELECT * FROM read_parquet('%s')", basename(domains_parquet)))
 
   # gene_struct -> long parquet + view
   DBI::dbReadTable(con, "gene_struct") |>
@@ -1379,43 +1383,43 @@ cleanData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::filter(!is.na(value) & value != "") |>
     dplyr::mutate(value = as.integer(value)) |>
     writeCompressedParquet(struct_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW struct AS SELECT * FROM read_parquet('%s')", struct_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW struct AS SELECT * FROM read_parquet('%s')", basename(struct_parquet)))
 
   # cleaned_metadata -> parquet + view (as metadata)
   DBI::dbReadTable(con, "cleaned_metadata") |> writeCompressedParquet(metadata_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW metadata AS SELECT * FROM read_parquet('%s')", metadata_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW metadata AS SELECT * FROM read_parquet('%s')", basename(metadata_parquet)))
 
   # names/seq tables -> parquet + views
   DBI::dbReadTable(con, "gene_names") |> writeCompressedParquet(gene_names_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_names AS SELECT * FROM read_parquet('%s')", gene_names_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_names AS SELECT * FROM read_parquet('%s')", basename(gene_names_parquet)))
 
   DBI::dbReadTable(con, "protein_names") |>
     dplyr::select(-locus_tag) |>
     writeCompressedParquet(protein_names_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_names AS SELECT * FROM read_parquet('%s')", protein_names_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_names AS SELECT * FROM read_parquet('%s')", basename(protein_names_parquet)))
 
   DBI::dbReadTable(con, "domain_names") |>
     dplyr::select(-c(IPRAcc, IPRDesc)) |>
     writeCompressedParquet(domain_names_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW domain_names AS SELECT * FROM read_parquet('%s')", domain_names_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW domain_names AS SELECT * FROM read_parquet('%s')", basename(domain_names_parquet)))
 
   DBI::dbReadTable(con, "gene_ref_seq") |> writeCompressedParquet(gene_ref_seq_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_seqs AS SELECT * FROM read_parquet('%s')", gene_ref_seq_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_seqs AS SELECT * FROM read_parquet('%s')", basename(gene_ref_seq_parquet)))
 
   DBI::dbReadTable(con, "protein_cluster_seq") |> writeCompressedParquet(protein_cluster_seq_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_seqs AS SELECT * FROM read_parquet('%s')", protein_cluster_seq_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_seqs AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_seq_parquet)))
 
   DBI::dbReadTable(con, "genome_gene_protein") |> writeCompressedParquet(genome_gene_protein_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_gene_protein AS SELECT * FROM read_parquet('%s')", genome_gene_protein_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_gene_protein AS SELECT * FROM read_parquet('%s')", basename(genome_gene_protein_parquet)))
 
   # debug/complete views: amr_phenotype, genome_data, original_metadata
   DBI::dbReadTable(con, "amr_phenotype") |> writeCompressedParquet(amr_phenotype_parquet)
   DBI::dbReadTable(con, "genome_data") |> writeCompressedParquet(genome_data_parquet)
   DBI::dbReadTable(con, "metadata") |> writeCompressedParquet(original_metadata_parquet)
 
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW amr_phenotype AS SELECT * FROM read_parquet('%s')", amr_phenotype_parquet))
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_data AS SELECT * FROM read_parquet('%s')", genome_data_parquet))
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW original_metadata AS SELECT * FROM read_parquet('%s')", original_metadata_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW amr_phenotype AS SELECT * FROM read_parquet('%s')", basename(amr_phenotype_parquet)))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_data AS SELECT * FROM read_parquet('%s')", basename(genome_data_parquet)))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW original_metadata AS SELECT * FROM read_parquet('%s')", basename(original_metadata_parquet)))
 
   invisible(TRUE)
 }
