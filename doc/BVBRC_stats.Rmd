@@ -142,7 +142,7 @@ diag_table <- tibble(column = diag_cols) %>%
 # --- Outputs -----------------------------------------------------------------
 cat("\n--- Per-column stats (whole table) ---\n"); print(col_stats, n = Inf)
 ```
-```{r}
+``````{r host_block_output}
 cat("\n--- Host block stats ---\n");           print(host_block_stats)
 ```
 ```{r}
