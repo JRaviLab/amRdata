@@ -145,7 +145,7 @@ cat("\n--- Per-column stats (whole table) ---\n"); print(col_stats, n = Inf)
 ``````{r host_block_output}
 cat("\n--- Host block stats ---\n");           print(host_block_stats)
 ```
-```{r}
+``````{r geo_block_output}
 cat("\n--- Geographic block stats ---\n");     print(geo_block_stats)
 ```
 ```{r}
