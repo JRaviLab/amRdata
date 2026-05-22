@@ -10,7 +10,10 @@ vignette: >
 ---
 
 ```{r setup, include=FALSE}
-library(tidyverse)
+library(dplyr)
+library(stringr)
+library(purrr)
+library(tibble)
 
 bvbrc <- read.table("bvbrc_data.tsv", sep = "\t", header = TRUE, fill = TRUE, 
                     quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
