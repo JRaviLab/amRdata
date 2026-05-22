@@ -148,7 +148,7 @@ cat("\n--- Host block stats ---\n");           print(host_block_stats)
 ``````{r geo_block_output}
 cat("\n--- Geographic block stats ---\n");     print(geo_block_stats)
 ```
-```{r}
+``````{r diag_output}
 cat("\n--- Diagnostics for host + geo columns ---\n"); print(diag_table, n = Inf)
 
 ```
