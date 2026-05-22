@@ -138,7 +138,7 @@ diag_table <- tibble(column = diag_cols) %>%
   arrange(desc(pct_missing), column)
 ```
 
-```{r}
+``````{r col_stats_output}
 # --- Outputs -----------------------------------------------------------------
 cat("\n--- Per-column stats (whole table) ---\n"); print(col_stats, n = Inf)
 ```
