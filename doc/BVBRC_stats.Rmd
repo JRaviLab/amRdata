@@ -92,13 +92,13 @@ summarize_block <- function(df, cols, block_name) {
 # Apply to your table
 bvbrc_clean <- clean_all_char_cols(bvbrc)
 # --- Per-column stats --------------------------------------------------------
-col_stats <- tibble(column = colnames(bvbrc)) %>%
+col_stats <- tibble(column = colnames(bvbrc_clean)) %>%
   mutate(
-    n_total   = nrow(bvbrc),
-    n_missing = map_int(column, ~ sum(is.na(bvbrc[[.x]]))),
+    n_total   = nrow(bvbrc_clean),
+    n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
     n_present = n_total - n_missing,
     pct_missing = 100 * n_missing / n_total,
-    n_distinct_non_missing = map_int(column, ~ n_distinct(bvbrc[[.x]], na.rm = TRUE))
+    n_distinct_non_missing = map_int(column, ~ n_distinct(bvbrc_clean[[.x]], na.rm = TRUE))
   ) %>%
   arrange(desc(pct_missing), column)
 
