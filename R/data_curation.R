@@ -732,6 +732,7 @@
 #' @return A list with:
 #'   - duckdbConnection: live DBI connection to the created DuckDB
 #'   - table_name: "metadata"
+#' @export
 retrieveMetadata <- function(user_bacs,
                              filter_type = "AMR",
                              base_dir = ".",
@@ -1326,6 +1327,7 @@ retrieveMetadata <- function(user_bacs,
 #' @param chunk_size Genomes per chunk container (default 50).
 #' @param verbose Verbose messages.
 #' @return Character vector of genome IDs with complete file sets on disk.
+#' @export
 retrieveGenomes <- function(base_dir = ".",
                             user_bacs,
                             method = c("ftp", "cli"),
