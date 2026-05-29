@@ -15,12 +15,84 @@ library(stringr)
 library(purrr)
 library(tibble)
 
-bvbrc <- read.table("bvbrc_data.tsv", sep = "\t", header = TRUE, fill = TRUE, 
-                    quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
-)
 ```
 
-```{r functions}
+```{r functions, echo=FALSE}
+# function to download BVBRC metadata for all Bacteria
+fetchCompleteBVBRCMetadata <- function(
+  image = "danylmb/bvbrc:5.3",
+  verbose = TRUE
+) {
+  if (isTRUE(verbose)) {
+    message("Building attribute list from BV-BRC...")
+  }
+
+  # Step 1: get cleaned attribute list
+  attr_cmd <- glue::glue(
+    "docker run --rm {image} p3-all-genomes -f | ",
+    "tail -n +2 | ",
+    "sed -E 's/ \\((multi|related|derived)\\)//g' | ",
+    "tr '\\n' ',' | sed 's/,$//'"
+  )
+
+  ATTRS <- tryCatch(
+    system(attr_cmd, intern = TRUE),
+    error = function(e) {
+      stop("Failed to retrieve attribute list.\n", conditionMessage(e))
+    }
+  )
+
+  if (length(ATTRS) == 0L) {
+    stop("Attribute list is empty.")
+  }
+
+  if (isTRUE(verbose)) {
+    message("Fetching BV-BRC bacterial genome metadata (this may take time)...")
+  }
+
+  # Step 2: use ATTRS in main query
+  cmd <- glue::glue(
+    "docker run --rm {image} p3-all-genomes ",
+    "--in superkingdom,Bacteria ",
+    "--attr \"{ATTRS}\""
+  )
+
+  raw_data <- tryCatch(
+    system(cmd, intern = TRUE, ignore.stderr = TRUE),
+    error = function(e) {
+      stop("BV-BRC CLI call failed.\n", conditionMessage(e))
+    }
+  )
+
+  if (length(raw_data) == 0L) {
+    stop("BV-BRC returned no data. The service may be unavailable.")
+  }
+
+  # Step 3: parse safely
+  df <- utils::read.table(
+    text = raw_data,
+    sep = "\t",
+    header = TRUE,
+    fill = TRUE,
+    quote = "",
+    check.names = FALSE,
+    comment.char = "",
+    colClasses = "character"
+  )
+
+  df <- tibble::as_tibble(df) |>
+    dplyr::mutate(dplyr::across(
+      dplyr::everything(),
+      ~ iconv(.x, from = "", to = "UTF-8", sub = "")
+    ))
+
+  if (isTRUE(verbose)) {
+    message(glue::glue("Retrieved {nrow(df)} rows x {ncol(df)} columns."))
+  }
+
+  return(df)
+}
+
 # Use your fix_utf8() if defined; otherwise a no-op fallback
 if (!exists("fix_utf8")) {
   fix_utf8 <- function(x) x
@@ -42,7 +114,7 @@ is_placeholder_na <- function(x) {
 
 # Clean ALL character/factor columns in the data frame
 clean_all_char_cols <- function(df) {
-  df %>%
+  df |>
     mutate(across(
       where(~ is.character(.x) || is.factor(.x)),
       ~ {
@@ -70,11 +142,11 @@ summarize_block <- function(df, cols, block_name) {
       pct_any_present = 0
     ))
   }
-  df %>%
+  df |>
     transmute(
       .row_any_present = if_any(all_of(cols), ~ !is.na(.x)),
       .row_all_missing = if_all(all_of(cols), is.na)
-    ) %>%
+    ) |>
     summarise(
       block = block_name,
       n_total = n(),
@@ -89,17 +161,20 @@ summarize_block <- function(df, cols, block_name) {
 ```
 
 ```{r stats}
+# download the bvbrc table 
+bvbrc <- fetchCompleteBVBRCMetadata()
+
 # Apply to your table
 bvbrc_clean <- clean_all_char_cols(bvbrc)
 # --- Per-column stats --------------------------------------------------------
-col_stats <- tibble(column = colnames(bvbrc_clean)) %>%
+col_stats <- tibble(column = colnames(bvbrc_clean)) |>
   mutate(
     n_total   = nrow(bvbrc_clean),
     n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
     n_present = n_total - n_missing,
     pct_missing = 100 * n_missing / n_total,
     n_distinct_non_missing = map_int(column, ~ n_distinct(bvbrc_clean[[.x]], na.rm = TRUE))
-  ) %>%
+  ) |>
   arrange(desc(pct_missing), column)
 
 # --- Define blocks -----------------------------------------------------------
@@ -128,13 +203,13 @@ geo_block_stats  <- summarize_block(bvbrc_clean,  geo_cols,  "geographic")
 
 # --- Quick diagnostics: check specific columns you care about ----------------
 diag_cols <- unique(c(host_cols, geo_cols))
-diag_table <- tibble(column = diag_cols) %>%
+diag_table <- tibble(column = diag_cols) |>
   mutate(
     n_total   = nrow(bvbrc_clean),
     n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
     n_present = n_total - n_missing,
     pct_missing = 100 * n_missing / n_total
-  ) %>%
+  ) |>
   arrange(desc(pct_missing), column)
 ```
 
