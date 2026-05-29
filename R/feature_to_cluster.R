@@ -45,7 +45,6 @@ buildClusterFeatureMap <- function(
   duckdb_parquet_path,
   output_path = NULL
 ) {
-
   con <- DBI::dbConnect(
     duckdb::duckdb(),
     normalizePath(duckdb_parquet_path)
@@ -89,17 +88,17 @@ buildClusterFeatureMap <- function(
   # Structural gene features
   # (equivalent to separate_rows + inner_join(gp))
   # =========================
-#  DBI::dbExecute(con, "
- #   CREATE OR REPLACE VIEW v_struct AS
-#    SELECT DISTINCT
-#      gp.protein_ids AS protein_id,
- #     s_gene AS feature
- #   FROM struct s
- #   JOIN genome_gene_protein gp
-#      ON gp.genome_ids = s.genome_id
- #   CROSS JOIN UNNEST(string_split(s.struct, '.')) AS t(s_gene)
- #   WHERE s.value = 1
-#  ")
+  #  DBI::dbExecute(con, "
+  #   CREATE OR REPLACE VIEW v_struct AS
+  #    SELECT DISTINCT
+  #      gp.protein_ids AS protein_id,
+  #     s_gene AS feature
+  #   FROM struct s
+  #   JOIN genome_gene_protein gp
+  #      ON gp.genome_ids = s.genome_id
+  #   CROSS JOIN UNNEST(string_split(s.struct, '.')) AS t(s_gene)
+  #   WHERE s.value = 1
+  #  ")
 
   # =========================
   # COG features
