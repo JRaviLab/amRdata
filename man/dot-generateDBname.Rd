@@ -22,6 +22,7 @@ the first two letters of the species. For single-word names, it appends "sp".
 For numeric taxon IDs, it prefixes them with "tid_".
 }
 \examples{
+\dontrun{
 .generateDBname(c("90371", "Bacillus subtilis"))
 .generateDBname(c("12345", "Escherichia coli", "Lactobacillus"))
 }

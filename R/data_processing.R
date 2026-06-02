@@ -67,11 +67,11 @@ NULL
   # Write the genome list file (convert each "gff fna" to container-visible paths)
   genome_filepath_host <- tempfile(pattern = "genomeFilepath_", fileext = ".txt", tmpdir = output_path)
 
-  batch_input_cont <- vapply(unlist(batch_input), function(line) {
+  batch_input_cont <- purrr::map_chr(unlist(batch_input), function(line) {
     parts <- strsplit(line, " +")[[1]]
     parts_cont <- .to_container(parts, host_root = mount_host, container_root = mount_cont)
     paste(parts_cont, collapse = " ")
-  }, character(1), USE.NAMES = FALSE)
+  })
 
   # Write with Unix line endings to avoid issues inside Linux container
   con <- file(genome_filepath_host, open = "wb")
@@ -127,31 +127,6 @@ NULL
 }
 
 
-#' Temporarily set a future plan for parallel execution
-#'
-#' Sets a `future` plan (sequential or multisession) for the duration of a block
-#' and automatically restores the previous plan on exit.
-#'
-#' @param workers Integer. Number of workers to use; if <= 1, uses sequential mode.
-#' @param plan Character. Either `"multisession"` or `"sequential"`.
-#'
-#' @return Invisibly returns `TRUE` after setting the plan.
-#'
-#' @keywords internal
-.with_future_plan <- function(workers, plan = c("multisession", "sequential")) {
-  plan <- match.arg(plan)
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-
-  if (is.null(workers) || workers <= 1L || identical(plan, "sequential")) {
-    future::plan(future::sequential)
-  } else {
-    future::plan(future::multisession, workers = workers)
-  }
-  invisible(TRUE)
-}
-
-
 #' Run Panaroo for Pangenome Analysis in Parallel Batches
 #'
 #' Executes Panaroo inside a Docker container on genome annotation
@@ -194,7 +169,7 @@ NULL
   }
   output_path <- normalizePath(output_path)
 
-  genome_query_output <- DBI::dbReadTable(con, "files")
+  genome_query_output <- DBI::dbGetQuery(con, "SELECT * FROM files ORDER BY genome_id")
 
   panaroo_input_files <- genome_query_output |>
     dplyr::pull(panaroo_input)
@@ -204,9 +179,7 @@ NULL
 
   split_files <- strsplit(panaroo_input_files, " ")
 
-  # Plan for filtering
-  .with_future_plan(workers = threads)
-  valid_entries <- furrr::future_map(split_files, function(paths) {
+  valid_entries <- purrr::map_lgl(split_files, function(paths) {
     gff_file <- paths[1]
     if (file.exists(gff_file)) {
       length(readLines(gff_file, n = 5, warn = FALSE)) >= 5
@@ -215,7 +188,7 @@ NULL
     }
   })
 
-  filtered_panaroo_input <- sapply(split_files[unlist(valid_entries)], paste, collapse = " ")
+  filtered_panaroo_input <- purrr::map_chr(split_files[valid_entries], paste, collapse = " ")
 
   total_lines <- length(filtered_panaroo_input)
   batch_size <- if (isTRUE(split_jobs)) ceiling(total_lines / 5) else total_lines
@@ -230,20 +203,21 @@ NULL
   # Ensure sum of per-job CPUs does not exceed `threads`
   panaroo_threads_per_job <- max(1L, floor(threads / n_jobs))
 
-  # One worker per batch
-  .with_future_plan(workers = n_jobs)
-  batch_panaroo_run <- furrr::future_map(
+  param <- BiocParallel::SnowParam(workers = max(1L, n_jobs))
+  batch_panaroo_run <- BiocParallel::bplapply(
     panaroo_batches,
-    ~ .processPanaroo(
-      batch_input             = .x,
-      output_path             = output_path,
-      core_threshold          = core_threshold,
-      len_dif_percent         = len_dif_percent,
-      cluster_threshold       = cluster_threshold,
-      family_seq_identity     = family_seq_identity,
-      panaroo_threads_per_job = panaroo_threads_per_job
-    ),
-    .options = furrr::furrr_options(seed = TRUE)
+    function(batch) {
+      .processPanaroo(
+        batch_input             = batch,
+        output_path             = output_path,
+        core_threshold          = core_threshold,
+        len_dif_percent         = len_dif_percent,
+        cluster_threshold       = cluster_threshold,
+        family_seq_identity     = family_seq_identity,
+        panaroo_threads_per_job = panaroo_threads_per_job
+      )
+    },
+    BPPARAM = param
   )
 
   invisible(batch_panaroo_run)
@@ -507,7 +481,7 @@ NULL
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
 
-  genome_query_output <- DBI::dbReadTable(con, "files")
+  genome_query_output <- DBI::dbGetQuery(con, "SELECT * FROM files ORDER BY genome_id")
 
   cdhit_input_files <- genome_query_output |>
     dplyr::filter(dplyr::if_all(dplyr::everything(), ~ . != "NA")) |>
@@ -1239,9 +1213,7 @@ domainFromIPR <- function(duckdb_path,
     cpu_per_container
   ))
 
-  .with_future_plan(workers = 1)
-
-  results <- future.apply::future_lapply(seq_along(chunks), function(i) {
+  results <- BiocParallel::bplapply(seq_along(chunks), function(i) {
     res <- try(
       .process_chunk(
         chunk         = chunks[[i]],
@@ -1261,7 +1233,7 @@ domainFromIPR <- function(duckdb_path,
       return(NULL)
     }
     res
-  })
+  }, BPPARAM = BiocParallel::SerialParam())
 
   # Combine results
   tsvs <- Filter(function(x) !is.null(x) && file.exists(x), results)
@@ -1269,7 +1241,7 @@ domainFromIPR <- function(duckdb_path,
     stop("InterProScan produced no usable outputs. Check Docker logs above.")
   }
 
-  df_iprscan <- do.call(rbind, lapply(tsvs, .readIPRscanTsv))
+  df_iprscan <- purrr::map(tsvs, .readIPRscanTsv) |> purrr::list_rbind()
 
   # Load processed tables (unchanged)
   DBI::dbWriteTable(con, "domain_names",
@@ -1517,13 +1489,17 @@ cleanData <- function(duckdb_path, path) {
   con_new <- DBI::dbConnect(duckdb::duckdb(), db_name)
   on.exit(try(DBI::dbDisconnect(con_new, shutdown = FALSE), silent = TRUE), add = TRUE)
 
+  # Views below reference parquet files by bare filename. Point DuckDB at the
+  # parquet directory so schema inference at CREATE VIEW time can resolve them.
+  DBI::dbExecute(con_new, sprintf("SET file_search_path='%s'", path))
+
   # gene_count -> long parquet + view
   DBI::dbReadTable(con, "gene_count") |>
     tidyr::pivot_longer(-genome_id, names_to = "gene", values_to = "value") |>
     dplyr::filter(!is.na(value) & value != "") |>
     dplyr::mutate(value = as.integer(value)) |>
     writeCompressedParquet(genes_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_count AS SELECT * FROM read_parquet('%s')", genes_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_count AS SELECT * FROM read_parquet('%s')", basename(genes_parquet)))
 
   # protein_count -> long parquet + view
   DBI::dbReadTable(con, "protein_count") |>
@@ -1531,7 +1507,7 @@ cleanData <- function(duckdb_path, path) {
     dplyr::filter(!is.na(value) & value != "") |>
     dplyr::mutate(value = as.integer(value)) |>
     writeCompressedParquet(proteins_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_count AS SELECT * FROM read_parquet('%s')", proteins_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_count AS SELECT * FROM read_parquet('%s')", basename(proteins_parquet)))
 
   # domain_count -> long parquet + view
   DBI::dbReadTable(con, "domain_count") |>
@@ -1539,7 +1515,7 @@ cleanData <- function(duckdb_path, path) {
     dplyr::filter(!is.na(value) & value != "") |>
     dplyr::mutate(value = as.integer(value)) |>
     writeCompressedParquet(domains_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW domain_count AS SELECT * FROM read_parquet('%s')", domains_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW domain_count AS SELECT * FROM read_parquet('%s')", basename(domains_parquet)))
 
   # gene_struct -> long parquet + view
   DBI::dbReadTable(con, "gene_struct") |>
@@ -1547,33 +1523,33 @@ cleanData <- function(duckdb_path, path) {
     dplyr::filter(!is.na(value) & value != "") |>
     dplyr::mutate(value = as.integer(value)) |>
     writeCompressedParquet(struct_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW struct AS SELECT * FROM read_parquet('%s')", struct_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW struct AS SELECT * FROM read_parquet('%s')", basename(struct_parquet)))
 
   # names/seq tables -> parquet + views
   DBI::dbReadTable(con, "gene_names") |> writeCompressedParquet(gene_names_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_names AS SELECT * FROM read_parquet('%s')", gene_names_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_names AS SELECT * FROM read_parquet('%s')", basename(gene_names_parquet)))
 
   DBI::dbReadTable(con, "protein_names") |>
     dplyr::select(-locus_tag) |>
     writeCompressedParquet(protein_names_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_names AS SELECT * FROM read_parquet('%s')", protein_names_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_names AS SELECT * FROM read_parquet('%s')", basename(protein_names_parquet)))
 
   DBI::dbReadTable(con, "domain_names") |>
     dplyr::select(-c(IPRAcc, IPRDesc)) |>
     writeCompressedParquet(domain_names_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW domain_names AS SELECT * FROM read_parquet('%s')", domain_names_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW domain_names AS SELECT * FROM read_parquet('%s')", basename(domain_names_parquet)))
 
   DBI::dbReadTable(con, "gene_ref_seq") |> writeCompressedParquet(gene_ref_seq_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_seqs AS SELECT * FROM read_parquet('%s')", gene_ref_seq_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_seqs AS SELECT * FROM read_parquet('%s')", basename(gene_ref_seq_parquet)))
 
   DBI::dbReadTable(con, "protein_cluster_seq") |> writeCompressedParquet(protein_cluster_seq_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_seqs AS SELECT * FROM read_parquet('%s')", protein_cluster_seq_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_seqs AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_seq_parquet)))
 
   DBI::dbReadTable(con, "protein_members") |> writeCompressedParquet(protein_cluster_member_parquet)
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_members AS SELECT * FROM read_parquet('%s')", protein_cluster_member_parquet))
 
   DBI::dbReadTable(con, "genome_gene_protein") |> writeCompressedParquet(genome_gene_protein_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_gene_protein AS SELECT * FROM read_parquet('%s')", genome_gene_protein_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_gene_protein AS SELECT * FROM read_parquet('%s')", basename(genome_gene_protein_parquet)))
 
   invisible(TRUE)
 }
