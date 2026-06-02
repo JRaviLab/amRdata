@@ -316,8 +316,10 @@
 #' @return A single character string representing the combined shortened name.
 #'
 #' @examples
+#' \dontrun{
 #' .generateDBname(c("90371", "Bacillus subtilis"))
 #' .generateDBname(c("12345", "Escherichia coli", "Lactobacillus"))
+#' }
 #'
 .generateDBname <- function(user_bacs) {
   db_parts <- c()
@@ -410,6 +412,7 @@
   }
 
   # Count
+  # TODO: New docker containers are spun up twice once for count and data. Thats a lot of overheard, can be fixed
   count_cmd <- paste0(
     "docker run --rm ", image,
     " p3-all-genomes --in ",
@@ -729,6 +732,7 @@
 #' @return A list with:
 #'   - duckdbConnection: live DBI connection to the created DuckDB
 #'   - table_name: "metadata"
+#' @export
 retrieveMetadata <- function(user_bacs,
                              filter_type = "AMR",
                              base_dir = ".",
@@ -804,26 +808,10 @@ retrieveMetadata <- function(user_bacs,
   genome_batches <- split(genome_ids, ceiling(seq_along(genome_ids) / batch_size))
 
   n_cores <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
-  cluster <- parallel::makeCluster(n_cores)
-  on.exit(parallel::stopCluster(cluster), add = TRUE)
-
-  parallel::clusterExport(
-    cluster,
-    varlist = c(
-      ".extractAMRtable", ".extractGenomeData",
-      "abx_filter", "drug_fields",
-      "filter_type", "amr_fields", "microtrait_fields",
-      "base_dir", "image"
-    ),
-    envir = environment()
-  )
-  parallel::clusterEvalQ(cluster, {
-    library(tibble)
-    library(dplyr)
-  })
+  param <- BiocParallel::SnowParam(workers = n_cores)
 
   if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
-  batch_drug_data <- parallel::parLapply(cluster, genome_batches, function(batch) {
+  batch_drug_data <- BiocParallel::bplapply(genome_batches, function(batch) {
     .extractAMRtable(
       base_dir          = base_dir,
       batch_genome_IDs  = batch,
@@ -832,7 +820,7 @@ retrieveMetadata <- function(user_bacs,
       image             = image,
       verbose           = FALSE
     )
-  })
+  }, BPPARAM = param)
   combined_drug_data <- unlist(batch_drug_data, use.names = FALSE)
   if (length(combined_drug_data) == 0) {
     message("No drug data returned.")
@@ -850,7 +838,7 @@ retrieveMetadata <- function(user_bacs,
     dplyr::mutate(`genome_drug.genome_id` = as.character(`genome_drug.genome_id`))
 
   if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
-  batch_genome_data <- parallel::parLapply(cluster, genome_batches, function(batch) {
+  batch_genome_data <- BiocParallel::bplapply(genome_batches, function(batch) {
     .extractGenomeData(
       base_dir          = base_dir,
       batch_genome_IDs  = batch,
@@ -860,7 +848,7 @@ retrieveMetadata <- function(user_bacs,
       image             = image,
       verbose           = FALSE
     )
-  })
+  }, BPPARAM = param)
   combined_genome_data <- unlist(batch_genome_data, use.names = FALSE)
   if (length(combined_genome_data) == 0) {
     message("No genome data returned.")
@@ -940,7 +928,7 @@ retrieveMetadata <- function(user_bacs,
   if (!grepl("^##gff-version\\s*3", lines[1])) {
     lines <- c("##gff-version 3", lines)
   }
-  out <- vapply(lines, function(line) {
+  out <- purrr::map_chr(lines, function(line) {
     if (grepl("^#", line)) {
       return(line)
     }
@@ -950,7 +938,7 @@ retrieveMetadata <- function(user_bacs,
     } else {
       line
     }
-  }, character(1))
+  })
   writeLines(out, gff_path, sep = "\n", useBytes = TRUE)
   invisible(TRUE)
 }
@@ -1116,17 +1104,17 @@ retrieveMetadata <- function(user_bacs,
   gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
   paths <- c(fna, faa, gff)
   all(file.exists(paths)) &&
-    all(vapply(paths, function(x) file.info(x)$size, numeric(1)) > min_bytes)
+    all(purrr::map_dbl(paths, function(x) file.info(x)$size) > min_bytes)
 }
 
 # List genomes already completed
 .list_complete <- function(dir, genome_ids, min_bytes = 100) {
-  genome_ids[vapply(genome_ids, .is_complete_set, logical(1), dir = dir, min_bytes = min_bytes)]
+  genome_ids[purrr::map_lgl(genome_ids, .is_complete_set, dir = dir, min_bytes = min_bytes)]
 }
 
 # Any genomes missing bits or pieces? Find em
 .missing_any <- function(dir, genome_ids, min_bytes = 100) {
-  genome_ids[!vapply(genome_ids, .is_complete_set, logical(1), dir = dir, min_bytes = min_bytes)]
+  genome_ids[!purrr::map_lgl(genome_ids, .is_complete_set, dir = dir, min_bytes = min_bytes)]
 }
 
 # Audit function
@@ -1339,6 +1327,7 @@ retrieveMetadata <- function(user_bacs,
 #' @param chunk_size Genomes per chunk container (default 50).
 #' @param verbose Verbose messages.
 #' @return Character vector of genome IDs with complete file sets on disk.
+#' @export
 retrieveGenomes <- function(base_dir = ".",
                             user_bacs,
                             method = c("ftp", "cli"),
@@ -1394,9 +1383,9 @@ retrieveGenomes <- function(base_dir = ".",
   # FTP method -- preferred if server is available
   if (identical(method, "ftp")) {
     if (isTRUE(verbose)) message("Trying FTPS download. Workers=", ftp_workers)
-    future::plan(future::multisession, workers = max(1, ftp_workers))
-    ft_ok <- future.apply::future_lapply(ids, function(gid) .ftp_download_one(gid, genome_path),
-      future.seed = TRUE
+    ftp_param <- BiocParallel::SnowParam(workers = max(1L, ftp_workers))
+    ft_ok <- BiocParallel::bplapply(ids, function(gid) .ftp_download_one(gid, genome_path),
+      BPPARAM = ftp_param
     )
     ok_ids <- ids[unlist(ft_ok)]
     if (isTRUE(verbose)) message("Complete file sets for ", length(ok_ids), " genomes (FTP).")
@@ -1413,11 +1402,11 @@ retrieveGenomes <- function(base_dir = ".",
       " data chunks."
     )
   }
-  future::plan(future::multisession, workers = max(1, cli_fasta_workers))
-  fa_res <- future.apply::future_mapply(
+  fasta_param <- BiocParallel::SnowParam(workers = max(1L, cli_fasta_workers))
+  fa_res <- BiocParallel::bpmapply(
     FUN = function(vec, tag) .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag),
     vec = chunks, tag = paste0("fa", seq_along(chunks)),
-    SIMPLIFY = TRUE, future.seed = TRUE
+    SIMPLIFY = TRUE, BPPARAM = fasta_param
   )
   if (!all(fa_res) && isTRUE(verbose)) warning(sum(!fa_res), " data chunks failed.")
 
@@ -1428,16 +1417,16 @@ retrieveGenomes <- function(base_dir = ".",
       length(chunks), " data chunks."
     )
   }
-  future::plan(future::multisession, workers = max(1, cli_gff_workers))
-  g_res <- future.apply::future_mapply(
+  gff_param <- BiocParallel::SnowParam(workers = max(1L, cli_gff_workers))
+  g_res <- BiocParallel::bpmapply(
     FUN = function(vec, tag) .cli_export_gff_chunk(image, genome_path, vec, tag),
     vec = chunks, tag = paste0("gff", seq_along(chunks)),
-    SIMPLIFY = TRUE, future.seed = TRUE
+    SIMPLIFY = TRUE, BPPARAM = gff_param
   )
   if (!all(g_res) && isTRUE(verbose)) warning(sum(!g_res), " GFF chunks had failures.")
 
   # Success set: .fna + .PATRIC.faa + .PATRIC.gff all present per isolate
-  ok_ids <- ids[vapply(ids, .is_complete_set, logical(1), dir = genome_path)]
+  ok_ids <- ids[purrr::map_lgl(ids, .is_complete_set, dir = genome_path)]
   if (isTRUE(verbose)) {
     message(
       "Complete file sets downloaded for ",
@@ -1468,7 +1457,7 @@ genomeList <- function(base_dir = ".",
   bug_dir <- dirname(db_path)
 
   genome_path <- file.path(bug_dir, "genomes")
-  files_all <- list.files(genome_path, full.names = TRUE)
+  files_all <- sort(list.files(genome_path, full.names = TRUE))
   files_all <- files_all[file.info(files_all)$size > 100]
 
   # Separate by type
@@ -1482,7 +1471,7 @@ genomeList <- function(base_dir = ".",
 
   genome_ids <- unique(c(gff_ids, fna_ids, faa_ids))
 
-  list_of_files <- lapply(genome_ids, function(genomeID) {
+  list_of_files <- purrr::map(genome_ids, function(genomeID) {
     gff_path <- file.path(genome_path, paste0(genomeID, ".PATRIC.gff"))
     fna_path <- file.path(genome_path, paste0(genomeID, ".fna"))
     faa_path <- file.path(genome_path, paste0(genomeID, ".PATRIC.faa"))
@@ -1502,8 +1491,7 @@ genomeList <- function(base_dir = ".",
       },
       stringsAsFactors = FALSE
     )
-  })
-  list_of_files <- do.call(rbind, list_of_files)
+  }) |> purrr::list_rbind()
   list_of_files <- tibble::as_tibble(list_of_files) |>
     dplyr::filter(!is.na(panaroo_input))
 
@@ -1566,7 +1554,6 @@ prepareGenomes <- function(user_bacs,
 
   if (isTRUE(verbose)) message("Step 1: Downloading genomes from BV-BRC")
 
-  # Filter + download
   ids <- retrieveGenomes(
     base_dir      = base_dir,
     user_bacs     = user_bacs,
