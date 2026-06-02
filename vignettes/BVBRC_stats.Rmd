@@ -1,0 +1,264 @@
+---
+title: "BV-BRC Metadata Statistics"
+author: "Abhirupa Ghosh"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{BV-BRC Metadata Statistics}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+This vignette summarizes the completeness of the bacterial metadata table served by BV-BRC. It pulls the full bacterial-genome metadata dump from BV-BRC via the project's CLI Docker image, normalizes character columns (UTF-8 fixes, whitespace trimming, mapping placeholder strings like `"NA"`, `"unknown"`, and `"not reported"` to actual `NA`s), and reports per-column missingness plus block-level presence/absence for host and geographic fields. The goal is to help decide which BV-BRC columns are worth featurizing downstream.
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(stringr)
+library(purrr)
+library(tibble)
+```
+
+## Helper functions
+
+The chunk below defines all helpers used in the rest of the vignette:
+
+- `fetchCompleteBVBRCMetadata()` — calls `docker run --rm danylmb/bvbrc:5.3 p3-all-genomes` twice: once to enumerate the available attributes, then again to pull the full bacterial-genome metadata table with those attributes selected. Returns a tibble with all character columns coerced to UTF-8.
+- `is_placeholder_na()` and `clean_all_char_cols()` — normalize text columns by trimming whitespace, fixing UTF-8 glitches, and treating sentinel strings (`"NA"`, `"unknown"`, `"not reported"`, etc.) as `NA` rather than valid values.
+- `summarize_block()` — computes per-row presence/absence summaries across a group of related columns (e.g. all host columns or all geographic columns).
+
+```{r functions, echo=FALSE}
+# function to download BVBRC metadata for all Bacteria
+fetchCompleteBVBRCMetadata <- function(
+  image = "danylmb/bvbrc:5.3",
+  verbose = TRUE
+) {
+  if (isTRUE(verbose)) {
+    message("Building attribute list from BV-BRC...")
+  }
+
+  # Step 1: get cleaned attribute list
+  attr_cmd <- glue::glue(
+    "docker run --rm {image} p3-all-genomes -f | ",
+    "tail -n +2 | ",
+    "sed -E 's/ \\((multi|related|derived)\\)//g' | ",
+    "tr '\\n' ',' | sed 's/,$//'"
+  )
+
+  ATTRS <- tryCatch(
+    system(attr_cmd, intern = TRUE),
+    error = function(e) {
+      stop("Failed to retrieve attribute list.\n", conditionMessage(e))
+    }
+  )
+
+  if (length(ATTRS) == 0L) {
+    stop("Attribute list is empty.")
+  }
+
+  if (isTRUE(verbose)) {
+    message("Fetching BV-BRC bacterial genome metadata (this may take time)...")
+  }
+
+  # Step 2: use ATTRS in main query
+  cmd <- glue::glue(
+    "docker run --rm {image} p3-all-genomes ",
+    "--in superkingdom,Bacteria ",
+    "--attr \"{ATTRS}\""
+  )
+
+  raw_data <- tryCatch(
+    system(cmd, intern = TRUE, ignore.stderr = TRUE),
+    error = function(e) {
+      stop("BV-BRC CLI call failed.\n", conditionMessage(e))
+    }
+  )
+
+  if (length(raw_data) == 0L) {
+    stop("BV-BRC returned no data. The service may be unavailable.")
+  }
+
+  # Step 3: parse safely
+  df <- utils::read.table(
+    text = raw_data,
+    sep = "\t",
+    header = TRUE,
+    fill = TRUE,
+    quote = "",
+    check.names = FALSE,
+    comment.char = "",
+    colClasses = "character"
+  )
+
+  df <- tibble::as_tibble(df) |>
+    dplyr::mutate(dplyr::across(
+      dplyr::everything(),
+      ~ iconv(.x, from = "", to = "UTF-8", sub = "")
+    ))
+
+  if (isTRUE(verbose)) {
+    message(glue::glue("Retrieved {nrow(df)} rows x {ncol(df)} columns."))
+  }
+
+  return(df)
+}
+
+# Use your fix_utf8() if defined; otherwise a no-op fallback
+if (!exists("fix_utf8")) {
+  fix_utf8 <- function(x) x
+}
+
+# Tokens that should count as missing for text fields
+missing_tokens <- c(
+  "", " ", "NA", "N/A", "n/a", "na", "null", "Null", "NULL",
+  "unknown", "Unknown", "UNKNOWN",
+  "not provided", "Not provided", "NOT PROVIDED",
+  "not reported", "Not reported", "NOT REPORTED",
+  "unavailable", "Unspecified", "unspecified", "missing"
+)
+
+is_placeholder_na <- function(x) {
+  if (!is.character(x)) {
+    return(rep(FALSE, length(x)))
+  }
+  str_trim(x) %in% missing_tokens
+}
+
+# Clean ALL character/factor columns in the data frame
+clean_all_char_cols <- function(df) {
+  df |>
+    mutate(across(
+      where(~ is.character(.x) || is.factor(.x)),
+      ~ {
+        x <- .
+        if (is.factor(x)) x <- as.character(x)
+        if (is.character(x)) {
+          x <- fix_utf8(x)
+          x <- str_squish(x) # trim + collapse internal spaces
+          x[is_placeholder_na(x)] <- NA # "", "N/A", "unknown", etc. -> NA
+        }
+        x
+      }
+    ))
+}
+
+# --- Block-level summaries ---------------------------------------------------
+summarize_block <- function(df, cols, block_name) {
+  if (length(cols) == 0) {
+    return(tibble(
+      block = block_name,
+      n_total = nrow(df),
+      n_rows_all_missing = nrow(df),
+      pct_all_missing = 100,
+      n_rows_any_present = 0,
+      pct_any_present = 0
+    ))
+  }
+  df |>
+    transmute(
+      .row_any_present = if_any(all_of(cols), ~ !is.na(.x)),
+      .row_all_missing = if_all(all_of(cols), is.na)
+    ) |>
+    summarise(
+      block = block_name,
+      n_total = n(),
+      n_rows_all_missing = sum(.row_all_missing),
+      pct_all_missing = 100 * n_rows_all_missing / n_total,
+      n_rows_any_present = sum(.row_any_present),
+      pct_any_present = 100 * n_rows_any_present / n_total,
+      .groups = "drop"
+    )
+}
+```
+
+## Compute statistics
+
+Here we fetch the BV-BRC bacterial metadata table, clean it, and compute four artifacts that drive the rest of the vignette: `col_stats` (one row per column with totals, missing counts, and distinct non-missing values), `host_block_stats` and `geo_block_stats` (per-block presence summaries across host and geographic columns respectively), and `diag_table` (a focused per-column view of just the host + geo columns).
+
+```{r stats}
+# download the bvbrc table
+bvbrc <- fetchCompleteBVBRCMetadata()
+
+# Apply to your table
+bvbrc_clean <- clean_all_char_cols(bvbrc)
+# --- Per-column stats --------------------------------------------------------
+col_stats <- tibble(column = colnames(bvbrc_clean)) |>
+  mutate(
+    n_total = nrow(bvbrc_clean),
+    n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
+    n_present = n_total - n_missing,
+    pct_missing = 100 * n_missing / n_total,
+    n_distinct_non_missing = map_int(column, ~ n_distinct(bvbrc_clean[[.x]], na.rm = TRUE))
+  ) |>
+  arrange(desc(pct_missing), column)
+
+# --- Define blocks -----------------------------------------------------------
+host_cols <- c(
+  "genome.host_common_name",
+  "genome.host_group",
+  "genome.host_name"
+)
+
+geo_cols <- c(
+  "genome.isolation_source",
+  "genome.geographic_location",
+  "genome.isolation_country",
+  "genome.state_province",
+  "genome.city",
+  "genome.county",
+  "genome.latitude",
+  "genome.longitude"
+)
+
+host_cols <- intersect(host_cols, colnames(bvbrc))
+geo_cols <- intersect(geo_cols, colnames(bvbrc))
+
+host_block_stats <- summarize_block(bvbrc_clean, host_cols, "host")
+geo_block_stats <- summarize_block(bvbrc_clean, geo_cols, "geographic")
+
+# --- Quick diagnostics: check specific columns you care about ----------------
+diag_cols <- unique(c(host_cols, geo_cols))
+diag_table <- tibble(column = diag_cols) |>
+  mutate(
+    n_total = nrow(bvbrc_clean),
+    n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
+    n_present = n_total - n_missing,
+    pct_missing = 100 * n_missing / n_total
+  ) |>
+  arrange(desc(pct_missing), column)
+```
+
+## Per-column completeness
+
+The table below shows how complete each column in the BV-BRC bacterial metadata is — sorted with the most sparsely populated columns first. Columns with very high `pct_missing` are unlikely to be useful downstream and may be worth dropping from featurization.
+
+```{r col_stats_output}
+cat("\n--- Per-column stats (whole table) ---\n")
+print(col_stats, n = Inf)
+```
+
+## Host block summary
+
+Presence of the host-related columns (`host_common_name`, `host_group`, `host_name`) treated as a block. `n_rows_any_present` is the number of rows where at least one host field is populated; `n_rows_all_missing` is the number where every host field is empty.
+
+```{r host_block_output}
+cat("\n--- Host block stats ---\n")
+print(host_block_stats)
+```
+
+## Geographic block summary
+
+Same idea as the host block, but across the geographic columns (`isolation_source`, `geographic_location`, `isolation_country`, `state_province`, `city`, `county`, `latitude`, `longitude`).
+
+```{r geo_block_output}
+cat("\n--- Geographic block stats ---\n")
+print(geo_block_stats)
+```
+
+## Diagnostics: per-column breakdown of host + geo
+
+Column-by-column missingness for just the host and geographic fields, so you can see which specific columns drive the block-level numbers above.
+
+```{r diag_output}
+cat("\n--- Diagnostics for host + geo columns ---\n")
+print(diag_table, n = Inf)
+```
