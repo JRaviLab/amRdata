@@ -1411,18 +1411,22 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   con_new <- DBI::dbConnect(duckdb::duckdb(), db_name)
   on.exit(try(DBI::dbDisconnect(con_new, shutdown = FALSE), silent = TRUE), add = TRUE)
 
+  # Views below reference parquet files by bare filename. Point DuckDB at the
+  # parquet directory so schema inference at CREATE VIEW time can resolve them.
+  DBI::dbExecute(con_new, sprintf("SET file_search_path='%s'", path))
+
   # cleaned_metadata -> parquet + view (as metadata)
   DBI::dbReadTable(con, "cleaned_metadata") |> writeCompressedParquet(metadata_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW metadata AS SELECT * FROM read_parquet('%s')", metadata_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW metadata AS SELECT * FROM read_parquet('%s')", basename(metadata_parquet)))
 
   # debug/complete views: amr_phenotype, genome_data, original_metadata
   DBI::dbReadTable(con, "amr_phenotype") |> writeCompressedParquet(amr_phenotype_parquet)
   DBI::dbReadTable(con, "genome_data") |> writeCompressedParquet(genome_data_parquet)
   DBI::dbReadTable(con, "metadata") |> writeCompressedParquet(original_metadata_parquet)
 
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW amr_phenotype AS SELECT * FROM read_parquet('%s')", amr_phenotype_parquet))
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_data AS SELECT * FROM read_parquet('%s')", genome_data_parquet))
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW original_metadata AS SELECT * FROM read_parquet('%s')", original_metadata_parquet))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW amr_phenotype AS SELECT * FROM read_parquet('%s')", basename(amr_phenotype_parquet)))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_data AS SELECT * FROM read_parquet('%s')", basename(genome_data_parquet)))
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW original_metadata AS SELECT * FROM read_parquet('%s')", basename(original_metadata_parquet)))
 
   invisible(TRUE)
 }
