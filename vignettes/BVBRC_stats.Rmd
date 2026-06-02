@@ -16,7 +16,6 @@ library(dplyr)
 library(stringr)
 library(purrr)
 library(tibble)
-
 ```
 
 ## Helper functions
@@ -118,7 +117,9 @@ missing_tokens <- c(
 )
 
 is_placeholder_na <- function(x) {
-  if (!is.character(x)) return(rep(FALSE, length(x)))
+  if (!is.character(x)) {
+    return(rep(FALSE, length(x)))
+  }
   str_trim(x) %in% missing_tokens
 }
 
@@ -132,8 +133,8 @@ clean_all_char_cols <- function(df) {
         if (is.factor(x)) x <- as.character(x)
         if (is.character(x)) {
           x <- fix_utf8(x)
-          x <- str_squish(x)             # trim + collapse internal spaces
-          x[is_placeholder_na(x)] <- NA  # "", "N/A", "unknown", etc. -> NA
+          x <- str_squish(x) # trim + collapse internal spaces
+          x[is_placeholder_na(x)] <- NA # "", "N/A", "unknown", etc. -> NA
         }
         x
       }
@@ -167,7 +168,6 @@ summarize_block <- function(df, cols, block_name) {
       .groups = "drop"
     )
 }
-
 ```
 
 ## Compute statistics
@@ -183,7 +183,7 @@ bvbrc_clean <- clean_all_char_cols(bvbrc)
 # --- Per-column stats --------------------------------------------------------
 col_stats <- tibble(column = colnames(bvbrc_clean)) |>
   mutate(
-    n_total   = nrow(bvbrc_clean),
+    n_total = nrow(bvbrc_clean),
     n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
     n_present = n_total - n_missing,
     pct_missing = 100 * n_missing / n_total,
@@ -210,16 +210,16 @@ geo_cols <- c(
 )
 
 host_cols <- intersect(host_cols, colnames(bvbrc))
-geo_cols  <- intersect(geo_cols,  colnames(bvbrc))
+geo_cols <- intersect(geo_cols, colnames(bvbrc))
 
 host_block_stats <- summarize_block(bvbrc_clean, host_cols, "host")
-geo_block_stats  <- summarize_block(bvbrc_clean,  geo_cols,  "geographic")
+geo_block_stats <- summarize_block(bvbrc_clean, geo_cols, "geographic")
 
 # --- Quick diagnostics: check specific columns you care about ----------------
 diag_cols <- unique(c(host_cols, geo_cols))
 diag_table <- tibble(column = diag_cols) |>
   mutate(
-    n_total   = nrow(bvbrc_clean),
+    n_total = nrow(bvbrc_clean),
     n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
     n_present = n_total - n_missing,
     pct_missing = 100 * n_missing / n_total
@@ -232,7 +232,8 @@ diag_table <- tibble(column = diag_cols) |>
 The table below shows how complete each column in the BV-BRC bacterial metadata is — sorted with the most sparsely populated columns first. Columns with very high `pct_missing` are unlikely to be useful downstream and may be worth dropping from featurization.
 
 ```{r col_stats_output}
-cat("\n--- Per-column stats (whole table) ---\n"); print(col_stats, n = Inf)
+cat("\n--- Per-column stats (whole table) ---\n")
+print(col_stats, n = Inf)
 ```
 
 ## Host block summary
@@ -240,7 +241,8 @@ cat("\n--- Per-column stats (whole table) ---\n"); print(col_stats, n = Inf)
 Presence of the host-related columns (`host_common_name`, `host_group`, `host_name`) treated as a block. `n_rows_any_present` is the number of rows where at least one host field is populated; `n_rows_all_missing` is the number where every host field is empty.
 
 ```{r host_block_output}
-cat("\n--- Host block stats ---\n");           print(host_block_stats)
+cat("\n--- Host block stats ---\n")
+print(host_block_stats)
 ```
 
 ## Geographic block summary
@@ -248,7 +250,8 @@ cat("\n--- Host block stats ---\n");           print(host_block_stats)
 Same idea as the host block, but across the geographic columns (`isolation_source`, `geographic_location`, `isolation_country`, `state_province`, `city`, `county`, `latitude`, `longitude`).
 
 ```{r geo_block_output}
-cat("\n--- Geographic block stats ---\n");     print(geo_block_stats)
+cat("\n--- Geographic block stats ---\n")
+print(geo_block_stats)
 ```
 
 ## Diagnostics: per-column breakdown of host + geo
@@ -256,5 +259,6 @@ cat("\n--- Geographic block stats ---\n");     print(geo_block_stats)
 Column-by-column missingness for just the host and geographic fields, so you can see which specific columns drive the block-level numbers above.
 
 ```{r diag_output}
-cat("\n--- Diagnostics for host + geo columns ---\n"); print(diag_table, n = Inf)
+cat("\n--- Diagnostics for host + geo columns ---\n")
+print(diag_table, n = Inf)
 ```
