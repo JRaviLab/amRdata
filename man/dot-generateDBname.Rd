@@ -26,5 +26,4 @@ For numeric taxon IDs, it prefixes them with "tid_".
 .generateDBname(c("90371", "Bacillus subtilis"))
 .generateDBname(c("12345", "Escherichia coli", "Lactobacillus"))
 }
-
-}
+\keyword{internal}
