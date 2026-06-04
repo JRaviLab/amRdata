@@ -60,7 +60,7 @@ generateSummary <- function(metadata_parquet, out_path) {
   # Core summaries
   TotalEntryCount <- metadata |> dplyr::count()
   CleanEntryCount <- metadata |>
-    dplyr::distinct(genome_drug.genome_id) |>
+    dplyr::distinct(genome.genome_id) |>
     dplyr::count()
   
   Antibiotics       <- clean_distinct(metadata, genome_drug.antibiotic)
@@ -92,11 +92,11 @@ generateSummary <- function(metadata_parquet, out_path) {
     dplyr::ungroup()
   
   PhenotypebyDrugClassCount <- metadata |>
-    dplyr::group_by(genome_drug.genome_id, drug_class) |>
+    dplyr::group_by(genome.genome_id, drug_class) |>
     dplyr::filter(!(any(genome_drug.resistant_phenotype == "Resistant") &
                       genome_drug.resistant_phenotype == "Susceptible")) |>
     dplyr::ungroup() |>
-    dplyr::group_by(genome_drug.genome_id, drug_class) |>
+    dplyr::group_by(genome.genome_id, drug_class) |>
     dplyr::slice_head(n = 1) |>
     dplyr::ungroup() |>
     dplyr::group_by(genome_drug.resistant_phenotype, drug_class) |>
@@ -211,7 +211,7 @@ generatePlots <- function(metadata_parquet,
   df_year <- metadata |>
     dplyr::filter(!is.na(genome.collection_year)) |>
     dplyr::select(
-      genome_drug.genome_id,
+      genome.genome_id,
       drug_abbr,
       genome_drug.resistant_phenotype,
       genome.isolation_country,
@@ -242,10 +242,14 @@ generatePlots <- function(metadata_parquet,
     ) +
     ggplot2::scale_color_brewer(palette = "Pastel1") +
     ggplot2::theme_minimal(base_size = 12) +                                 
-    ggplot2::theme(text = ggplot2::element_text(colour = "#2D2D2D"),                               
+    ggplot2::theme(text = ggplot2::element_text(colour = "black"),                               
                    legend.position = "bottom",                 
-                   axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
+                   axis.text.x = ggplot2::element_text(angle = 45, hjust = 1, colour = "black"),
+                   axis.text.y = ggplot2::element_text(colour = "black"),
+                   axis.title = ggplot2::element_text(colour = "black"),
+                   panel.grid.minor = element_blank())
   
+  p1
   # 2) Resistance only over time
   
   
@@ -317,7 +321,7 @@ generatePlots <- function(metadata_parquet,
   df_country <- metadata |>
     dplyr::filter(genome.isolation_country != "") |>
     dplyr::select(
-      genome_drug.genome_id,
+      genome.genome_id,
       drug_abbr,
       genome_drug.resistant_phenotype,
       genome.isolation_country,
@@ -348,8 +352,8 @@ generatePlots <- function(metadata_parquet,
       size = "Count", color = "Phenotype"
     ) + 
     ggplot2::theme_minimal(base_size = 12) +                                  
-    ggplot2::theme(text = ggplot2::element_text(colour = "#2D2D2D"),                                
-                   legend.position = "bottom")
+    ggplot2::theme(text = ggplot2::element_text(colour = "black"),                                
+                   legend.position = "right")
   
   # 4) Phenotype proportion per antibiotic (stacked, normalized)
   p4 <- ggplot2::ggplot(
@@ -364,7 +368,7 @@ generatePlots <- function(metadata_parquet,
       x = "Antibiotic", y = "Proportion", fill = "Phenotype"
     ) + ggplot2::scale_fill_brewer(palette = "Pastel1") +                               # <- keep pastel  
     ggplot2::theme_minimal(base_size = 12) +                                  
-    ggplot2::theme(text = ggplot2::element_text(colour = "#2D2D2D"),                                
+    ggplot2::theme(text = ggplot2::element_text(colour = "black"),                                
                    legend.position = "bottom",                 
                    axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
   
@@ -372,25 +376,32 @@ generatePlots <- function(metadata_parquet,
   summary_isolation_source <- metadata |>
     dplyr::filter(genome.isolation_source != "") |>
     dplyr::group_by(genome.isolation_source, genome_drug.resistant_phenotype) |>
-    dplyr::summarise(count = dplyr::n(), .groups = "drop")
+    dplyr::summarise(count = dplyr::n(), .groups = "drop") |>
+    dplyr::filter(genome_drug.resistant_phenotype == "Resistant")
   
   p5 <- ggplot2::ggplot(
     summary_isolation_source,
     ggplot2::aes(area = count, fill = genome.isolation_source)
   ) +
     treemapify::geom_treemap() +
+    # treemapify::geom_treemap_text(
+    #   ggplot2::aes(label = genome_drug.resistant_phenotype),
+    #   color = "grey15", grow = FALSE
+    # ) +
     treemapify::geom_treemap_text(
-      ggplot2::aes(label = genome_drug.resistant_phenotype),
+      ggplot2::aes(label = genome.isolation_source),
       color = "grey15", grow = FALSE
     ) +
     ggplot2::labs(
-      title = "Distribution of AMR isolates by isolation source",
+      title = "Distribution of Resistant isolates by isolation source",
       fill = "Isolation source"
-    ) + ggplot2::scale_fill_brewer(palette = "Pastel2") +                              
+    ) + 
+    ggplot2::scale_fill_manual(
+      values = colorRampPalette(RColorBrewer::brewer.pal(8, "Pastel2"))(n_distinct(summary_isolation_source$genome.isolation_source))
+    ) +                             
     ggplot2::theme_minimal(base_size = 12) +                                  
-    ggplot2::theme(text = ggplot2::element_text(colour = "#2D2D2D"),                                
-                   legend.position = "bottom",                 
-                   plot.title = ggplot2::element_text(face = "bold"))
+    ggplot2::theme(text = ggplot2::element_text(colour = "black"),                                
+                   legend.position = "none")
   
   # 6) Histogram of resistant classes per genome
   p6 <- ggplot2::ggplot(metadata, ggplot2::aes(num_resistant_classes)) +
@@ -400,8 +411,11 @@ generatePlots <- function(metadata_parquet,
       x = "# Resistant Classes", y = "Count"
     ) + 
     ggplot2::theme_minimal(base_size = 12) +                                  
-    ggplot2::theme(text = ggplot2::element_text(colour = "#2D2D2D"),                                
-                   legend.position = "bottom")
+    ggplot2::theme(text = ggplot2::element_text(colour = "black"),                                
+                   legend.position = "bottom",
+                   axis.text = ggplot2::element_text(colour = "black"),
+                   axis.title = ggplot2::element_text(colour = "black"),
+                   panel.grid.minor = element_blank())
   
   plots <- list(p1 = p1, p2 = p2, p3 = p3, p4 = p4, p5 = p5, p6 = p6)
   
@@ -419,4 +433,3 @@ generatePlots <- function(metadata_parquet,
   
   invisible(paths)
 }
-
