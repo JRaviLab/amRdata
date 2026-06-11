@@ -174,7 +174,7 @@ summarize_block <- function(df, cols, block_name) {
 
 Here we fetch the BV-BRC bacterial metadata table, clean it, and compute four artifacts that drive the rest of the vignette: `col_stats` (one row per column with totals, missing counts, and distinct non-missing values), `host_block_stats` and `geo_block_stats` (per-block presence summaries across host and geographic columns respectively), and `diag_table` (a focused per-column view of just the host + geo columns).
 
-```{r stats}
+```{r stats, eval = FALSE}
 # download the bvbrc table
 bvbrc <- fetchCompleteBVBRCMetadata()
 
@@ -231,7 +231,7 @@ diag_table <- tibble(column = diag_cols) |>
 
 The table below shows how complete each column in the BV-BRC bacterial metadata is — sorted with the most sparsely populated columns first. Columns with very high `pct_missing` are unlikely to be useful downstream and may be worth dropping from featurization.
 
-```{r col_stats_output}
+```{r col_stats_output, eval = FALSE}
 cat("\n--- Per-column stats (whole table) ---\n")
 print(col_stats, n = Inf)
 ```
@@ -240,7 +240,7 @@ print(col_stats, n = Inf)
 
 Presence of the host-related columns (`host_common_name`, `host_group`, `host_name`) treated as a block. `n_rows_any_present` is the number of rows where at least one host field is populated; `n_rows_all_missing` is the number where every host field is empty.
 
-```{r host_block_output}
+```{r host_block_output, eval = FALSE}
 cat("\n--- Host block stats ---\n")
 print(host_block_stats)
 ```
@@ -249,7 +249,7 @@ print(host_block_stats)
 
 Same idea as the host block, but across the geographic columns (`isolation_source`, `geographic_location`, `isolation_country`, `state_province`, `city`, `county`, `latitude`, `longitude`).
 
-```{r geo_block_output}
+```{r geo_block_output, eval = FALSE}
 cat("\n--- Geographic block stats ---\n")
 print(geo_block_stats)
 ```
@@ -258,7 +258,7 @@ print(geo_block_stats)
 
 Column-by-column missingness for just the host and geographic fields, so you can see which specific columns drive the block-level numbers above.
 
-```{r diag_output}
+```{r diag_output, eval = FALSE}
 cat("\n--- Diagnostics for host + geo columns ---\n")
 print(diag_table, n = Inf)
 ```
