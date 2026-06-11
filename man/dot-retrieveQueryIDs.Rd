@@ -6,21 +6,11 @@
 \usage{
 .retrieveQueryIDs(base_dir = ".", user_bacs, overwrite = FALSE, verbose = TRUE)
 }
-\arguments{
-\item{base_dir}{Character. Project root directory. Default ".".}
-
-\item{user_bacs}{Character vector. Mixed inputs of taxon IDs and/or species names.}
-
-\item{overwrite}{Logical. If FALSE and the DuckDB already exists for this selection, abort. Default: FALSE.}
-
-\item{verbose}{Logical.}
-}
 \value{
-A numeric vector of distinct \code{genome.genome_id}, or NULL if none found.
+A character vector of distinct \code{genome.genome_id}, or NULL if none found.
 }
 \description{
-Resolves user-provided taxa to taxon IDs, queries BV-BRC per unique taxon ID,
-and returns distinct genome IDs. Uses a per-selection DuckDB located under:
-<base_dir>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.duckdb
-BV-BRC column names are preserved.
+Resolves user-provided taxa to taxon IDs using the local BV-BRC cache, then
+returns distinct genome IDs (Good + WGS/Complete). Also writes a 'bac_data'
+table to the per-selection DuckDB with a cache snapshot of core fields.
 }

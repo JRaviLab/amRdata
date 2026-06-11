@@ -126,9 +126,15 @@
     hmmer_tbl_filename
   }
 
-  parquet_files <- .with_future_plan(
-    future::multisession(workers = n_workers),
-    furrr::future_pmap_chr(job_list, .runHmmerJob, .progress = TRUE)
+  hmmer_param <- BiocParallel::SnowParam(workers = max(1L, n_workers))
+  parquet_files <- BiocParallel::bpmapply(
+    FUN = .runHmmerJob,
+    JOB_NAME = job_list$JOB_NAME,
+    FASTA = job_list$FASTA,
+    DB = job_list$DB,
+    SIMPLIFY = TRUE,
+    USE.NAMES = FALSE,
+    BPPARAM = hmmer_param
   )
 
   final_parquet <- file.path(output_path, paste0("protein_", database, ".parquet"))
@@ -167,7 +173,7 @@
 #' hits |> dplyr::filter(sequence_evalue < 1e-5)
 #' }
 #'
-#' @export
+#' @keywords internal
 .parseHMMEROutput <- function(file) {
   col_types <- readr::cols(
     name = readr::col_character(),

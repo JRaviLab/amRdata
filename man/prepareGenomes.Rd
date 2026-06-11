@@ -9,6 +9,7 @@ prepareGenomes(
   base_dir = ".",
   method = c("ftp", "cli"),
   overwrite = FALSE,
+  evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
   verbose = TRUE
 )
 }
@@ -23,6 +24,10 @@ prepareGenomes(
 
 \item{overwrite}{Logical. Passed to metadata filtering and DuckDB creation.
 Default FALSE.}
+
+\item{evidence_mode}{Character. Sets what types of AMR evidence is acceptable.
+Default \code{lab_only}. \code{any} will not require AMR data for downloads. This will
+return very large download lists for many species!}
 
 \item{verbose}{Logical. Print progress messages. Default TRUE.}
 }
