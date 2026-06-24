@@ -1776,6 +1776,7 @@ genomeList <- function(base_dir = ".",
 #'
 #' @export
 prepareGenomes <- function(user_bacs,
+                           genome_id_file = NULL,
                            base_dir = ".",
                            method = c("ftp", "cli"),
                            overwrite = FALSE,
@@ -1790,6 +1791,7 @@ prepareGenomes <- function(user_bacs,
   if (isTRUE(verbose)) message("Step 0: Building AMR metadata (retrieveMetadata)")
   invisible(retrieveMetadata(
     user_bacs = user_bacs,
+    genome_id_file = NULL,
     filter_type = "AMR",
     base_dir = base_dir,
     abx = "All",
