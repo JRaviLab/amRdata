@@ -912,6 +912,7 @@
 #'   - table_name: "metadata"
 #' @export
 retrieveMetadata <- function(user_bacs,
+                             genome_id_file = NULL,
                              filter_type = "AMR",
                              base_dir = ".",
                              abx = "All",
@@ -921,10 +922,37 @@ retrieveMetadata <- function(user_bacs,
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
   if (isTRUE(verbose)) message("Resolving genome IDs for user inputs.")
-  genome_ids <- .retrieveQueryIDs(
-    base_dir = base_dir, user_bacs = user_bacs,
-    overwrite = overwrite, verbose = verbose
-  )
+           # -------------------------------
+  # GENOME ID RESOLUTION (UPDATED)
+  # -------------------------------
+  if (!is.null(genome_id_file)) {
+
+    if (!file.exists(genome_id_file)) {
+      stop("Provided genome_id_file does not exist.")
+    }
+
+    if (isTRUE(verbose)) {
+      message("Using genome IDs from file: ", genome_id_file)
+    }
+
+    genome_ids <- readLines(genome_id_file, warn = FALSE)
+    genome_ids <- trimws(genome_ids)
+    genome_ids <- genome_ids[genome_ids != ""]
+
+  } else {
+
+    if (isTRUE(verbose)) message("Resolving genome IDs for user inputs.")
+
+    genome_ids <- .retrieveQueryIDs(
+      base_dir = base_dir,
+      user_bacs = user_bacs,
+      overwrite = overwrite,
+      verbose = verbose
+    )
+  }
+
+  genome_ids <- unique(as.character(genome_ids))
+  
   if (length(genome_ids) == 0) {
     message("No genome IDs available for the specified inputs.")
     return(NULL)
