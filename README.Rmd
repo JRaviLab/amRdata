@@ -21,14 +21,18 @@ knitr::opts_chunk$set(
 
 amRdata is the first package in the [amR suite](https://github.com/JRaviLab/amR) 
 for antimicrobial resistance (AMR) prediction. It takes a user‑provided species or 
-taxon ID, downloads the correspondinggenomes and AST data from BV‑BRC, constructs 
+taxon ID, downloads the corresponding genomes and AST data from BV‑BRC, constructs 
 pangenomes, extracts features at multiple molecular scales, and prepares a unified 
 Parquet‑backed DuckDB file for downstream ML modeling in **amRml**.
 
-The pipeline is made up of 6 primary processes:
+The workflow is comprised of 6 primary processes:
 
-**1. BV‑BRC metadata → 2. BV-BRC genomes → 3. Panaroo pangenome →  
-4. CD‑HIT protein clusters → 5. Pfam domain extraction → 6. Database formatting
+1. BV‑BRC metadata (isolate metadata + AMR phenotypic labels) → 
+2. BV-BRC genomes (sequence data) → 
+3. Panaroo pangenome (genes, struct) →  
+4. CD‑HIT protein clusters (proteins) → 
+5. Pfam domain extraction (domains) → 
+6. Database formatting
 
 
 ## Overview
@@ -44,7 +48,7 @@ amRdata includes functions to:
   - Structural variants (Panaroo pangenome rearrangements)
 - Store all data in highly efficient Parquet and DuckDB formats
 
-See the [package vignette](https://jravilab.github.io/amR_data/articles/intro.html) for detailed usage.
+See the [package vignette](https://jravilab.github.io/amRdata/articles/intro.html) for detailed usage.
 
 ## Installation
 
@@ -53,7 +57,7 @@ See the [package vignette](https://jravilab.github.io/amR_data/articles/intro.ht
 if (!requireNamespace("remotes", quietly = TRUE))
     install.packages("remotes")
 
-remotes::install_github("JRaviLab/amR_data")
+remotes::install_github("JRaviLab/amRdata")
 ```
 
 ## Quick start
@@ -85,7 +89,7 @@ This contains data for feature presence/absence and counts across scales in geno
 
 ```
 
-## Features
+## Package features
 
 ### Data curation
 1. BV‑BRC data access
@@ -93,24 +97,26 @@ amRdata uses the BV‑BRC CLI (via Docker) or FTP server to access:
 
 - Genome metadata
 - AMR phenotype data
-- Genome assemblies (.fna, .faa, .gff)
+- Genome assemblies (`.fna`, `.faa`, `.gff`)
 
 Functions involved:
 
+```
 .updateBVBRCdata()
 .retrieveCustomQuery()
 .retrieveQueryIDs()
 retrieveGenomes()
 .filterGenomes()
 prepareGenomes()
+```
 
 After initial download, all BV-BRC metadata is cached automatically under:
-data/bvbrc/bvbrcData.duckdb
+`data/bvbrc/bvbrcData.duckdb`
 
 The package interfaces with BV-BRC (Bacterial and Viral Bioinformatics Resource Center) to access bacterial genome sequences and antimicrobial susceptibility testing data either using FTP or the BV-BRC CLI wrapped in a Docker container for reproducible access:
 
 - Query isolate metadata with flexible filtering
-- Download genome files (.fna, .faa, .gff)
+- Download genome files (`.fna`, `.faa`, `.gff`)
 - Retrieve AST results linking genotypes to phenotypes
 - Apply quality control filters (assembly quality, metadata completeness)
 
@@ -119,34 +125,42 @@ The package interfaces with BV-BRC (Bacterial and Viral Bioinformatics Resource 
 Features are extracted at four complementary molecular scales:
 
 #### 1. Gene clusters
-Panaroo is executed inside a container using .runPanaroo().
+Panaroo is executed inside a container using `.runPanaroo()`.
+
 Our pangenome creation approach:
+
 - Allows end-to-end single pangenome runs
 - Offers parallelized multi-batch pangenomes for large isolate sets (>5,000 genomes)
-  - Supports automated pangenome merging through .mergePanaroo()
+  - Supports automated pangenome merging through `.mergePanaroo()`
 - Generates gene presence/absence and count matrices per isolate
 - Identifies structural variants (gene triplets indicating genome rearrangements)
 
 Outputs are written into the per-taxon DuckDB for efficient storage and querying.
 
 #### 2. Protein clusters
-CD-HIT is executed inside a container using .runCDHIT().
+CD-HIT is executed inside a container using `.runCDHIT()`.
+
 Our protein clustering approach:
+
 - Clusters proteins across all isolates from BV-BRC .faa files
 - Creates protein presence/absence and count matrices per isolate
 - Saves cluster names and annotations
 
 #### 3. Pfam domains
-InterProScan is executed inside a container using domainFromIPR().
+InterProScan is executed inside a container using `domainFromIPR()`.
+
 Our Pfam domain extraction approach:
+
 - Automatically configures InterPro's databases for use
 - Runs parallelized and containerized domain annotation
 - Maps domain presence/absence and counts to genomes and proteins
 - Provides another functional annotation layer
 
 #### 4. Data cleaning and storage
-Final data formatting and storage is executed using cleanData().
+Final data formatting and storage is executed using `cleanData()`.
+
 Our final data storage script:
+
 - Harmonizes drug names, classes, and countries in BV-BRC metadata
 - Generates temporal bins to stratify analysis across time
 - Summarizes AMR information across the dataset
@@ -157,8 +171,9 @@ Our final data storage script:
 
 ## Workflow example
 An example of the process for downloading and processing all data and metadata 
-for Shigella flexneri genomes with paired AST metadata. 
+for _Shigella flexneri_ genomes with paired AST metadata. 
 
+```
 library(amRdata)
 
 # 1. Download & filter genomes
@@ -169,6 +184,7 @@ prepareGenomes(
 )
 
 # 2. Run multi-scale feature extraction
+
 runDataProcessing(
   duckdb_path    = "data/Shigella_flexneri.duckdb",
   output_path    = "data/Shigella_flexneri",
@@ -177,12 +193,15 @@ runDataProcessing(
 )
 
 # 3. Load final data
+
 library(DBI)
 library(arrow)
 
 # To view all attached data tables in the database
+
 con <- DBI::dbConnect(duckdb::duckdb(), "Shigella_flexneri/Sfl_parquet.duckdb")
 DBI::dbListTables(con)
+
 
 # To load human-readable data tables into R
 
@@ -191,10 +210,11 @@ Sfl_gene_counts <- arrow::read_parquet("data/Shigella_flexneri/gene_count.parque
   
   # To connect gene cluster IDs to their annotated names
   Sfl_gene_names <- arrow::read_parquet("data/Shigella_flexneri/gene_names.parquet")
+```
 
 ## Data requirements
 
-External dependencies (managed through Docker)
+External dependencies (managed through Docker) <br>
 
 - BV‑BRC CLI
 - Panaroo
@@ -206,6 +226,7 @@ External dependencies (managed through Docker)
 The user does not need to install these manually.
 
 The package requires:
+
 - An internet connection to access BV-BRC data and metadata
 - A local Docker installation
   - Containers for internal tools are pulled automatically and do not require configuration
@@ -217,6 +238,7 @@ The package requires:
 ### Output
 
 Feature matrices dimensions depend on species:
+
 - Rows: Number of isolates (typically <10,000)
 - Columns: Number of features (ballpark estimates)
   - Genes: 5,000-50,000
@@ -224,9 +246,10 @@ Feature matrices dimensions depend on species:
   - Domains: 500-10,000
   - Structural variants: 1,000-10,000
 
-## External dependencies
+### External dependencies
 
 The package uses established bioinformatics tools:
+
 - **Panaroo** (≥1.3.0): Pangenome analysis
 - **CD-HIT** (≥4.8.1): Protein clustering
 - **InterProScan** (≥5.0): Domain annotation
@@ -237,6 +260,7 @@ These are automatically managed through the Docker container.
 ## Performance
 
 Processing times vary by species and isolate count:
+
 - Data download: 0-1 hours
 - Pangenome construction: 0-6 hours
 - Protein clustering: 0-3 hours
@@ -246,7 +270,7 @@ Processing times vary by species and isolate count:
 - These numbers will all vary greatly based on isolate number, genome complexity, and available hardware.
 - Parallelization significantly reduces processing time when multiple cores are available.
 
-## Integration with amR suite
+### Integration with amR suite
 
 amRdata is designed to work seamlessly with other amR packages:
 
@@ -257,10 +281,10 @@ library(amRshiny)
 
 # 1. Curate data
 prepareGenomes("Shigella flexneri")
-runDataProcessing("amR_data/data/Shigella_flexneri/Sfl.duckdb")
+runDataProcessing("amRdata/data/Shigella_flexneri/Sfl.duckdb")
 
 # 2. Train models
-runMLmodels("amR_data/data/Shigella_flexneri/Sfl_parquet.duckdb")
+runMLmodels("amRdata/data/Shigella_flexneri/Sfl_parquet.duckdb")
 
 # 3. Visualize ### To add
 launch_dashboard()
@@ -269,8 +293,8 @@ launch_dashboard()
 ## Related packages
 
 - [amR](https://github.com/JRaviLab/amR): Suite metapackage
-- [amRml](https://github.com/JRaviLab/amR_ml): ML for AMR prediction
-- [amRshiny](https://github.com/JRaviLab/amR_shiny): Interactive dashboard
+- [amRml](https://github.com/JRaviLab/amRml): ML for AMR prediction
+- [amRshiny](https://github.com/JRaviLab/amRshiny): Interactive dashboard
 
 ## Citation
 If you use `amRdata` in your research, please cite:
@@ -288,7 +312,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 
 ## Reporting issues
 
-Report bugs and request features at: https://github.com/JRaviLab/amR_ml/issues
+Report bugs and request features at: https://github.com/JRaviLab/amRml/issues
 
 ## License
 

@@ -10,10 +10,11 @@ retrieveGenomes(
   method = c("ftp", "cli"),
   image = "danylmb/bvbrc:5.3",
   skip_existing = TRUE,
-  ftp_workers = 8L,
+  ftp_workers = 4L,
   cli_fasta_workers = 4L,
   cli_gff_workers = 4L,
   chunk_size = 50L,
+  evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
   verbose = TRUE
 )
 }
