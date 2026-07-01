@@ -238,7 +238,7 @@ generatePlots <- function(metadata_parquet,
   ) +
     ggplot2::geom_line() +
     ggplot2::geom_point() +
-    ggplot2::facet_wrap(~ drug_abbr, scales = "free_y") +
+    ggplot2::facet_wrap(~drug_abbr, scales = "free_y") +
     ggplot2::labs(
       title = "Resistant phenotypes across antibiotics and time",
       x = "Year", y = "Number of isolates",
@@ -265,7 +265,7 @@ generatePlots <- function(metadata_parquet,
     dplyr::distinct(drug_abbr) |>
     dplyr::arrange(drug_abbr) |>
     dplyr::pull(drug_abbr)
-  
+
   # 2) Base Okabe–Ito (CVD-friendly) and pastelizer
   okabe_ito_base <- c(
     "#000000", # black
