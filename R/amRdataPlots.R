@@ -213,11 +213,7 @@ generatePlots <- function(metadata_parquet,
   df_year <- metadata |>
     dplyr::filter(!is.na(genome.collection_year)) |>
     dplyr::select(
-<<<<<<< Updated upstream
       genome.genome_id,
-=======
-      genome_drug.genome_id,
->>>>>>> Stashed changes
       drug_abbr,
       genome_drug.resistant_phenotype,
       genome.isolation_country,
@@ -242,11 +238,7 @@ generatePlots <- function(metadata_parquet,
   ) +
     ggplot2::geom_line() +
     ggplot2::geom_point() +
-<<<<<<< Updated upstream
-    ggplot2::facet_wrap(~drug_abbr, scales = "free_y") +
-=======
     ggplot2::facet_wrap(~ drug_abbr, scales = "free_y") +
->>>>>>> Stashed changes
     ggplot2::labs(
       title = "Resistant phenotypes across antibiotics and time",
       x = "Year", y = "Number of isolates",
@@ -260,7 +252,7 @@ generatePlots <- function(metadata_parquet,
       axis.text.x = ggplot2::element_text(angle = 45, hjust = 1, colour = "black"),
       axis.text.y = ggplot2::element_text(colour = "black"),
       axis.title = ggplot2::element_text(colour = "black"),
-      panel.grid.minor = element_blank()
+      panel.grid.minor = ggplot2::element_blank()
     )
 
   p1
@@ -273,11 +265,7 @@ generatePlots <- function(metadata_parquet,
     dplyr::distinct(drug_abbr) |>
     dplyr::arrange(drug_abbr) |>
     dplyr::pull(drug_abbr)
-<<<<<<< Updated upstream
-
-=======
   
->>>>>>> Stashed changes
   # 2) Base Okabe–Ito (CVD-friendly) and pastelizer
   okabe_ito_base <- c(
     "#000000", # black
@@ -341,11 +329,7 @@ generatePlots <- function(metadata_parquet,
   df_country <- metadata |>
     dplyr::filter(genome.isolation_country != "") |>
     dplyr::select(
-<<<<<<< Updated upstream
       genome.genome_id,
-=======
-      genome_drug.genome_id,
->>>>>>> Stashed changes
       drug_abbr,
       genome_drug.resistant_phenotype,
       genome.isolation_country,
@@ -386,15 +370,10 @@ generatePlots <- function(metadata_parquet,
   # 4) Phenotype proportion per antibiotic (stacked, normalized)
   p4 <- ggplot2::ggplot(
     metadata,
-<<<<<<< Updated upstream
     ggplot2::aes(
       x = drug_abbr,
       fill = genome_drug.resistant_phenotype
     )
-=======
-    ggplot2::aes(x = drug_abbr,
-                 fill = genome_drug.resistant_phenotype)
->>>>>>> Stashed changes
   ) +
     ggplot2::geom_bar(position = "fill") +
     ggplot2::coord_flip() +
@@ -435,7 +414,7 @@ generatePlots <- function(metadata_parquet,
       fill = "Isolation source"
     ) +
     ggplot2::scale_fill_manual(
-      values = colorRampPalette(RColorBrewer::brewer.pal(8, "Pastel2"))(n_distinct(summary_isolation_source$genome.isolation_source))
+      values = colorRampPalette(RColorBrewer::brewer.pal(8, "Pastel2"))(dplyr::n_distinct(summary_isolation_source$genome.isolation_source))
     ) +
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(
@@ -456,7 +435,7 @@ generatePlots <- function(metadata_parquet,
       legend.position = "bottom",
       axis.text = ggplot2::element_text(colour = "black"),
       axis.title = ggplot2::element_text(colour = "black"),
-      panel.grid.minor = element_blank()
+      panel.grid.minor = ggplot2::element_blank()
     )
 
   plots <- list(p1 = p1, p2 = p2, p3 = p3, p4 = p4, p5 = p5, p6 = p6)
