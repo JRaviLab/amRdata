@@ -6,6 +6,7 @@
 \usage{
 prepareGenomes(
   user_bacs,
+  genome_id_file = NULL,
   base_dir = ".",
   method = c("ftp", "cli"),
   overwrite = FALSE,
@@ -16,6 +17,11 @@ prepareGenomes(
 \arguments{
 \item{user_bacs}{Character vector. Species and/or taxon IDs (e.g.
 \code{c("Shigella flexneri", "623")}).}
+
+\item{genome_id_file}{Character or NULL. Optional path to a file listing genome
+IDs (one per line), passed through to \code{retrieveMetadata()}. If provided, the
+metadata step is restricted to these genome IDs instead of resolving them from
+\code{user_bacs}. Default NULL.}
 
 \item{base_dir}{Character. Project root directory. Default \code{"."}.}
 

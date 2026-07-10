@@ -900,6 +900,11 @@
 #'   - metadata (join on genome IDs returned by BV-BRC)
 #'
 #' @param user_bacs Character vector. Mixed taxon IDs and/or species strings (used for naming).
+#' @param genome_id_file Character or NULL. Optional path to a file listing genome
+#'   IDs (one per line). If provided, genome IDs are read from this file instead of
+#'   being resolved from `user_bacs`; blank lines and surrounding whitespace are
+#'   ignored. `user_bacs` is still required for naming the per-selection DuckDB.
+#'   Default NULL.
 #' @param filter_type Character. "AMR" or "microTraits". Default "AMR".
 #' @param base_dir Character. Project root. Default "results/" in legacy scripts; now default ".".
 #' @param abx Character or vector. Antibiotic filter. "All" for all antibiotics, else names.
@@ -921,7 +926,6 @@ retrieveMetadata <- function(user_bacs,
                              verbose = TRUE) {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
-  if (isTRUE(verbose)) message("Resolving genome IDs for user inputs.")
   # -------------------------------
   # GENOME ID RESOLUTION (UPDATED)
   # -------------------------------
@@ -1760,6 +1764,10 @@ genomeList <- function(base_dir = ".",
 #'
 #' @param user_bacs Character vector. Species and/or taxon IDs (e.g.
 #'   `c("Shigella flexneri", "623")`).
+#' @param genome_id_file Character or NULL. Optional path to a file listing genome
+#'   IDs (one per line), passed through to `retrieveMetadata()`. If provided, the
+#'   metadata step is restricted to these genome IDs instead of resolving them from
+#'   `user_bacs`. Default NULL.
 #' @param base_dir Character. Project root directory. Default `"."`.
 #' @param method Character. Download method passed to `retrieveGenomes()`.
 #'   `"ftp"` (default) or `"cli"`.
@@ -1791,7 +1799,7 @@ prepareGenomes <- function(user_bacs,
   if (isTRUE(verbose)) message("Step 0: Building AMR metadata (retrieveMetadata)")
   invisible(retrieveMetadata(
     user_bacs = user_bacs,
-    genome_id_file = NULL,
+    genome_id_file = genome_id_file,
     filter_type = "AMR",
     base_dir = base_dir,
     abx = "All",
