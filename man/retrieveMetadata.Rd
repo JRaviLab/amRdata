@@ -6,6 +6,7 @@
 \usage{
 retrieveMetadata(
   user_bacs,
+  genome_id_file = NULL,
   filter_type = "AMR",
   base_dir = ".",
   abx = "All",
@@ -16,6 +17,12 @@ retrieveMetadata(
 }
 \arguments{
 \item{user_bacs}{Character vector. Mixed taxon IDs and/or species strings (used for naming).}
+
+\item{genome_id_file}{Character or NULL. Optional path to a file listing genome
+IDs (one per line). If provided, genome IDs are read from this file instead of
+being resolved from \code{user_bacs}; blank lines and surrounding whitespace are
+ignored. \code{user_bacs} is still required for naming the per-selection DuckDB.
+Default NULL.}
 
 \item{filter_type}{Character. "AMR" or "microTraits". Default "AMR".}
 
