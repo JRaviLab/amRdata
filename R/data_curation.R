@@ -250,7 +250,9 @@
 #' @return A tibble with minimal name repair.
 #' @keywords internal
 .parse_bvbrc_tsv <- function(x) {
-  if (!length(x)) return(tibble::tibble())
+  if (!length(x)) {
+    return(tibble::tibble())
+  }
 
   x <- as.character(x)
   x <- x[nzchar(trimws(x))]
@@ -258,7 +260,9 @@
   # Keep only lines that look like TSV records/headers
   x <- x[grepl("\t", x, fixed = TRUE)]
 
-  if (!length(x)) return(tibble::tibble())
+  if (!length(x)) {
+    return(tibble::tibble())
+  }
 
   txt <- paste(x, collapse = "\n")
   df <- utils::read.table(
@@ -274,7 +278,6 @@
 
   tibble::as_tibble(df, .name_repair = "minimal")
 }
-
 
 
 #' Apply QC filters to BV-BRC genome metadata
@@ -313,13 +316,17 @@
 
   safe_median <- function(x) {
     x <- x[is.finite(x)]
-    if (!length(x)) return(NA_real_)
+    if (!length(x)) {
+      return(NA_real_)
+    }
     stats::median(x)
   }
 
   safe_sd <- function(x) {
     x <- x[is.finite(x)]
-    if (length(x) < 2L) return(NA_real_)
+    if (length(x) < 2L) {
+      return(NA_real_)
+    }
     stats::sd(x)
   }
 
@@ -365,19 +372,27 @@
       flag_checkm = .data$flag_checkm_missing | .data$flag_checkm_contam | .data$flag_checkm_complete,
       flag_length = if (!is.null(length_deviations) && is.finite(sd_len) && sd_len > 0) {
         !is.na(z_len) & z_len > length_deviations
-      } else FALSE,
+      } else {
+        FALSE
+      },
       flag_gc = if (!is.null(gc_deviations) && is.finite(sd_gc) && sd_gc > 0) {
         !is.na(z_gc) & z_gc > gc_deviations
-      } else FALSE,
+      } else {
+        FALSE
+      },
       flag_cds = if (!is.null(cds_deviations) && is.finite(sd_cds) && sd_cds > 0) {
         !is.na(z_cds) & z_cds > cds_deviations
-      } else FALSE,
+      } else {
+        FALSE
+      },
       qc_keep = !(.data$flag_checkm | .data$flag_length | .data$flag_gc | .data$flag_cds)
     )
 
   make_rej <- function(flag, rule, observed, threshold, comparator) {
     idx <- which(flag %in% TRUE)
-    if (!length(idx)) return(NULL)
+    if (!length(idx)) {
+      return(NULL)
+    }
     tibble::tibble(
       genome_id = qc$`genome.genome_id`[idx],
       genome_name = qc$`genome.genome_name`[idx],
@@ -1353,7 +1368,8 @@ retrieveMetadata <- function(user_bacs,
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
 
   cat(sprintf("[%s] Writing metadata DuckDB: %s\n", Sys.time(), db_path),
-      file = file.path(logs_dir, "bvbrc.log"), append = TRUE)
+    file = file.path(logs_dir, "bvbrc.log"), append = TRUE
+  )
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
@@ -1384,7 +1400,7 @@ retrieveMetadata <- function(user_bacs,
   )
 
   if (isTRUE(debug)) {
-    DBI::dbExecute(con, 'CREATE OR REPLACE TABLE metadata AS SELECT * FROM metadata_full')
+    DBI::dbExecute(con, "CREATE OR REPLACE TABLE metadata AS SELECT * FROM metadata_full")
   } else {
     keep_cols <- setdiff(DBI::dbListFields(con, "metadata_full"), qc_drop_cols)
     select_sql <- paste(DBI::dbQuoteIdentifier(con, keep_cols), collapse = ", ")
@@ -1679,14 +1695,14 @@ retrieveMetadata <- function(user_bacs,
 ### Can remove once testing is completed
 #' Helps check if a complete set exists after DL (.fna + .PATRIC.faa + .PATRIC.gff)
 #' @keywords internal
-#.is_complete_set <- function(dir, genomeID, min_bytes = 100) {
+# .is_complete_set <- function(dir, genomeID, min_bytes = 100) {
 #  fna <- file.path(dir, paste0(genomeID, ".fna"))
 #  faa <- file.path(dir, paste0(genomeID, ".PATRIC.faa"))
 #  gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
 #  paths <- c(fna, faa, gff)
 #  all(file.exists(paths)) &&
 #    all(purrr::map_dbl(paths, function(x) file.info(x)$size) > min_bytes)
-#}
+# }
 
 #' Helps collate completed genomes into a set
 #' @keywords internal
