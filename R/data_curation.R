@@ -1691,18 +1691,17 @@ retrieveMetadata <- function(user_bacs,
   list(duckdbConnection = con, table_name = "filtered")
 }
 
-### This has been deprecated after being moved into the loop for .ftpes_download_one()
-### Can remove once testing is completed
+### This has been duplicated after being moved into the loop for .ftpes_download_one()
 #' Helps check if a complete set exists after DL (.fna + .PATRIC.faa + .PATRIC.gff)
 #' @keywords internal
-# .is_complete_set <- function(dir, genomeID, min_bytes = 100) {
-#  fna <- file.path(dir, paste0(genomeID, ".fna"))
-#  faa <- file.path(dir, paste0(genomeID, ".PATRIC.faa"))
-#  gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
-#  paths <- c(fna, faa, gff)
-#  all(file.exists(paths)) &&
-#    all(purrr::map_dbl(paths, function(x) file.info(x)$size) > min_bytes)
-# }
+ .is_complete_set <- function(dir, genomeID, min_bytes = 100) {
+  fna <- file.path(dir, paste0(genomeID, ".fna"))
+  faa <- file.path(dir, paste0(genomeID, ".PATRIC.faa"))
+  gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
+  paths <- c(fna, faa, gff)
+  all(file.exists(paths)) &&
+    all(purrr::map_dbl(paths, function(x) file.info(x)$size) > min_bytes)
+ }
 
 #' Helps collate completed genomes into a set
 #' @keywords internal
