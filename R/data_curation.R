@@ -36,17 +36,26 @@
 .ftpes_download_one <- function(genomeID, out_dir,
                                 connect_timeout = 10L,
                                 max_time = 30L,
-                                speed_time = 30L, # end if <speed_limit for >speed_time
-                                speed_limit = 2048L, # B/s
+                                speed_time = 30L,
+                                speed_limit = 2048L,
                                 min_bytes = 100L) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  # Adding this prior dot function helper into this loop for parallel workers
+  is_complete <- function(dir, genomeID, min_bytes = 100L) {
+    fna <- file.path(dir, paste0(genomeID, ".fna"))
+    faa <- file.path(dir, paste0(genomeID, ".PATRIC.faa"))
+    gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
+    paths <- c(fna, faa, gff)
+    all(file.exists(paths)) &&
+      all(vapply(paths, function(x) file.info(x)$size, numeric(1)) > min_bytes)
+  }
 
   exts <- c(".fna", ".PATRIC.faa", ".PATRIC.gff")
   for (ext in exts) {
     dest <- file.path(out_dir, paste0(genomeID, ext))
     dest_tmp <- paste0(dest, ".tmp")
 
-    # Skip if we already completed these
     if (file.exists(dest) && file.info(dest)$size > min_bytes) next
     if (file.exists(dest) && file.info(dest)$size == 0) try(unlink(dest), silent = TRUE)
     if (file.exists(dest_tmp)) try(unlink(dest_tmp), silent = TRUE)
@@ -59,7 +68,7 @@
       "--max-time", as.character(max_time),
       "--speed-time", as.character(speed_time),
       "--speed-limit", as.character(speed_limit),
-      "--ftp-ssl", # AUTH TLS on port 21 works in testing
+      "--ftp-ssl",
       "--ftp-pasv", "--disable-epsv", "--ipv4",
       "--user", "anonymous:",
       "-o", shQuote(dest_tmp), shQuote(url)
@@ -69,22 +78,19 @@
     status <- attr(res, "status")
     if (is.null(status)) status <- 0L
 
-    # Avoiding 0B files cluttering up results -- atomic rename on successful tmp DL
     ok <- (status == 0L && file.exists(dest_tmp) && file.info(dest_tmp)$size > min_bytes)
     if (ok) {
       if (!file.rename(dest_tmp, dest)) {
-        # If rename fails for some reason, copy + unlink
         file.copy(dest_tmp, dest, overwrite = TRUE)
         unlink(dest_tmp)
       }
     } else {
       try(unlink(dest_tmp), silent = TRUE)
-      return(FALSE) # Abort early, don't accept partial set
+      return(FALSE)
     }
   }
 
-  # Do we have all 3 present?
-  .is_complete_set(out_dir, genomeID, min_bytes = min_bytes)
+  is_complete(out_dir, genomeID, min_bytes = min_bytes)
 }
 
 #' Helps manage FTPS downloading from BV-BRC, tryng a quick download first, and
@@ -234,6 +240,230 @@
   return(df)
 }
 
+#' Parse BV-BRC TSV output
+#'
+#' Safely cleans blank links and weird formatting for a safe merge of the BV-BRC
+#' TSV data into a tibble.
+#'
+#' @param x Character vector of output lines from a BV-BRC CLI command.
+#'
+#' @return A tibble with minimal name repair.
+#' @keywords internal
+.parse_bvbrc_tsv <- function(x) {
+  if (!length(x)) return(tibble::tibble())
+
+  x <- as.character(x)
+  x <- x[nzchar(trimws(x))]
+
+  # Keep only lines that look like TSV records/headers
+  x <- x[grepl("\t", x, fixed = TRUE)]
+
+  if (!length(x)) return(tibble::tibble())
+
+  txt <- paste(x, collapse = "\n")
+  df <- utils::read.table(
+    text = txt,
+    sep = "\t",
+    header = TRUE,
+    fill = TRUE,
+    quote = "",
+    check.names = FALSE,
+    comment.char = "",
+    colClasses = "character"
+  )
+
+  tibble::as_tibble(df, .name_repair = "minimal")
+}
+
+
+
+#' Apply QC filters to BV-BRC genome metadata
+#'
+#' Quality control step with default values for contamination and completeness.
+#' Optional filters for other genome stats to find genomes that are X deviations
+#' away from the median values for those stats. This shouldn't be applied to
+#' jobs that use more than one diverse taxon at a time though! Requires a fairly
+#' normal distribution like you'd see for (most) single species
+#' Returns the cleaned table, retained genome IDs, and a rejection log.
+#'
+#' CheckM contamination and completeness are treated as the primary QC gate.
+#' Deviation-based filters are optional and are best suited to single-taxon runs.
+#'
+#' @param genome_tbl A tibble of genome metadata containing BV-BRC genome columns.
+#' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
+#' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
+#' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
+#' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
+#' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
+#'
+#' @return A list with components:
+#' \describe{
+#'   \item{qc_tbl}{QC-annotated genome table}
+#'   \item{keep_ids}{Character vector of retained genome IDs}
+#'   \item{rejections}{Tibble describing dropped genomes and reasons}
+#' }
+#' @keywords internal
+.apply_metadata_qc <- function(genome_tbl,
+                               checkm_contam = 10,
+                               checkm_complete = 90,
+                               gc_deviations = NULL,
+                               length_deviations = NULL,
+                               cds_deviations = NULL) {
+  numify <- function(x) suppressWarnings(as.numeric(x))
+
+  safe_median <- function(x) {
+    x <- x[is.finite(x)]
+    if (!length(x)) return(NA_real_)
+    stats::median(x)
+  }
+
+  safe_sd <- function(x) {
+    x <- x[is.finite(x)]
+    if (length(x) < 2L) return(NA_real_)
+    stats::sd(x)
+  }
+
+  qc <- tibble::as_tibble(genome_tbl) |>
+    dplyr::mutate(
+      genome_length_qc = numify(.data$`genome.genome_length`),
+      gc_content_qc = numify(.data$`genome.gc_content`),
+      cds_qc = numify(.data$`genome.cds`),
+      checkm_completeness_qc = numify(.data$`genome.checkm_completeness`),
+      checkm_contamination_qc = numify(.data$`genome.checkm_contamination`)
+    )
+
+  med_len <- safe_median(qc$genome_length_qc)
+  sd_len <- safe_sd(qc$genome_length_qc)
+  med_gc <- safe_median(qc$gc_content_qc)
+  sd_gc <- safe_sd(qc$gc_content_qc)
+  med_cds <- safe_median(qc$cds_qc)
+  sd_cds <- safe_sd(qc$cds_qc)
+
+  z_len <- if (!is.null(length_deviations) && is.finite(sd_len) && sd_len > 0) {
+    abs(qc$genome_length_qc - med_len) / sd_len
+  } else {
+    rep(NA_real_, nrow(qc))
+  }
+
+  z_gc <- if (!is.null(gc_deviations) && is.finite(sd_gc) && sd_gc > 0) {
+    abs(qc$gc_content_qc - med_gc) / sd_gc
+  } else {
+    rep(NA_real_, nrow(qc))
+  }
+
+  z_cds <- if (!is.null(cds_deviations) && is.finite(sd_cds) && sd_cds > 0) {
+    abs(qc$cds_qc - med_cds) / sd_cds
+  } else {
+    rep(NA_real_, nrow(qc))
+  }
+
+  qc <- qc |>
+    dplyr::mutate(
+      flag_checkm_missing = is.na(.data$checkm_completeness_qc) | is.na(.data$checkm_contamination_qc),
+      flag_checkm_contam = !is.na(.data$checkm_contamination_qc) & .data$checkm_contamination_qc > checkm_contam,
+      flag_checkm_complete = !is.na(.data$checkm_completeness_qc) & .data$checkm_completeness_qc < checkm_complete,
+      flag_checkm = .data$flag_checkm_missing | .data$flag_checkm_contam | .data$flag_checkm_complete,
+      flag_length = if (!is.null(length_deviations) && is.finite(sd_len) && sd_len > 0) {
+        !is.na(z_len) & z_len > length_deviations
+      } else FALSE,
+      flag_gc = if (!is.null(gc_deviations) && is.finite(sd_gc) && sd_gc > 0) {
+        !is.na(z_gc) & z_gc > gc_deviations
+      } else FALSE,
+      flag_cds = if (!is.null(cds_deviations) && is.finite(sd_cds) && sd_cds > 0) {
+        !is.na(z_cds) & z_cds > cds_deviations
+      } else FALSE,
+      qc_keep = !(.data$flag_checkm | .data$flag_length | .data$flag_gc | .data$flag_cds)
+    )
+
+  make_rej <- function(flag, rule, observed, threshold, comparator) {
+    idx <- which(flag %in% TRUE)
+    if (!length(idx)) return(NULL)
+    tibble::tibble(
+      genome_id = qc$`genome.genome_id`[idx],
+      genome_name = qc$`genome.genome_name`[idx],
+      species = qc$`genome.species`[idx],
+      failed_rule = rule,
+      observed = as.character(observed[idx]),
+      threshold = as.character(threshold),
+      comparator = comparator,
+      action_taken = "dropped"
+    )
+  }
+
+  rej_list <- list(
+    make_rej(
+      qc$flag_checkm_missing,
+      "checkm_missing",
+      ifelse(qc$flag_checkm_missing, "missing", NA_character_),
+      "present",
+      "is present"
+    ),
+    make_rej(
+      qc$flag_checkm_contam,
+      "checkm_contamination",
+      qc$checkm_contamination_qc,
+      checkm_contam,
+      ">"
+    ),
+    make_rej(
+      qc$flag_checkm_complete,
+      "checkm_completeness",
+      qc$checkm_completeness_qc,
+      checkm_complete,
+      "<"
+    )
+  )
+
+  if (!is.null(gc_deviations)) {
+    rej_list[[length(rej_list) + 1L]] <- make_rej(
+      qc$flag_gc,
+      "gc_deviation_sd",
+      z_gc,
+      gc_deviations,
+      ">"
+    )
+  }
+
+  if (!is.null(length_deviations)) {
+    rej_list[[length(rej_list) + 1L]] <- make_rej(
+      qc$flag_length,
+      "length_deviation_sd",
+      z_len,
+      length_deviations,
+      ">"
+    )
+  }
+
+  if (!is.null(cds_deviations)) {
+    rej_list[[length(rej_list) + 1L]] <- make_rej(
+      qc$flag_cds,
+      "cds_deviation_sd",
+      z_cds,
+      cds_deviations,
+      ">"
+    )
+  }
+
+  rejections <- dplyr::bind_rows(rej_list)
+  if (nrow(rejections) == 0L) {
+    rejections <- tibble::tibble(
+      genome_id = character(),
+      genome_name = character(),
+      species = character(),
+      failed_rule = character(),
+      observed = character(),
+      threshold = character(),
+      comparator = character(),
+      action_taken = character()
+    )
+  }
+
+  list(
+    qc_tbl = qc,
+    keep_ids = unique(qc$`genome.genome_id`[qc$qc_keep]),
+    rejections = rejections
+  )
+}
 
 # Make sure the BV-BRC metadata live where they're supposed to
 .ensure_bvbrc_cache <- function(base_dir = ".",
@@ -910,7 +1140,13 @@
 #' @param abx Character or vector. Antibiotic filter. "All" for all antibiotics, else names.
 #' @param overwrite Logical. If FALSE and DuckDB exists already, abort. Default FALSE.
 #' @param image Character. Docker image. Default "danylmb/bvbrc:5.3".
-#' @param verbose Logical. If TRUE, prints concise messages.
+#' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
+#' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
+#' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
+#' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
+#' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
+#' @param debug Logical. If TRUE, retain `metadata_full` and QC columns for inspection.
+#' @param verbose Logical. If TRUE, print progress messages.
 #'
 #' @return A list with:
 #'   - duckdbConnection: live DBI connection to the created DuckDB
@@ -923,27 +1159,27 @@ retrieveMetadata <- function(user_bacs,
                              abx = "All",
                              overwrite = FALSE,
                              image = "danylmb/bvbrc:5.3",
+                             checkm_contam = 10,
+                             checkm_complete = 90,
+                             gc_deviations = NULL,
+                             length_deviations = NULL,
+                             cds_deviations = NULL,
+                             debug = FALSE,
                              verbose = TRUE) {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
-  # -------------------------------
-  # GENOME ID RESOLUTION (UPDATED)
-  # -------------------------------
   if (!is.null(genome_id_file)) {
     if (!file.exists(genome_id_file)) {
       stop("Provided genome_id_file does not exist.")
     }
-
     if (isTRUE(verbose)) {
       message("Using genome IDs from file: ", genome_id_file)
     }
-
     genome_ids <- readLines(genome_id_file, warn = FALSE)
     genome_ids <- trimws(genome_ids)
     genome_ids <- genome_ids[genome_ids != ""]
   } else {
     if (isTRUE(verbose)) message("Resolving genome IDs for user inputs.")
-
     genome_ids <- .retrieveQueryIDs(
       base_dir = base_dir,
       user_bacs = user_bacs,
@@ -953,13 +1189,11 @@ retrieveMetadata <- function(user_bacs,
   }
 
   genome_ids <- unique(as.character(genome_ids))
-
-  if (length(genome_ids) == 0) {
+  if (length(genome_ids) == 0L) {
     message("No genome IDs available for the specified inputs.")
     return(NULL)
   }
 
-  # Desired fields from BV-BRC
   drug_fields <- paste0(
     "antibiotic,computational_method,",
     "evidence,genome_name,id,",
@@ -970,11 +1204,13 @@ retrieveMetadata <- function(user_bacs,
     "pmid,resistant_phenotype,",
     "source,taxon_id,testing_standard"
   )
+
   abx_filter <- if (identical(abx, "All")) {
     "--required antibiotic"
   } else {
     paste0("--in antibiotic,", paste(abx, collapse = ","))
   }
+
   amr_fields <- paste0(
     "assembly_accession,assembly_method,",
     "bioproject_accession,biosample_accession,",
@@ -991,6 +1227,7 @@ retrieveMetadata <- function(user_bacs,
     "refseq_accessions,",
     "refseq_project_id,sra_accession,species,taxon_id"
   )
+
   microtrait_fields <- paste0(
     amr_fields, ",genome_length,gram_stain,",
     "habitat,",
@@ -1009,121 +1246,202 @@ retrieveMetadata <- function(user_bacs,
     "trna"
   )
 
-  # Batching downloads and parallel implementation
+  qc_fields <- c(
+    "genome_length",
+    "gc_content",
+    "contigs",
+    "cds",
+    "rrna",
+    "trna",
+    "checkm_completeness",
+    "checkm_contamination"
+  )
+
+  amr_fields <- paste(
+    unique(c(strsplit(amr_fields, ",", fixed = TRUE)[[1]], qc_fields)),
+    collapse = ","
+  )
+  microtrait_fields <- paste(
+    unique(c(strsplit(microtrait_fields, ",", fixed = TRUE)[[1]], qc_fields)),
+    collapse = ","
+  )
+
   batch_size <- 500L
-  genome_ids <- as.character(genome_ids)
   genome_batches <- split(genome_ids, ceiling(seq_along(genome_ids) / batch_size))
 
   n_cores <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
   param <- BiocParallel::SnowParam(workers = n_cores)
 
-  # Pull AMR metadata
   if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
   batch_drug_data <- BiocParallel::bplapply(genome_batches, function(batch) {
-    .extractAMRtable(
-      base_dir          = base_dir,
-      batch_genome_IDs  = batch,
-      abx_filter        = abx_filter,
-      drug_fields       = drug_fields,
-      image             = image,
-      verbose           = FALSE
+    raw <- .extractAMRtable(
+      base_dir = base_dir,
+      batch_genome_IDs = batch,
+      abx_filter = abx_filter,
+      drug_fields = drug_fields,
+      image = image,
+      verbose = FALSE
     )
+    .parse_bvbrc_tsv(raw)
   }, BPPARAM = param)
-  combined_drug_data <- unlist(batch_drug_data, use.names = FALSE)
-  if (length(combined_drug_data) == 0) {
+
+  combined_drug_data_tbl <- dplyr::bind_rows(batch_drug_data) |>
+    dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
+
+  if (nrow(combined_drug_data_tbl) == 0L) {
     message("No drug data returned.")
     return(NULL)
   }
-  combined_drug_data_tbl <- tibble::as_tibble(utils::read.table(
-    text = combined_drug_data,
-    sep = "\t", header = TRUE, fill = TRUE,
-    quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
-  )) |>
-    dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = ""))) |>
-    dplyr::mutate(`genome_drug.genome_id` = as.character(`genome_drug.genome_id`))
 
-  # Pull genome metadata
   if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
   batch_genome_data <- BiocParallel::bplapply(genome_batches, function(batch) {
-    .extractGenomeData(
-      base_dir          = base_dir,
-      batch_genome_IDs  = batch,
-      filter_type       = filter_type,
-      amr_fields        = amr_fields,
+    raw <- .extractGenomeData(
+      base_dir = base_dir,
+      batch_genome_IDs = batch,
+      filter_type = filter_type,
+      amr_fields = amr_fields,
       microtrait_fields = microtrait_fields,
-      image             = image,
-      verbose           = FALSE
+      image = image,
+      verbose = FALSE
     )
+    .parse_bvbrc_tsv(raw)
   }, BPPARAM = param)
-  combined_genome_data <- unlist(batch_genome_data, use.names = FALSE)
-  if (length(combined_genome_data) == 0) {
+
+  combined_genome_data_tbl <- dplyr::bind_rows(batch_genome_data) |>
+    dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
+
+  if (nrow(combined_genome_data_tbl) == 0L) {
     message("No genome data returned.")
     return(NULL)
   }
-  combined_genome_data_tbl <- tibble::as_tibble(utils::read.table(
-    text = combined_genome_data,
-    sep = "\t", header = TRUE, fill = TRUE,
-    quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
-  )) |>
-    dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = ""))) |>
-    dplyr::mutate(`genome.genome_id` = as.character(`genome.genome_id`))
 
-  # Write & join
+  if ("genome.genome_id" %in% names(combined_genome_data_tbl)) {
+    combined_genome_data_tbl <- combined_genome_data_tbl |>
+      dplyr::filter(grepl("^[0-9]+\\.[0-9]+$", .data$`genome.genome_id`)) |>
+      dplyr::distinct(`genome.genome_id`, .keep_all = TRUE)
+  }
+
+  if ("genome_drug.genome_id" %in% names(combined_drug_data_tbl)) {
+    combined_drug_data_tbl <- combined_drug_data_tbl |>
+      dplyr::filter(grepl("^[0-9]+\\.[0-9]+$", .data$`genome_drug.genome_id`))
+  }
+
+  qc_out <- .apply_metadata_qc(
+    genome_tbl = combined_genome_data_tbl,
+    checkm_contam = checkm_contam,
+    checkm_complete = checkm_complete,
+    gc_deviations = gc_deviations,
+    length_deviations = length_deviations,
+    cds_deviations = cds_deviations
+  )
+
+  keep_ids <- qc_out$keep_ids
+  if (!length(keep_ids)) {
+    message("No genomes passed QC.")
+    return(NULL)
+  }
+
+  combined_genome_data_tbl <- combined_genome_data_tbl |>
+    dplyr::filter(`genome.genome_id` %in% keep_ids)
+
+  combined_drug_data_tbl <- combined_drug_data_tbl |>
+    dplyr::filter(`genome_drug.genome_id` %in% keep_ids)
+
   paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
   db_path <- paths$db_path
   logs_dir <- file.path(base_dir, "data", "logs")
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
+
   cat(sprintf("[%s] Writing metadata DuckDB: %s\n", Sys.time(), db_path),
-    file = file.path(logs_dir, "bvbrc.log"), append = TRUE
-  )
+      file = file.path(logs_dir, "bvbrc.log"), append = TRUE)
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
 
   DBI::dbWriteTable(con, "amr_phenotype", combined_drug_data_tbl, overwrite = TRUE)
   DBI::dbWriteTable(con, "genome_data", combined_genome_data_tbl, overwrite = TRUE)
+  DBI::dbWriteTable(con, "metadata_qc", qc_out$qc_tbl, overwrite = TRUE)
+  DBI::dbWriteTable(con, "metadata_qc_rejections", qc_out$rejections, overwrite = TRUE)
 
   if (isTRUE(verbose)) message("Joining AMR phenotype and genome metadata.")
   DBI::dbExecute(con, '
-    CREATE OR REPLACE TABLE metadata AS
+    CREATE OR REPLACE TABLE metadata_full AS
     SELECT *
     FROM amr_phenotype
     INNER JOIN genome_data
       ON amr_phenotype."genome_drug.genome_id" = genome_data."genome.genome_id"
   ')
 
-  # Debug summary after writes
+  qc_drop_cols <- c(
+    "genome.genome_length",
+    "genome.gc_content",
+    "genome.contigs",
+    "genome.cds",
+    "genome.rrna",
+    "genome.trna",
+    "genome.checkm_completeness",
+    "genome.checkm_contamination"
+  )
+
+  if (isTRUE(debug)) {
+    DBI::dbExecute(con, 'CREATE OR REPLACE TABLE metadata AS SELECT * FROM metadata_full')
+  } else {
+    keep_cols <- setdiff(DBI::dbListFields(con, "metadata_full"), qc_drop_cols)
+    select_sql <- paste(DBI::dbQuoteIdentifier(con, keep_cols), collapse = ", ")
+    DBI::dbExecute(
+      con,
+      paste0("CREATE OR REPLACE TABLE metadata AS SELECT ", select_sql, " FROM metadata_full")
+    )
+    DBI::dbExecute(con, "DROP TABLE metadata_full")
+  }
+
   n_targets <- length(genome_ids)
-  n_amr_ids <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype')$n
-  n_gmeta_ids <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id")      AS n FROM genome_data')$n
+  n_amr_ids <- DBI::dbGetQuery(con, '
+    SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype
+  ')$n
+  n_gmeta_ids <- DBI::dbGetQuery(con, '
+    SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM genome_data
+  ')$n
+
   if (isTRUE(verbose)) {
     message(
       "Initial summary: targets=", n_targets,
       " | AMR genomes=", n_amr_ids,
       " | genome_data genomes=", n_gmeta_ids
     )
+    message(
+      "QC summary: kept=", length(keep_ids),
+      " | dropped=", nrow(qc_out$rejections)
+    )
   }
 
-  # Tagged view
   .create_amr_tagged_view(con)
 
-  # Final debug summary
   n_bac <- if ("bac_data" %in% DBI::dbListTables(con)) {
-    DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM bac_data')$n
+    DBI::dbGetQuery(con, '
+      SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM bac_data
+    ')$n
   } else {
     NA_integer_
   }
-  n_amr_ids <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype')$n
-  n_gmeta_ids <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id")      AS n FROM genome_data')$n
+
+  n_amr_ids <- DBI::dbGetQuery(con, '
+    SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype
+  ')$n
+  n_gmeta_ids <- DBI::dbGetQuery(con, '
+    SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM genome_data
+  ')$n
 
   ids_zero_amr <- DBI::dbGetQuery(
     con,
-    'WITH sel AS (SELECT DISTINCT "genome.genome_id" AS gid FROM genome_data),
-          got AS (SELECT DISTINCT "genome_drug.genome_id" AS gid FROM amr_phenotype)
-     SELECT sel.gid
-     FROM sel LEFT JOIN got USING (gid)
-     WHERE got.gid IS NULL
-     ORDER BY sel.gid'
+    '
+    WITH sel AS (SELECT DISTINCT "genome.genome_id" AS gid FROM genome_data),
+         got AS (SELECT DISTINCT "genome_drug.genome_id" AS gid FROM amr_phenotype)
+    SELECT sel.gid
+    FROM sel LEFT JOIN got USING (gid)
+    WHERE got.gid IS NULL
+    ORDER BY sel.gid
+    '
   )$gid
 
   if (isTRUE(verbose)) {
@@ -1357,16 +1675,18 @@ retrieveMetadata <- function(user_bacs,
   list(duckdbConnection = con, table_name = "filtered")
 }
 
+### This has been deprecated after being moved into the loop for .ftpes_download_one()
+### Can remove once testing is completed
 #' Helps check if a complete set exists after DL (.fna + .PATRIC.faa + .PATRIC.gff)
 #' @keywords internal
-.is_complete_set <- function(dir, genomeID, min_bytes = 100) {
-  fna <- file.path(dir, paste0(genomeID, ".fna"))
-  faa <- file.path(dir, paste0(genomeID, ".PATRIC.faa"))
-  gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
-  paths <- c(fna, faa, gff)
-  all(file.exists(paths)) &&
-    all(purrr::map_dbl(paths, function(x) file.info(x)$size) > min_bytes)
-}
+#.is_complete_set <- function(dir, genomeID, min_bytes = 100) {
+#  fna <- file.path(dir, paste0(genomeID, ".fna"))
+#  faa <- file.path(dir, paste0(genomeID, ".PATRIC.faa"))
+#  gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
+#  paths <- c(fna, faa, gff)
+#  all(file.exists(paths)) &&
+#    all(purrr::map_dbl(paths, function(x) file.info(x)$size) > min_bytes)
+#}
 
 #' Helps collate completed genomes into a set
 #' @keywords internal
@@ -1619,7 +1939,7 @@ retrieveGenomes <- function(base_dir = ".",
   if (identical(method, "ftp")) {
     if (isTRUE(verbose)) message("Trying FTPS download. Workers=", ftp_workers)
     ftp_param <- BiocParallel::SnowParam(workers = max(1L, ftp_workers))
-    ft_ok <- BiocParallel::bplapply(ids, function(gid) .ftp_download_one(gid, genome_path),
+    ft_ok <- BiocParallel::bplapply(ids, function(gid) .ftpes_download_one(gid, genome_path),
       BPPARAM = ftp_param
     )
     ok_ids <- ids[unlist(ft_ok)]
@@ -1763,7 +2083,7 @@ genomeList <- function(base_dir = ".",
 #'   <base_dir>/data/<bug_dir>/<abbrev>.duckdb
 #'
 #' @param user_bacs Character vector. Species and/or taxon IDs (e.g.
-#'   `c("Shigella flexneri", "623")`).
+#'   `c("Shigella sonnei", "624")`).
 #' @param genome_id_file Character or NULL. Optional path to a file listing genome
 #'   IDs (one per line), passed through to `retrieveMetadata()`. If provided, the
 #'   metadata step is restricted to these genome IDs instead of resolving them from
@@ -1776,6 +2096,12 @@ genomeList <- function(base_dir = ".",
 #' @param evidence_mode Character. Sets what types of AMR evidence is acceptable.
 #'    Default `lab_only`. `any` will not require AMR data for downloads. This will
 #'    return very large download lists for many species!
+#' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
+#' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
+#' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
+#' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
+#' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
+#' @param debug Logical. If TRUE, keep QC columns in metadata tables.
 #' @param verbose Logical. Print progress messages. Default TRUE.
 #'
 #' @return A list (the output of `genomeList()`), containing:
@@ -1789,6 +2115,12 @@ prepareGenomes <- function(user_bacs,
                            method = c("ftp", "cli"),
                            overwrite = FALSE,
                            evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
+                           checkm_contam = 10,
+                           checkm_complete = 90,
+                           gc_deviations = NULL,
+                           length_deviations = NULL,
+                           cds_deviations = NULL,
+                           debug = FALSE,
                            verbose = TRUE) {
   method <- match.arg(method)
   evidence_mode <- match.arg(evidence_mode)
@@ -1804,6 +2136,12 @@ prepareGenomes <- function(user_bacs,
     base_dir = base_dir,
     abx = "All",
     overwrite = overwrite,
+    checkm_contam = checkm_contam,
+    checkm_complete = checkm_complete,
+    gc_deviations = gc_deviations,
+    length_deviations = length_deviations,
+    cds_deviations = cds_deviations,
+    debug = debug,
     verbose = verbose
   ))
 
@@ -1820,13 +2158,13 @@ prepareGenomes <- function(user_bacs,
     return(NULL)
   }
 
-  # A little summary of what's left after filtering (or not)
   paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path, read_only = TRUE)
   n_filtered <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM filtered')$n
   n_meta <- if ("genome_data" %in% DBI::dbListTables(con)) DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM genome_data')$n else NA
   n_amr <- if ("amr_phenotype" %in% DBI::dbListTables(con)) DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype')$n else NA
   DBI::dbDisconnect(con, shutdown = TRUE)
+
   if (isTRUE(verbose)) {
     message(sprintf(
       "Evidence filter summary: filtered=%d | genomes with AMR=%s | genomes with genome_data=%s",
@@ -1836,12 +2174,12 @@ prepareGenomes <- function(user_bacs,
 
   if (isTRUE(verbose)) message("Step 2: Downloading genomes from BV-BRC (", method, ")")
   ids <- retrieveGenomes(
-    base_dir      = base_dir,
-    user_bacs     = user_bacs,
-    method        = method,
+    base_dir = base_dir,
+    user_bacs = user_bacs,
+    method = method,
     skip_existing = !overwrite,
     evidence_mode = evidence_mode,
-    verbose       = verbose
+    verbose = verbose
   )
   if (length(ids) == 0L) {
     message("No genomes downloaded.")
@@ -1850,9 +2188,9 @@ prepareGenomes <- function(user_bacs,
 
   if (isTRUE(verbose)) message("Step 3: Formatting data into a database for further processing")
   out <- genomeList(
-    base_dir  = base_dir,
+    base_dir = base_dir,
     user_bacs = user_bacs,
-    verbose   = verbose
+    verbose = verbose
   )
 
   if (isTRUE(verbose)) {
