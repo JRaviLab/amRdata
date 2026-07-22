@@ -1281,24 +1281,33 @@ retrieveMetadata <- function(user_bacs,
     collapse = ","
   )
 
+  # In retrieveMetadata() replace the BiocParallel block with this:
+
   batch_size <- 500L
   genome_batches <- split(genome_ids, ceiling(seq_along(genome_ids) / batch_size))
 
   n_cores <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
-  param <- BiocParallel::SnowParam(workers = n_cores)
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  future::plan(future::multisession, workers = n_cores)
 
   if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
-  batch_drug_data <- BiocParallel::bplapply(genome_batches, function(batch) {
-    raw <- .extractAMRtable(
-      base_dir = base_dir,
-      batch_genome_IDs = batch,
-      abx_filter = abx_filter,
-      drug_fields = drug_fields,
-      image = image,
-      verbose = FALSE
-    )
-    .parse_bvbrc_tsv(raw)
-  }, BPPARAM = param)
+  batch_drug_data <- future.apply::future_lapply(
+    genome_batches,
+    function(batch) {
+      raw <- .extractAMRtable(
+        base_dir = base_dir,
+        batch_genome_IDs = batch,
+        abx_filter = abx_filter,
+        drug_fields = drug_fields,
+        image = image,
+        verbose = FALSE
+      )
+      .parse_bvbrc_tsv(raw)
+    },
+    future.seed = TRUE
+  )
 
   combined_drug_data_tbl <- dplyr::bind_rows(batch_drug_data) |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
@@ -1309,18 +1318,22 @@ retrieveMetadata <- function(user_bacs,
   }
 
   if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
-  batch_genome_data <- BiocParallel::bplapply(genome_batches, function(batch) {
-    raw <- .extractGenomeData(
-      base_dir = base_dir,
-      batch_genome_IDs = batch,
-      filter_type = filter_type,
-      amr_fields = amr_fields,
-      microtrait_fields = microtrait_fields,
-      image = image,
-      verbose = FALSE
-    )
-    .parse_bvbrc_tsv(raw)
-  }, BPPARAM = param)
+  batch_genome_data <- future.apply::future_lapply(
+    genome_batches,
+    function(batch) {
+      raw <- .extractGenomeData(
+        base_dir = base_dir,
+        batch_genome_IDs = batch,
+        filter_type = filter_type,
+        amr_fields = amr_fields,
+        microtrait_fields = microtrait_fields,
+        image = image,
+        verbose = FALSE
+      )
+      .parse_bvbrc_tsv(raw)
+    },
+    future.seed = TRUE
+  )
 
   combined_genome_data_tbl <- dplyr::bind_rows(batch_genome_data) |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
@@ -1951,12 +1964,21 @@ retrieveGenomes <- function(base_dir = ".",
     return(all_complete)
   }
 
+  # In retrieveGenomes() replace the BiocParallel block with this:
+
   if (identical(method, "ftp")) {
     if (isTRUE(verbose)) message("Trying FTPS download. Workers=", ftp_workers)
-    ftp_param <- BiocParallel::SnowParam(workers = max(1L, ftp_workers))
-    ft_ok <- BiocParallel::bplapply(ids, function(gid) .ftpes_download_one(gid, genome_path),
-      BPPARAM = ftp_param
+
+    old_plan <- future::plan()
+    on.exit(future::plan(old_plan), add = TRUE)
+    future::plan(future::multisession, workers = max(1L, ftp_workers))
+
+    ft_ok <- future.apply::future_lapply(
+      ids,
+      function(gid) .ftpes_download_one(gid, genome_path),
+      future.seed = TRUE
     )
+
     ok_ids <- ids[unlist(ft_ok)]
     if (isTRUE(verbose)) message("Complete file sets for ", length(ok_ids), " genomes (FTP).")
     return(c(ok_ids, .list_complete(genome_path, setdiff(ids, ok_ids))))
@@ -1965,33 +1987,35 @@ retrieveGenomes <- function(base_dir = ".",
   # CLI for FASTA, FAA, and GTO, then GFF from GTO
   chunks <- split(ids, ceiling(seq_along(ids) / chunk_size))
 
-  # Parallel chunk containers
   if (isTRUE(verbose)) {
-    message(
-      "CLI being run in parallel for ", length(chunks),
-      " data chunks."
-    )
+    message("CLI being run in parallel for ", length(chunks), " data chunks.")
   }
-  fasta_param <- BiocParallel::SnowParam(workers = max(1L, cli_fasta_workers))
-  fa_res <- BiocParallel::bpmapply(
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  future::plan(future::multisession, workers = max(1L, cli_fasta_workers))
+
+  fa_res <- future.apply::future_mapply(
     FUN = function(vec, tag) .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag),
-    vec = chunks, tag = paste0("fa", seq_along(chunks)),
-    SIMPLIFY = TRUE, BPPARAM = fasta_param
+    vec = chunks,
+    tag = paste0("fa", seq_along(chunks)),
+    SIMPLIFY = TRUE,
+    future.seed = TRUE
   )
   if (!all(fa_res) && isTRUE(verbose)) warning(sum(!fa_res), " data chunks failed.")
 
-  # GFF extraction in parallel containers
   if (isTRUE(verbose)) {
-    message(
-      "GFF extraction being run in parallel for ",
-      length(chunks), " data chunks."
-    )
+    message("GFF extraction being run in parallel for ", length(chunks), " data chunks.")
   }
-  gff_param <- BiocParallel::SnowParam(workers = max(1L, cli_gff_workers))
-  g_res <- BiocParallel::bpmapply(
+
+  future::plan(future::multisession, workers = max(1L, cli_gff_workers))
+
+  g_res <- future.apply::future_mapply(
     FUN = function(vec, tag) .cli_export_gff_chunk(image, genome_path, vec, tag),
-    vec = chunks, tag = paste0("gff", seq_along(chunks)),
-    SIMPLIFY = TRUE, BPPARAM = gff_param
+    vec = chunks,
+    tag = paste0("gff", seq_along(chunks)),
+    SIMPLIFY = TRUE,
+    future.seed = TRUE
   )
   if (!all(g_res) && isTRUE(verbose)) warning(sum(!g_res), " GFF chunks had failures.")
 

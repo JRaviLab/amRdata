@@ -27,6 +27,30 @@ NULL
   sub(pattern, container_root, x_unix)
 }
 
+#' Set a future plan for parallel processing
+#'
+#' Sets a `future` plan for the duration of a block and restores the
+#' previous plan on exit.
+#'
+#' @param workers Integer. Number of workers to use; if <= 1, uses sequential mode.
+#' @param plan Character. Either "multisession" or "sequential".
+#'
+#' @return Invisibly returns TRUE.
+#' @keywords internal
+.with_future_plan <- function(workers, plan = c("multisession", "sequential")) {
+  plan <- match.arg(plan)
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+
+  if (is.null(workers) || workers <= 1L || identical(plan, "sequential")) {
+    future::plan(future::sequential)
+  } else {
+    future::plan(future::multisession, workers = workers)
+  }
+
+  invisible(TRUE)
+}
+
 # Launch Panaroo to build a pangenome (per batch)
 #' processPanaroo()
 #'
@@ -203,21 +227,20 @@ NULL
   # Ensure sum of per-job CPUs does not exceed `threads`
   panaroo_threads_per_job <- max(1L, floor(threads / n_jobs))
 
-  param <- BiocParallel::SnowParam(workers = max(1L, n_jobs))
-  batch_panaroo_run <- BiocParallel::bplapply(
+  .with_future_plan(workers = n_jobs)
+
+  batch_panaroo_run <- furrr::future_map(
     panaroo_batches,
-    function(batch) {
-      .processPanaroo(
-        batch_input             = batch,
-        output_path             = output_path,
-        core_threshold          = core_threshold,
-        len_dif_percent         = len_dif_percent,
-        cluster_threshold       = cluster_threshold,
-        family_seq_identity     = family_seq_identity,
-        panaroo_threads_per_job = panaroo_threads_per_job
-      )
-    },
-    BPPARAM = param
+    ~ .processPanaroo(
+      batch_input             = .x,
+      output_path             = output_path,
+      core_threshold          = core_threshold,
+      len_dif_percent         = len_dif_percent,
+      cluster_threshold       = cluster_threshold,
+      family_seq_identity     = family_seq_identity,
+      panaroo_threads_per_job = panaroo_threads_per_job
+    ),
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
   invisible(batch_panaroo_run)
@@ -1205,7 +1228,6 @@ domainFromIPR <- function(duckdb_path,
   chunks <- list(sequences_df) # Force 1 chunk for RAM limits
 
   # Forcing 1 container operation for RAM limits
-  workers <- 1
   cpu_per_container <- threads
 
   message(sprintf(
@@ -1213,27 +1235,33 @@ domainFromIPR <- function(duckdb_path,
     cpu_per_container
   ))
 
-  results <- BiocParallel::bplapply(seq_along(chunks), function(i) {
-    res <- try(
-      .process_chunk(
-        chunk         = chunks[[i]],
-        path          = path,
-        ipr_data_path = ipr_data_path,
-        out_file_base = out_file_base,
-        appl          = appl,
-        chunk_id      = i,
-        threads       = cpu_per_container,
-        file_format   = file_format,
-        docker_image  = ipr_image
-      ),
-      silent = TRUE
-    )
-    if (inherits(res, "try-error")) {
-      message(sprintf("Chunk %d failed: %s", i, as.character(res)))
-      return(NULL)
-    }
-    res
-  }, BPPARAM = BiocParallel::SerialParam())
+  .with_future_plan(workers = 1)
+
+  results <- future.apply::future_lapply(
+    seq_along(chunks),
+    function(i) {
+      res <- try(
+        .process_chunk(
+          chunk         = chunks[[i]],
+          path          = path,
+          ipr_data_path = ipr_data_path,
+          out_file_base = out_file_base,
+          appl          = appl,
+          chunk_id      = i,
+          threads       = cpu_per_container,
+          file_format   = file_format,
+          docker_image  = ipr_image
+        ),
+        silent = TRUE
+      )
+      if (inherits(res, "try-error")) {
+        message(sprintf("Chunk %d failed: %s", i, as.character(res)))
+        return(NULL)
+      }
+      res
+    },
+    future.seed = TRUE
+  )
 
   # Combine results
   tsvs <- Filter(function(x) !is.null(x) && file.exists(x), results)
