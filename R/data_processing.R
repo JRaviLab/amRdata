@@ -1799,7 +1799,7 @@ runDataProcessing <- function(duckdb_path,
   )
 
   # 4) Clean metadata and export Parquet + Parquet-backed DuckDB
-  if (missing(ref_file_path) || is.null(ref_file_path)) {
+  if (is.null(ref_file_path) || !nzchar(ref_file_path)) {
     stop("`ref_file_path` (directory with reference TSVs) must be provided to cleanData().")
   }
   if (isTRUE(verbose)) message("Cleaning metadata and exporting Parquet-backed views.")
