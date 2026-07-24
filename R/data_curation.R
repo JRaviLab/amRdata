@@ -109,7 +109,7 @@
   if (!is.null(log_file)) {
     dir.create(dirname(log_file), recursive = TRUE, showWarnings = FALSE)
     cat(sprintf("[%s] FTPS run start: %d genomes\n", Sys.time(), length(genome_ids)),
-        file = log_file, append = TRUE
+      file = log_file, append = TRUE
     )
   }
 
@@ -138,14 +138,14 @@
   message(sprintf("Pass 1: ok=%d, fail=%d", length(ok_ids_1), length(fail_ids)))
   if (!is.null(log_file)) {
     cat(sprintf("[%s] Pass1 ok=%d fail=%d\n", Sys.time(), length(ok_ids_1), length(fail_ids)),
-        file = log_file, append = TRUE
+      file = log_file, append = TRUE
     )
   }
 
   if (!length(fail_ids)) {
     if (!is.null(log_file)) {
       cat(sprintf("[%s] FTPS run end: all OK\n", Sys.time()),
-          file = log_file, append = TRUE
+        file = log_file, append = TRUE
       )
     }
     return(ok_ids_1)
@@ -173,11 +173,11 @@
   message(sprintf("Pass 2: ok=%d, still_fail=%d", length(ok_ids_2), length(still_fail)))
   if (!is.null(log_file)) {
     cat(sprintf("[%s] Pass2 ok=%d still_fail=%d\n", Sys.time(), length(ok_ids_2), length(still_fail)),
-        file = log_file, append = TRUE
+      file = log_file, append = TRUE
     )
     if (length(still_fail)) {
       cat("Fail IDs (excluded): ", paste(head(still_fail, 50), collapse = ", "), "\n",
-          file = log_file, append = TRUE
+        file = log_file, append = TRUE
       )
     }
   }
@@ -490,7 +490,9 @@
 # Get rid of genomes that are missing files
 .purge_genome_files <- function(genome_path, genome_ids, log_file = NULL) {
   genome_ids <- unique(as.character(genome_ids))
-  if (!length(genome_ids)) return(invisible(0L))
+  if (!length(genome_ids)) {
+    return(invisible(0L))
+  }
 
   exts <- c(
     ".fna",
@@ -515,8 +517,9 @@
 
   if (!is.null(log_file) && length(genome_ids)) {
     cat(
-      sprintf("[%s] Purged incomplete genomes: %s\n",
-              Sys.time(), paste(head(genome_ids, 50), collapse = ", ")
+      sprintf(
+        "[%s] Purged incomplete genomes: %s\n",
+        Sys.time(), paste(head(genome_ids, 50), collapse = ", ")
       ),
       file = log_file, append = TRUE
     )
