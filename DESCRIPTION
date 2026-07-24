@@ -9,7 +9,9 @@ Authors@R: c(
     person("Charmie", "Vang", , "charmie.vang@cuanschutz.edu", role = "ctb"),
     person("Emily", "Boyer", , "emily.boyer@cuanschutz.edu", role = "ctb"),
     person("Raymond", "Lesiyon", , "raymond.lesiyon@cuanschutz.edu", role = "ctb"),
-    person("David", "Mayer", , "david.mayer@cuanschutz.edu", role = "ctb")
+    person("David", "Mayer", , "david.mayer@cuanschutz.edu", role = "ctb"),
+    person("Alexander", "McKim", , "alexander.mckim@cuanschutz.edu", role = "ctb",
+           comment = c(ORCID = "0000-0002-7802-7591"))
   )
 Maintainer: Janani Ravi <janani.ravi@cuanschutz.edu>
 Description: amRdata starts with a user's species query and downloads all
@@ -24,8 +26,8 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Depends:
     R (>= 4.5.0)
-URL: https://github.com/JRaviLab/amR_data
-BugReports: https://github.com/JRaviLab/amR_data/issues
+URL: https://github.com/JRaviLab/amRdata
+BugReports: https://github.com/JRaviLab/amRdata/issues
 Imports:
     arrow,
     BiocParallel,
