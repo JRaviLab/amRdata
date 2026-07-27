@@ -33,16 +33,16 @@
 #' Helps appropriately interface with BV-BRC FTPS server, and avoids getting stuck
 #' when malformed files can hang an FTPS connection by introducing safeguards
 #' @keywords internal
-.ftpes_download_one <- function(genomeID, out_dir,
-                                connect_timeout = 10L,
-                                max_time = 30L,
-                                speed_time = 30L,
-                                speed_limit = 2048L,
-                                min_bytes = 100L) {
+.ftps_download_one <- function(genomeID, out_dir,
+                               connect_timeout = 10L,
+                               max_time = 30L,
+                               speed_time = 30L,
+                               speed_limit = 2048L,
+                               min_bytes = 100L) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   # Adding this prior dot function helper into this loop for parallel workers
-  is_complete <- function(dir, genomeID, min_bytes = 100L) {
+  .is_complete <- function(dir, genomeID, min_bytes = 100L) {
     fna <- file.path(dir, paste0(genomeID, ".fna"))
     faa <- file.path(dir, paste0(genomeID, ".PATRIC.faa"))
     gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
@@ -90,17 +90,17 @@
     }
   }
 
-  is_complete(out_dir, genomeID, min_bytes = min_bytes)
+  .is_complete(out_dir, genomeID, min_bytes = min_bytes)
 }
 
-#' Helps manage FTPS downloading from BV-BRC, tryng a quick download first, and
+#' Helps manage FTPS downloading from BV-BRC, trying a quick download first, and
 #' if that fails, trying a longer timeout 2nd pass at the end in case it was a
-#' hiccup. If 2nd pass fails, log and give up on that file.
+#' hiccup. If the 2nd pass fails, log and give up on that file.
 #' @keywords internal
-.ftpes_download_two_pass <- function(genome_ids, out_dir,
-                                     workers_first = 8L,
-                                     workers_second = 8L,
-                                     log_file = NULL) {
+.ftps_download_two_pass <- function(genome_ids, out_dir,
+                                    workers_first = 8L,
+                                    workers_second = 8L,
+                                    log_file = NULL) {
   genome_ids <- unique(as.character(genome_ids))
   if (!length(genome_ids)) {
     return(character(0))
@@ -121,7 +121,7 @@
   res1 <- future.apply::future_lapply(
     genome_ids,
     function(gid) {
-      ok <- .ftpes_download_one(
+      ok <- .ftps_download_one(
         gid, out_dir,
         connect_timeout = 10L, max_time = 45L,
         speed_time = 30L, speed_limit = 2048L
@@ -156,7 +156,7 @@
   res2 <- future.apply::future_lapply(
     fail_ids,
     function(gid) {
-      ok <- .ftpes_download_one(
+      ok <- .ftps_download_one(
         gid, out_dir,
         connect_timeout = 10L, max_time = 120L,
         speed_time = 30L, speed_limit = 2048L
@@ -2014,7 +2014,7 @@ retrieveGenomes <- function(base_dir = ".",
   if (identical(method, "ftp")) {
     if (isTRUE(verbose)) message("Trying FTPS download. Workers=", ftp_workers)
 
-    ok_ids <- .ftpes_download_two_pass(
+    ok_ids <- .ftps_download_two_pass(
       genome_ids = ids,
       out_dir = genome_path,
       workers_first = ftp_workers,
