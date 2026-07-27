@@ -34,18 +34,18 @@ Imports:
     data.table,
     dplyr,
     duckdb,
+    ggplot2,
     glue,
+    knitr,
     purrr,
     readr,
     reshape2,
     stringr,
     tibble,
-    tidyr,
-    treemapify
+    tidyr
 biocViews: GenomeAssembly, Annotation, Sequencing
 VignetteBuilder: knitr
 Suggests:
-    knitr,
     rmarkdown,
     testthat (>= 3.0.0)
 Config/roxygen2/version: 8.0.0

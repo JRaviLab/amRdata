@@ -9,7 +9,6 @@
 #'
 #' @import dplyr
 #' @import arrow
-#' @import kableExtra
 #'
 #' @examples
 #' generateSummary(
@@ -77,11 +76,14 @@ generateSummary <- function(metadata_parquet, out_path) {
   PhenotypeCount <- metadata |>
     dplyr::group_by(genome_drug.resistant_phenotype) |>
     dplyr::count() |>
+    dplyr::arrange(-n) |>
     dplyr::ungroup()
 
+  ## Stats by drugs
   PhenotypebyDrugCount <- metadata |>
     dplyr::group_by(genome_drug.resistant_phenotype, genome_drug.antibiotic) |>
     dplyr::count() |>
+    dplyr::arrange(-n) |>
     dplyr::ungroup()
 
   ResPropbyDrug <- metadata |>
@@ -90,8 +92,10 @@ generateSummary <- function(metadata_parquet, out_path) {
     dplyr::mutate(prop = n / sum(n)) |>
     dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
     dplyr::transmute(genome_drug.antibiotic, res_prop = round(prop, 3)) |>
+    dplyr::arrange(-res_prop) |>
     dplyr::ungroup()
 
+  ## Stats by drug class
   PhenotypebyDrugClassCount <- metadata |>
     dplyr::group_by(genome.genome_id, drug_class) |>
     dplyr::filter(!(any(genome_drug.resistant_phenotype == "Resistant") &
@@ -102,6 +106,7 @@ generateSummary <- function(metadata_parquet, out_path) {
     dplyr::ungroup() |>
     dplyr::group_by(genome_drug.resistant_phenotype, drug_class) |>
     dplyr::count() |>
+    dplyr::arrange(-n) |>
     dplyr::ungroup()
 
   ResPropbyDrugClass <- metadata |>
@@ -110,8 +115,10 @@ generateSummary <- function(metadata_parquet, out_path) {
     dplyr::mutate(prop = n / sum(n)) |>
     dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
     dplyr::transmute(drug_class, res_prop = round(prop, 3)) |>
+    dplyr::arrange(-res_prop) |>
     dplyr::ungroup()
 
+  ## Collection years
   Year <- metadata |>
     dplyr::distinct(genome.collection_year) |>
     dplyr::filter(!is.na(genome.collection_year)) |>
@@ -122,20 +129,25 @@ generateSummary <- function(metadata_parquet, out_path) {
     dplyr::group_by(genome.collection_year) |>
     dplyr::filter(!is.na(genome.collection_year)) |>
     dplyr::count() |>
+    dplyr::arrange(-n) |>
     dplyr::ungroup()
 
+  ## Geographical regions (countries)
   Country <- clean_distinct(metadata, genome.isolation_country)
   CountryCount <- metadata |>
     dplyr::group_by(genome.isolation_country) |>
     dplyr::filter(!is.na(genome.isolation_country), genome.isolation_country != "") |>
     dplyr::count() |>
+    dplyr::arrange(-n) |>
     dplyr::ungroup()
 
+  ## Isolation sources
   Source <- clean_distinct(metadata, genome.isolation_source)
   SourceCount <- metadata |>
     dplyr::group_by(genome.isolation_source) |>
     dplyr::filter(!is.na(genome.isolation_source), genome.isolation_source != "") |>
     dplyr::count() |>
+    dplyr::arrange(-n) |>
     dplyr::ungroup()
 
   Host <- clean_distinct(metadata, genome.host_common_name)
@@ -147,11 +159,11 @@ generateSummary <- function(metadata_parquet, out_path) {
   append_lines(
     md_path,
     c(
-      sprintf("- **Entries**: %s", TotalEntryCount[[1]]),
+      sprintf("- **Total no. of observations**: %s", TotalEntryCount[[1]]),
       sprintf("- **Unique genome IDs**: %s", CleanEntryCount[[1]]),
       "",
       sprintf(
-        "- **Publications** (%d): %s",
+        "- **Associated publications** (%d): %s",
         length(PubMed_ids),
         if (length(PubMed_ids)) paste(PubMed_ids, collapse = ", ") else "None"
       ),
@@ -176,13 +188,13 @@ generateSummary <- function(metadata_parquet, out_path) {
 
   # Tables!
   append_lines(md_path, c("## Phenotype counts", "", md_tbl(PhenotypeCount), "", ""))
-  append_lines(md_path, c("## Phenotype x antibiotic", "", md_tbl(PhenotypebyDrugCount), "", ""))
-  append_lines(md_path, c("## Resistant proportion per antibiotic", "", md_tbl(ResPropbyDrug), "", ""))
-  append_lines(md_path, c("## Phenotype x antibiotic class", "", md_tbl(PhenotypebyDrugClassCount), "", ""))
+  append_lines(md_path, c("## Phenotypes x antibiotic(s)", "", md_tbl(PhenotypebyDrugCount), "", ""))
+  append_lines(md_path, c("## Resistant proportions per antibiotic", "", md_tbl(ResPropbyDrug), "", ""))
+  append_lines(md_path, c("## Phenotypes x antibiotic class(es)", "", md_tbl(PhenotypebyDrugClassCount), "", ""))
   append_lines(md_path, c("## Resistant proportion per antibiotic class", "", md_tbl(ResPropbyDrugClass), "", ""))
   append_lines(md_path, c("## Laboratory methods", "", md_tbl(LabMethods), "", ""))
-  append_lines(md_path, c("## Year counts", "", md_tbl(YearCount), "", ""))
-  append_lines(md_path, c("## Country counts", "", md_tbl(CountryCount), "", ""))
+  append_lines(md_path, c("## Collection years", "", md_tbl(YearCount), "", ""))
+  append_lines(md_path, c("## Isolation countries", "", md_tbl(CountryCount), "", ""))
   append_lines(md_path, c("## Isolation sources", "", md_tbl(SourceCount), "", ""))
 
   # Hosts as a simple list
@@ -194,21 +206,30 @@ generateSummary <- function(metadata_parquet, out_path) {
 
 #' Write all summary plots to file(s)
 #'
+#' Expects `metadata_parquet` to be the output of `runDataProcessing()`'s
+#' `cleanData()` step (or an export of the resulting `metadata` table), since
+#' `drug_abbr`, `drug_class`, and `num_resistant_classes` are only populated
+#' after that step joins in the reference drug tables.
+#'
 #' @param metadata_parquet Character. Path to the Parquet metadata file.
 #' @param out_path Character. Output directory for plot files.
 #'
-#' @return Invisibly returns a vector of pdf file paths written.
+#' @return Invisibly returns the path to the written PDF (all plots as
+#'   separate pages of one multi-page file).
 #' @export
 generatePlots <- function(metadata_parquet,
                           out_path) {
-  device <- "pdf"
   if (!dir.exists(out_path)) {
     dir.create(out_path, showWarnings = FALSE, recursive = TRUE)
   }
 
   metadata <- arrow::read_parquet(normalizePath(metadata_parquet))
 
-  # --------- Build plots (same visuals as your generatePlots) ----------
+  if (nrow(metadata) == 0) {
+    stop("The input metadata table is empty. Please check your query or input data.")
+  }
+
+  ## Generate plots
   # 1) Phenotypes across antibiotics and time
   df_year <- metadata |>
     dplyr::filter(!is.na(genome.collection_year)) |>
@@ -244,7 +265,7 @@ generatePlots <- function(metadata_parquet,
       x = "Year", y = "Number of isolates",
       colour = "Phenotype"
     ) +
-    ggplot2::scale_color_brewer(palette = "Pastel1") +
+    ggplot2::scale_color_manual(values = PHENOTYPE_COLORS, na.value = "gray70") +
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(
       text = ggplot2::element_text(colour = "black"),
@@ -255,50 +276,16 @@ generatePlots <- function(metadata_parquet,
       panel.grid.minor = ggplot2::element_blank()
     )
 
-  p1
-  # 2) Resistance only over time
-
-
-  # 1) Levels for antibiotics (from the same subset used in p2)
+  # 2) Resistance only over time, colored by antibiotic (named palette aligned
+  # to factor levels via meta_palette() so colors stay consistent across runs)
   abx_levels <- summary_year |>
     dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
     dplyr::distinct(drug_abbr) |>
     dplyr::arrange(drug_abbr) |>
     dplyr::pull(drug_abbr)
 
-  # 2) Base Okabe–Ito (CVD-friendly) and pastelizer
-  okabe_ito_base <- c(
-    "#000000", # black
-    "#E69F00", # orange
-    "#56B4E9", # sky blue
-    "#009E73", # bluish green
-    "#F0E442", # yellow
-    "#0072B2", # blue
-    "#D55E00", # vermillion
-    "#CC79A7" # reddish purple
-  )
+  pal_named <- stats::setNames(meta_palette(length(abx_levels)), abx_levels)
 
-  okabe_ito_pastel <- function(n, lighten = 0.15) {
-    # Interpolate if more than 8 needed
-    cols <- if (n <= length(okabe_ito_base)) {
-      okabe_ito_base[seq_len(n)]
-    } else {
-      grDevices::colorRampPalette(okabe_ito_base)(n)
-    }
-    to_rgb <- function(hex) grDevices::col2rgb(hex) / 255
-    blend_with_white <- function(hex, a = lighten) {
-      rgb <- to_rgb(hex)
-      out <- (1 - a) * rgb + a * c(1, 1, 1)
-      grDevices::rgb(out[1], out[2], out[3])
-    }
-    vapply(cols, blend_with_white, character(1), a = lighten)
-  }
-
-  # 3) Build a NAMED palette aligned to factor levels
-  pal_vals <- okabe_ito_pastel(length(abx_levels), lighten = 0.15)
-  pal_named <- stats::setNames(pal_vals, abx_levels)
-
-  # 4) Plot with factor levels + named palette (no warnings, distinct colors)
   p2 <- ggplot2::ggplot(
     summary_year |>
       dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
@@ -313,9 +300,9 @@ generatePlots <- function(metadata_parquet,
     ggplot2::geom_line() +
     ggplot2::geom_point() +
     ggplot2::labs(
-      title  = "Distribution of resistance data over time",
+      title  = "Distribution of AMR isolates over time",
       x      = "Year",
-      y      = "Number of resistant isolates",
+      y      = "Number of AMR isolates",
       colour = "Antibiotic"
     ) +
     ggplot2::scale_color_manual(values = pal_named, drop = TRUE) + # <- named palette
@@ -355,7 +342,7 @@ generatePlots <- function(metadata_parquet,
   ) +
     ggplot2::geom_point(alpha = 0.75) +
     ggplot2::scale_size(range = c(3, 15)) +
-    ggplot2::scale_color_viridis_d(option = "C", begin = 0.25, end = 0.95) +
+    ggplot2::scale_color_manual(values = PHENOTYPE_COLORS, na.value = "gray70") +
     ggplot2::labs(
       title = "AMR isolates across time and geography",
       x = "Year", y = "Country",
@@ -378,10 +365,10 @@ generatePlots <- function(metadata_parquet,
     ggplot2::geom_bar(position = "fill") +
     ggplot2::coord_flip() +
     ggplot2::labs(
-      title = "Phenotype proportion per antibiotic",
+      title = "AMR proportion per antibiotic",
       x = "Antibiotic", y = "Proportion", fill = "Phenotype"
     ) +
-    ggplot2::scale_fill_brewer(palette = "Pastel1") + # <- keep pastel
+    ggplot2::scale_fill_manual(values = PHENOTYPE_COLORS, na.value = "gray70") +
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(
       text = ggplot2::element_text(colour = "black"),
@@ -389,33 +376,43 @@ generatePlots <- function(metadata_parquet,
       axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
     )
 
-  # 5) Treemap of isolation sources
+  # 5) Resistant isolates by isolation source (top 10 sources + Other, same
+  # convention as amRviz's makeIsolationSourcesPlot)
   summary_isolation_source <- metadata |>
     dplyr::filter(genome.isolation_source != "") |>
     dplyr::group_by(genome.isolation_source, genome_drug.resistant_phenotype) |>
     dplyr::summarise(count = dplyr::n(), .groups = "drop") |>
     dplyr::filter(genome_drug.resistant_phenotype == "Resistant")
 
+  top_isolation_sources <- summary_isolation_source |>
+    dplyr::slice_max(order_by = count, n = 10) |>
+    dplyr::pull(genome.isolation_source)
+
+  summary_isolation_source <- summary_isolation_source |>
+    dplyr::mutate(
+      isolation_source_grp = ifelse(
+        genome.isolation_source %in% top_isolation_sources,
+        genome.isolation_source,
+        "Other"
+      )
+    )
+
+  n_sources <- dplyr::n_distinct(summary_isolation_source$isolation_source_grp)
+
   p5 <- ggplot2::ggplot(
     summary_isolation_source,
-    ggplot2::aes(area = count, fill = genome.isolation_source)
+    ggplot2::aes(
+      x = stats::reorder(isolation_source_grp, count),
+      y = count, fill = isolation_source_grp
+    )
   ) +
-    treemapify::geom_treemap() +
-    # treemapify::geom_treemap_text(
-    #   ggplot2::aes(label = genome_drug.resistant_phenotype),
-    #   color = "grey15", grow = FALSE
-    # ) +
-    treemapify::geom_treemap_text(
-      ggplot2::aes(label = genome.isolation_source),
-      color = "grey15", grow = FALSE
-    ) +
+    ggplot2::geom_col() +
+    ggplot2::coord_flip() +
     ggplot2::labs(
-      title = "Distribution of Resistant isolates by isolation source",
-      fill = "Isolation source"
+      title = "Distribution of AMR isolates by isolation source",
+      x = "Isolation source", y = "Number of AMR isolates"
     ) +
-    ggplot2::scale_fill_manual(
-      values = colorRampPalette(RColorBrewer::brewer.pal(8, "Pastel2"))(dplyr::n_distinct(summary_isolation_source$genome.isolation_source))
-    ) +
+    ggplot2::scale_fill_manual(values = meta_palette(n_sources)) +
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(
       text = ggplot2::element_text(colour = "black"),
@@ -424,9 +421,9 @@ generatePlots <- function(metadata_parquet,
 
   # 6) Histogram of resistant classes per genome
   p6 <- ggplot2::ggplot(metadata, ggplot2::aes(num_resistant_classes)) +
-    ggplot2::geom_histogram(binwidth = 1, fill = "steelblue") +
+    ggplot2::geom_histogram(binwidth = 1, fill = META_COLORS[[1]]) +
     ggplot2::labs(
-      title = "Distribution of resistant classes per genome",
+      title = "Distribution of AMR classes per isolate",
       x = "# Resistant Classes", y = "Count"
     ) +
     ggplot2::theme_minimal(base_size = 12) +
@@ -440,17 +437,13 @@ generatePlots <- function(metadata_parquet,
 
   plots <- list(p1 = p1, p2 = p2, p3 = p3, p4 = p4, p5 = p5, p6 = p6)
 
-  # --------- Write to device ----------
-  paths <- character(0)
-
-  pdf_path <- file.path(out_path, paste0("amRdata_exploratory_plots.pdf"))
+  ## Write to device
+  pdf_path <- file.path(out_path, "amRdata_exploratory_plots.pdf")
   grDevices::pdf(pdf_path, onefile = TRUE)
   on.exit(grDevices::dev.off(), add = TRUE)
   for (nm in names(plots)) {
     print(plots[[nm]])
   }
-  paths <- c(paths, pdf_path)
 
-
-  invisible(paths)
+  invisible(pdf_path)
 }
