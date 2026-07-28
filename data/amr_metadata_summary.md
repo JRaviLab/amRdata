@@ -98,9 +98,9 @@ aminoglycosides, amphenicols, cephalosporins, fluoroquinolones, fusidane, glycop
 
 |drug_class                | res_prop|
 |:-------------------------|--------:|
+|penicillins               |    0.945|
 |amphenicols               |    0.600|
 |tetracyclines             |    0.600|
-|penicillins               |    0.479|
 |macrolides                |    0.069|
 |lincosamides              |    0.056|
 |fluoroquinolones          |    0.048|

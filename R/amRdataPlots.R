@@ -102,29 +102,33 @@ generateSummary <- function(metadata_parquet, out_path) {
     dplyr::arrange(-res_prop) |>
     dplyr::ungroup()
 
-  ## Stats by drug class
-  PhenotypebyDrugClassCount <- metadata |>
-    dplyr::group_by(genome.genome_id, drug_class) |>
-    dplyr::filter(!(any(genome_drug.resistant_phenotype == "Resistant") &
-      genome_drug.resistant_phenotype == "Susceptible")) |>
-    dplyr::ungroup() |>
-    dplyr::group_by(genome.genome_id, drug_class) |>
-    dplyr::slice_head(n = 1) |>
-    dplyr::ungroup() |>
-    dplyr::group_by(genome_drug.resistant_phenotype, drug_class) |>
-    dplyr::count() |>
-    dplyr::arrange(-n) |>
-    dplyr::ungroup()
+ # Collapse to one phenotype per genome x drug_class
+drug_class_calls <- metadata |>
+  dplyr::group_by(genome.genome_id, drug_class) |>
+  dplyr::summarise(
+    genome_drug.resistant_phenotype = dplyr::case_when(
+      any(genome_drug.resistant_phenotype == "Resistant", na.rm = TRUE) ~ "Resistant",
+      any(genome_drug.resistant_phenotype == "Intermediate", na.rm = TRUE) ~ "Intermediate",
+      any(genome_drug.resistant_phenotype == "Susceptible", na.rm = TRUE) ~ "Susceptible",
+      TRUE ~ NA_character_
+    ),
+    .groups = "drop"
+  )
 
-  ResPropbyDrugClass <- metadata |>
-    dplyr::group_by(drug_class) |>
-    dplyr::count(genome_drug.resistant_phenotype) |>
-    dplyr::mutate(prop = n / sum(n)) |>
-    dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
-    dplyr::transmute(drug_class, res_prop = round(prop, 3)) |>
-    dplyr::arrange(-res_prop) |>
-    dplyr::ungroup()
+# Stats by drug class
+PhenotypebyDrugClassCount <- drug_class_calls |>
+  dplyr::count(genome_drug.resistant_phenotype, drug_class) |>
+  dplyr::arrange(dplyr::desc(n))
 
+ResPropbyDrugClass <- drug_class_calls |>
+  dplyr::group_by(drug_class) |>
+  dplyr::count(genome_drug.resistant_phenotype) |>
+  dplyr::mutate(prop = n / sum(n)) |>
+  dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
+  dplyr::transmute(drug_class, res_prop = round(prop, 3)) |>
+  dplyr::arrange(dplyr::desc(res_prop)) |>
+  dplyr::ungroup()
+  
   ## Collection years
   Year <- metadata |>
     dplyr::distinct(genome.collection_year) |>
