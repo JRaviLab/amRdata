@@ -34,6 +34,8 @@ Imports:
     data.table,
     dplyr,
     duckdb,
+    furrr,
+    future,
     glue,
     purrr,
     readr,

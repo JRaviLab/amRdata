@@ -27,30 +27,6 @@ NULL
   sub(pattern, container_root, x_unix)
 }
 
-#' Set a future plan for parallel processing
-#'
-#' Sets a `future` plan for the duration of a block and restores the
-#' previous plan on exit.
-#'
-#' @param workers Integer. Number of workers to use; if <= 1, uses sequential mode.
-#' @param plan Character. Either "multisession" or "sequential".
-#'
-#' @return Invisibly returns TRUE.
-#' @keywords internal
-.with_future_plan <- function(workers, plan = c("multisession", "sequential")) {
-  plan <- match.arg(plan)
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-
-  if (is.null(workers) || workers <= 1L || identical(plan, "sequential")) {
-    future::plan(future::sequential)
-  } else {
-    future::plan(future::multisession, workers = workers)
-  }
-
-  invisible(TRUE)
-}
-
 # Launch Panaroo to build a pangenome (per batch)
 #' processPanaroo()
 #'
@@ -227,7 +203,13 @@ NULL
   # Ensure sum of per-job CPUs does not exceed `threads`
   panaroo_threads_per_job <- max(1L, floor(threads / n_jobs))
 
-  .with_future_plan(workers = n_jobs)
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  if (n_jobs <= 1L) {
+    future::plan(future::sequential)
+  } else {
+    future::plan(future::multisession, workers = n_jobs)
+  }
 
   batch_panaroo_run <- furrr::future_map(
     panaroo_batches,
@@ -1235,9 +1217,11 @@ domainFromIPR <- function(duckdb_path,
     cpu_per_container
   ))
 
-  .with_future_plan(workers = 1)
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  future::plan(future::sequential)
 
-  results <- future.apply::future_lapply(
+  results <- furrr::future_map(
     seq_along(chunks),
     function(i) {
       res <- try(
@@ -1260,7 +1244,7 @@ domainFromIPR <- function(duckdb_path,
       }
       res
     },
-    future.seed = TRUE
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
   # Combine results
