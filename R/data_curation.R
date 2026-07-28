@@ -126,6 +126,17 @@
   ok_ids_1 <- genome_ids[ok1]
   fail_ids <- genome_ids[!ok1]
 
+  message(sprintf("Pass 1: ok=%d, fail=%d", length(ok_ids_1), length(fail_ids)))
+  if (!is.null(log_file)) {
+    cat(sprintf("[%s] Pass1 ok=%d fail=%d\n", Sys.time(), length(ok_ids_1), length(fail_ids)),
+        file = log_file, append = TRUE
+    )
+  }
+
+  if (!length(fail_ids)) {
+    return(ok_ids_1)
+  }
+
   message("FTPS pass 2 (120s timeout) for failed genomes")
   future::plan(future::multisession, workers = max(1L, workers_second))
 
@@ -1204,6 +1215,8 @@ retrieveMetadata <- function(user_bacs,
                              length_deviations = NULL,
                              cds_deviations = NULL,
                              debug = FALSE,
+                             export_tables = FALSE,
+                             load_tables = FALSE,
                              verbose = TRUE) {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
@@ -1333,6 +1346,11 @@ retrieveMetadata <- function(user_bacs,
 
   combined_drug_data_tbl <- dplyr::bind_rows(batch_drug_data) |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
+
+  if (nrow(combined_drug_data_tbl) == 0L) {
+    message("No drug data returned.")
+    return(NULL)
+  }
 
   if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
   batch_genome_data <- furrr::future_map(
@@ -1500,6 +1518,24 @@ retrieveMetadata <- function(user_bacs,
     if (length(ids_zero_amr)) {
       message("  e.g.: ", paste(utils::head(ids_zero_amr, 10), collapse = ", "))
     }
+  }
+
+  export_res <- NULL
+  if (isTRUE(export_tables) || isTRUE(load_tables)) {
+    export_res <- exportTables(
+      paths$db_path,
+      export_tables = export_tables,
+      load_tables = load_tables,
+      verbose = verbose
+    )
+  }
+
+  if (isTRUE(load_tables)) {
+    return(list(
+      duckdbConnection = con,
+      table_name = "metadata",
+      data = if (!is.null(export_res)) export_res$data else NULL
+    ))
   }
 
   list(duckdbConnection = con, table_name = "metadata")
@@ -2215,6 +2251,8 @@ prepareGenomes <- function(user_bacs,
                            gc_deviations = NULL,
                            length_deviations = NULL,
                            cds_deviations = NULL,
+                           export_tables = FALSE,
+                           load_tables = FALSE,
                            debug = FALSE,
                            verbose = TRUE) {
   method <- match.arg(method)
@@ -2298,8 +2336,184 @@ prepareGenomes <- function(user_bacs,
     message("Continue with downstream processing using:")
     message('runDataProcessing("', normalizePath(paths$db_path), '")')
   }
+
+  export_res <- NULL
+  if (isTRUE(export_tables) || isTRUE(load_tables)) {
+    export_res <- exportTables(
+      paths$db_path,
+      export_tables = export_tables,
+      load_tables = load_tables,
+      verbose = verbose
+    )
+  }
+
+  if (isTRUE(load_tables)) {
+    return(list(
+      duckdb_path = paths$db_path,
+      table_name = "files",
+      data = if (!is.null(export_res)) export_res$data else NULL
+    ))
+  }
+
+  invisible(out)
+}
+
+#' Export DuckDB tables and optionally load them into R
+#'
+#' Writes selected DuckDB tables to CSV files and optionally returns them as
+#' in-memory R data frames.
+#'
+#' @param duckdb_path Character. Path to the DuckDB file.
+#' @param output_dir Character or NULL. Directory for exports. Defaults to
+#'   file.path(dirname(duckdb_path), "exports").
+#' @param tables Character vector or NULL. Tables to export. If NULL, exports
+#'   all tables in the database.
+#' @param skip_tables Character vector of table names to exclude.
+#' @param include_summary Logical. If TRUE, writes summary.csv and summary.txt.
+#' @param load_tables Logical. If TRUE, also return the exported tables as
+#'   in-memory R data frames.
+#' @param verbose Logical. If TRUE, prints progress messages.
+#'
+#' @return Invisibly returns a list with exported file paths and, if requested,
+#'   in-memory tables.
+#' @keywords internal
+exportTables <- function(duckdb_path,
+                         output_dir = NULL,
+                         tables = NULL,
+                         skip_tables = c(NULL),
+                         include_summary = TRUE,
+                         export_tables = TRUE,
+                         load_tables = FALSE,
+                         verbose = TRUE) {
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+
+  if (is.null(output_dir)) {
+    output_dir <- file.path(dirname(duckdb_path), "exports")
+  }
+  output_dir <- normalizePath(output_dir, mustWork = FALSE)
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  available_tables <- DBI::dbListTables(con)
+  if (!length(available_tables)) {
+    stop("No tables found in DuckDB: ", duckdb_path)
+  }
+
+  # More tables will exist in a full DuckDB output after data processing, but
+  # limiting this to the basic genome stats and metadata you'd get from only
+  # running data_curation.R
+  basic_tables <- c(
+    "bac_data",
+    "filtered",
+    "metadata",
+    "genome_data",
+    "amr_phenotype",
+    "metadata_qc",
+    "metadata_qc_rejections"
+  )
+
+  if (is.null(tables)) {
+    tables <- intersect(basic_tables, available_tables)
+  } else {
+    tables <- intersect(as.character(tables), available_tables)
+    if (!length(tables)) {
+      stop("None of the requested tables were found in the DuckDB.")
+    }
+  }
+
+  if (length(skip_tables)) {
+    tables <- setdiff(tables, skip_tables)
+  }
+  if (!length(tables)) {
+    stop("No tables left to export after applying skip_tables.")
+  }
+
+  exported_files <- list()
+  loaded_tables <- list()
+
+  for (tbl in tables) {
+    out_file <- file.path(output_dir, paste0(tbl, ".csv"))
+    df <- DBI::dbReadTable(con, tbl)
+
+    if (isTRUE(export_tables)) {
+      readr::write_csv(df, out_file, na = "")
+      exported_files[[tbl]] <- out_file
+      if (isTRUE(verbose)) {
+        message("Exported table: ", tbl, " -> ", out_file)
+      }
+    }
+
+    if (isTRUE(load_tables)) {
+      loaded_tables[[tbl]] <- df
+    }
+  }
+
+  count_if_present <- function(tbl) {
+    if (tbl %in% available_tables) {
+      as.character(DBI::dbGetQuery(
+        con,
+        paste0("SELECT COUNT(*) AS n FROM ", DBI::dbQuoteIdentifier(con, tbl))
+      )$n[[1]])
+    } else {
+      NA_character_
+    }
+  }
+
+  summary_tbl <- tibble::tibble(
+    metric = c(
+      "duckdb_path",
+      "export_dir",
+      "tables_exported",
+      "table_names",
+      "metadata_rows",
+      "genome_data_rows",
+      "amr_phenotype_rows",
+      "metadata_qc_rows",
+      "metadata_qc_rejections_rows",
+      "filtered_rows",
+      "files_rows",
+      "bac_data_rows"
+    ),
+    value = c(
+      duckdb_path,
+      output_dir,
+      as.character(length(tables)),
+      paste(tables, collapse = ", "),
+      count_if_present("metadata"),
+      count_if_present("genome_data"),
+      count_if_present("amr_phenotype"),
+      count_if_present("metadata_qc"),
+      count_if_present("metadata_qc_rejections"),
+      count_if_present("filtered"),
+      count_if_present("files"),
+      count_if_present("bac_data")
+    )
+  )
+
+  if (isTRUE(export_tables) && isTRUE(include_summary)) {
+    readr::write_csv(summary_tbl, file.path(output_dir, "summary.csv"), na = "")
+    writeLines(
+      c(
+        paste0("DuckDB: ", duckdb_path),
+        paste0("Export directory: ", output_dir),
+        paste0("Tables exported: ", length(tables)),
+        paste0("Table names: ", paste(tables, collapse = ", "))
+      ),
+      file.path(output_dir, "summary.txt"),
+      useBytes = TRUE
+    )
+    if (isTRUE(verbose)) {
+      message("Exported summary files.")
+    }
+  }
+
   invisible(list(
-    duckdb_path = paths$db_path,
-    table_name = "files"
+    export_dir = output_dir,
+    tables = tables,
+    files = exported_files,
+    data = if (isTRUE(load_tables)) loaded_tables else NULL,
+    summary = summary_tbl
   ))
 }

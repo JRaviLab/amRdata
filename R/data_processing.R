@@ -1813,3 +1813,218 @@ runDataProcessing <- function(duckdb_path,
     parquet_duckdb_path = normalizePath(parquet_duckdb_path)
   ))
 }
+
+#' Export processed tables from DuckDB database
+#'
+#' Reads tables from the DuckDB database produced by the `runDataProcessing()` workflow
+#' and exports them as CSV, TSV, Parquet, and/or XLSX. This is an optional step
+#' that allows users to take their processed data outside our amR workflow for
+#' use in their own custom analyses. This is not required to run `amRml`!
+#'
+#' @param duckdb_path Character. Path to the DuckDB database created by the
+#'   workflow (for example, `Sar.duckdb`).
+#' @param output_path Character or NULL. Directory for exports. Defaults to
+#'   file.path(dirname(duckdb_path), "processed_exports").
+#' @param amr_phenotype_mode Character. One of "separate" or "append".
+#'   "separate" exports the AMR labels as a separate wide table.
+#'   "append" joins those labels onto the main feature tables before export.
+#' @param export_formats Character vector. Any of "csv", "tsv", "parquet", "xlsx".
+#' @param tables Character vector or NULL. Tables to export. If NULL, exports the
+#'   standard processed tables present in the database.
+#' @param verbose Logical. If TRUE, prints progress messages.
+#'
+#' @return Invisibly returns a list containing the export path, table names, and mode.
+#' @export
+exportProcessedData <- function(duckdb_path,
+                                output_path = NULL,
+                                amr_phenotype_mode = c("separate", "append"),
+                                export_formats = c("csv"),
+                                export_sequences = FALSE,
+                                tables = NULL,
+                                verbose = TRUE) {
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  amr_phenotype_mode <- match.arg(amr_phenotype_mode)
+
+  export_formats <- unique(tolower(export_formats))
+  allowed_formats <- c("csv", "tsv", "parquet", "xlsx")
+  unknown_formats <- setdiff(export_formats, allowed_formats)
+  if (length(unknown_formats)) {
+    stop("Unsupported export format(s): ", paste(unknown_formats, collapse = ", "))
+  }
+
+  if ("xlsx" %in% export_formats) {
+    message(
+      "Excel spreadsheets of these features can be extremely large and may not open properly even on powerful hardware."
+    )
+    if (!requireNamespace("writexl", quietly = TRUE)) {
+      stop("Format 'xlsx' was requested but package 'writexl' is not available.")
+    }
+  }
+
+  if (is.null(output_path)) {
+    output_path <- file.path(dirname(duckdb_path), "processed_exports")
+  }
+  output_path <- normalizePath(output_path, mustWork = FALSE)
+  dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path, read_only = TRUE)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  available_tables <- DBI::dbListTables(con)
+  if (!length(available_tables)) {
+    stop("No tables found in DuckDB: ", duckdb_path)
+  }
+
+  read_tbl <- function(tbl) {
+    tibble::as_tibble(DBI::dbReadTable(con, tbl))
+  }
+
+  write_one <- function(df, stem) {
+    if ("csv" %in% export_formats) {
+      readr::write_csv(df, file.path(output_path, paste0(stem, ".csv")), na = "")
+    }
+    if ("tsv" %in% export_formats) {
+      readr::write_tsv(df, file.path(output_path, paste0(stem, ".tsv")), na = "")
+    }
+    if ("parquet" %in% export_formats) {
+      arrow::write_parquet(df, file.path(output_path, paste0(stem, ".parquet")))
+    }
+    if ("xlsx" %in% export_formats) {
+      writexl::write_xlsx(list(data = df), file.path(output_path, paste0(stem, ".xlsx")))
+    }
+  }
+
+  build_amr_wide <- function() {
+    source_tbl <- if ("metadata" %in% available_tables) {
+      "metadata"
+    } else if ("amr_phenotype" %in% available_tables) {
+      "amr_phenotype"
+    } else {
+      NULL
+    }
+
+    if (is.null(source_tbl)) {
+      return(NULL)
+    }
+
+    md <- read_tbl(source_tbl)
+
+    needed <- c("genome.genome_id", "genome_drug.antibiotic", "genome_drug.resistant_phenotype")
+    if (!all(needed %in% names(md))) {
+      return(NULL)
+    }
+
+    md |>
+      dplyr::transmute(
+        genome_id = `genome.genome_id`,
+        antibiotic = `genome_drug.antibiotic`,
+        phenotype = `genome_drug.resistant_phenotype`
+      ) |>
+      dplyr::filter(!is.na(genome_id), !is.na(antibiotic), !is.na(phenotype)) |>
+      dplyr::distinct() |>
+      dplyr::group_by(genome_id, antibiotic) |>
+      dplyr::summarise(
+        phenotype = paste(sort(unique(phenotype)), collapse = ";"),
+        .groups = "drop"
+      ) |>
+      tidyr::pivot_wider(
+        names_from = antibiotic,
+        values_from = phenotype,
+        values_fill = NA_character_
+      ) |>
+      dplyr::arrange(genome_id)
+  }
+
+  table_specs <- list(
+    gene_count = list(source = "gene_count", stem = "gene_count", appendable = TRUE),
+    protein_count = list(source = "protein_count", stem = "protein_count", appendable = TRUE),
+    domain_count = list(source = "domain_count", stem = "domain_count", appendable = TRUE),
+    struct = list(source = "gene_struct", stem = "struct", appendable = TRUE),
+    gene_names = list(source = "gene_names", stem = "gene_names", appendable = FALSE),
+    protein_names = list(source = "protein_names", stem = "protein_names", appendable = FALSE),
+    domain_names = list(source = "domain_names", stem = "domain_names", appendable = FALSE),
+    metadata = list(source = "metadata", stem = "metadata", appendable = FALSE),
+    filtered = list(source = "filtered", stem = "filtered", appendable = FALSE),
+    genome_data = list(source = "genome_data", stem = "genome_data", appendable = FALSE),
+    amr_phenotype_wide = list(source = NULL, stem = "amr_phenotype_wide", appendable = FALSE)
+  )
+
+  if (isTRUE(export_sequences)) {
+    table_specs$gene_seqs <- list(source = "gene_ref_seq", stem = "gene_seqs", appendable = FALSE)
+    table_specs$protein_seqs <- list(source = "protein_cluster_seq", stem = "protein_seqs", appendable = FALSE)
+    table_specs$genome_gene_protein <- list(source = "genome_gene_protein", stem = "genome_gene_protein", appendable = FALSE)
+  }
+
+  if (is.null(tables)) {
+    selected_keys <- c(
+      "gene_count",
+      "protein_count",
+      "domain_count",
+      "struct",
+      "gene_names",
+      "protein_names",
+      "domain_names",
+      "metadata",
+      "filtered",
+      "genome_data",
+      "amr_phenotype_wide"
+    )
+    if (isTRUE(export_sequences)) {
+      selected_keys <- c(selected_keys, "gene_seqs", "protein_seqs", "genome_gene_protein")
+    }
+  } else {
+    selected_keys <- intersect(as.character(tables), names(table_specs))
+  }
+
+  if (!length(selected_keys)) {
+    stop("No requested tables were found in the DuckDB.")
+  }
+
+  phenotype_wide <- build_amr_wide()
+  exported <- character(0)
+
+  for (key in selected_keys) {
+    spec <- table_specs[[key]]
+
+    if (key == "amr_phenotype_wide") {
+      if (is.null(phenotype_wide)) {
+        if (isTRUE(verbose)) message("Skipping amr_phenotype_wide: no AMR source table found.")
+        next
+      }
+      write_one(phenotype_wide, spec$stem)
+      exported <- c(exported, spec$stem)
+      if (isTRUE(verbose)) message("Exported: ", spec$stem)
+      next
+    }
+
+    if (is.null(spec$source) || !(spec$source %in% available_tables)) {
+      if (isTRUE(verbose)) message("Skipping missing table: ", key)
+      next
+    }
+
+    df <- read_tbl(spec$source)
+    out_stem <- spec$stem
+
+    if (identical(amr_phenotype_mode, "append") &&
+        isTRUE(spec$appendable) &&
+        !is.null(phenotype_wide) &&
+        "genome_id" %in% names(df)) {
+      df <- dplyr::left_join(df, phenotype_wide, by = "genome_id")
+      out_stem <- paste0(spec$stem, "_with_phenotypes")
+    }
+
+    write_one(df, out_stem)
+    exported <- c(exported, out_stem)
+
+    if (isTRUE(verbose)) message("Exported: ", out_stem)
+  }
+
+  invisible(list(
+    duckdb_path = duckdb_path,
+    output_path = output_path,
+    tables = exported,
+    amr_phenotype_mode = amr_phenotype_mode,
+    export_formats = export_formats,
+    export_sequences = isTRUE(export_sequences)
+  ))
+}
