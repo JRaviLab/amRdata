@@ -112,8 +112,8 @@ aminoglycosides, amphenicols, cephalosporins, fluoroquinolones, fusidane, glycop
 
 |genome_drug.laboratory_typing_method         |   n|
 |:--------------------------------------------|---:|
-|                                             | 658|
 |Biofosun Gram-positive panels broth dilution |  65|
+|Not defined                                  | 658|
 
 
 ## Collection years

@@ -72,9 +72,14 @@ generateSummary <- function(metadata_parquet, out_path) {
   AntibioticClasses <- clean_distinct(metadata, drug_class)
 
   LabMethods <- metadata |>
-    dplyr::group_by(genome_drug.laboratory_typing_method) |>
-    dplyr::count() |>
-    dplyr::ungroup()
+  dplyr::mutate(
+    genome_drug.laboratory_typing_method = dplyr::case_when(
+      is.na(genome_drug.laboratory_typing_method) ~ "Not defined",
+      genome_drug.laboratory_typing_method == "" ~ "Not defined",
+      TRUE ~ genome_drug.laboratory_typing_method
+    )
+  ) |>
+  dplyr::count(genome_drug.laboratory_typing_method)
 
   PubMed_ids <- clean_distinct(metadata, genome_drug.pmid)
 
