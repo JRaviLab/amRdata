@@ -41,16 +41,6 @@
                                min_bytes = 100L) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
-  # Adding this prior dot function helper into this loop for parallel workers
-  .is_complete <- function(dir, genomeID, min_bytes = 100L) {
-    fna <- file.path(dir, paste0(genomeID, ".fna"))
-    faa <- file.path(dir, paste0(genomeID, ".PATRIC.faa"))
-    gff <- file.path(dir, paste0(genomeID, ".PATRIC.gff"))
-    paths <- c(fna, faa, gff)
-    all(file.exists(paths)) &&
-      all(vapply(paths, function(x) file.info(x)$size, numeric(1)) > min_bytes)
-  }
-
   exts <- c(".fna", ".PATRIC.faa", ".PATRIC.gff")
   for (ext in exts) {
     dest <- file.path(out_dir, paste0(genomeID, ext))
@@ -90,7 +80,7 @@
     }
   }
 
-  .is_complete(out_dir, genomeID, min_bytes = min_bytes)
+  .is_complete_set(out_dir, genomeID, min_bytes = min_bytes)
 }
 
 #' Helps manage FTPS downloading from BV-BRC, trying a quick download first, and
@@ -118,7 +108,8 @@
 
   message("FTPS pass 1 (45s timeout)")
   future::plan(future::multisession, workers = max(1L, workers_first))
-  res1 <- future.apply::future_lapply(
+
+  res1 <- furrr::future_map(
     genome_ids,
     function(gid) {
       ok <- .ftps_download_one(
@@ -128,32 +119,17 @@
       )
       list(gid = gid, ok = ok)
     },
-    future.seed = TRUE
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
-  ok1 <- vapply(res1, `[[`, logical(1), "ok")
+  ok1 <- purrr::map_lgl(res1, "ok")
   ok_ids_1 <- genome_ids[ok1]
   fail_ids <- genome_ids[!ok1]
 
-  message(sprintf("Pass 1: ok=%d, fail=%d", length(ok_ids_1), length(fail_ids)))
-  if (!is.null(log_file)) {
-    cat(sprintf("[%s] Pass1 ok=%d fail=%d\n", Sys.time(), length(ok_ids_1), length(fail_ids)),
-      file = log_file, append = TRUE
-    )
-  }
-
-  if (!length(fail_ids)) {
-    if (!is.null(log_file)) {
-      cat(sprintf("[%s] FTPS run end: all OK\n", Sys.time()),
-        file = log_file, append = TRUE
-      )
-    }
-    return(ok_ids_1)
-  }
-
   message("FTPS pass 2 (120s timeout) for failed genomes")
   future::plan(future::multisession, workers = max(1L, workers_second))
-  res2 <- future.apply::future_lapply(
+
+  res2 <- furrr::future_map(
     fail_ids,
     function(gid) {
       ok <- .ftps_download_one(
@@ -163,10 +139,10 @@
       )
       list(gid = gid, ok = ok)
     },
-    future.seed = TRUE
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
-  ok2 <- vapply(res2, `[[`, logical(1), "ok")
+  ok2 <- purrr::map_lgl(res2, "ok")
   ok_ids_2 <- fail_ids[ok2]
   still_fail <- setdiff(fail_ids, ok_ids_2)
 
@@ -314,8 +290,8 @@
 #' }
 #' @keywords internal
 .apply_metadata_qc <- function(genome_tbl,
-                               checkm_contam = 10,
-                               checkm_complete = 90,
+                               checkm_contam = 5,
+                               checkm_complete = 95,
                                gc_deviations = NULL,
                                length_deviations = NULL,
                                cds_deviations = NULL) {
@@ -1222,8 +1198,8 @@ retrieveMetadata <- function(user_bacs,
                              abx = "All",
                              overwrite = FALSE,
                              image = "danylmb/bvbrc:5.3",
-                             checkm_contam = 10,
-                             checkm_complete = 90,
+                             checkm_contam = 5,
+                             checkm_complete = 95,
                              gc_deviations = NULL,
                              length_deviations = NULL,
                              cds_deviations = NULL,
@@ -1339,7 +1315,7 @@ retrieveMetadata <- function(user_bacs,
   future::plan(future::multisession, workers = n_cores)
 
   if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
-  batch_drug_data <- future.apply::future_lapply(
+  batch_drug_data <- furrr::future_map(
     genome_batches,
     function(batch) {
       raw <- .extractAMRtable(
@@ -1352,19 +1328,14 @@ retrieveMetadata <- function(user_bacs,
       )
       .parse_bvbrc_tsv(raw)
     },
-    future.seed = TRUE
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
   combined_drug_data_tbl <- dplyr::bind_rows(batch_drug_data) |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
 
-  if (nrow(combined_drug_data_tbl) == 0L) {
-    message("No drug data returned.")
-    return(NULL)
-  }
-
   if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
-  batch_genome_data <- future.apply::future_lapply(
+  batch_genome_data <- furrr::future_map(
     genome_batches,
     function(batch) {
       raw <- .extractGenomeData(
@@ -1378,7 +1349,7 @@ retrieveMetadata <- function(user_bacs,
       )
       .parse_bvbrc_tsv(raw)
     },
-    future.seed = TRUE
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
   combined_genome_data_tbl <- dplyr::bind_rows(batch_genome_data) |>
@@ -1954,28 +1925,32 @@ retrieveGenomes <- function(base_dir = ".",
                             cli_fasta_workers = 8L,
                             cli_gff_workers = 8L,
                             chunk_size = 50L,
-                            evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"), # NEW
+                            evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
+                            # NEW
                             verbose = TRUE) {
   method <- match.arg(method)
   evidence_mode <- match.arg(evidence_mode)
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
   # Use 'filtered' if already prepared, or start filtering
-  if (isTRUE(verbose)) message("Preparing download set (checking for existing 'filtered').")
+  if (isTRUE(verbose))
+    message("Preparing download set (checking for existing 'filtered').")
   paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
   db_path <- paths$db_path
   con0 <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
   has_filtered <- "filtered" %in% DBI::dbListTables(con0)
 
   if (has_filtered) {
-    if (isTRUE(verbose)) message("Using existing 'filtered' table (skipping re-filter).")
+    if (isTRUE(verbose))
+      message("Using existing 'filtered' table (skipping re-filter).")
     con <- con0
     tbl <- "filtered"
     on.exit(try(DBI::dbDisconnect(con0, shutdown = TRUE), silent = TRUE), add = TRUE)
   } else {
     DBI::dbDisconnect(con0, shutdown = TRUE)
 
-    if (isTRUE(verbose)) message("No 'filtered' table found; filtering now.")
+    if (isTRUE(verbose))
+      message("No 'filtered' table found; filtering now.")
     f_out <- .filterGenomes(
       base_dir = base_dir,
       user_bacs = user_bacs,
@@ -1999,12 +1974,14 @@ retrieveGenomes <- function(base_dir = ".",
 
   if (isTRUE(skip_existing)) {
     already <- .list_complete(genome_path, ids)
-    if (isTRUE(verbose)) message(length(already), " genomes already completed; skipping.")
+    if (isTRUE(verbose))
+      message(length(already), " genomes already completed; skipping.")
     ids <- setdiff(ids, already)
   }
 
   if (length(ids) == 0L) {
-    if (isTRUE(verbose)) message("All genomes already complete.")
+    if (isTRUE(verbose))
+      message("All genomes already complete.")
     all_ids <- tibble::as_tibble(DBI::dbReadTable(con, tbl)) |>
       dplyr::distinct(`genome.genome_id`) |>
       dplyr::pull(`genome.genome_id`)
@@ -2012,7 +1989,8 @@ retrieveGenomes <- function(base_dir = ".",
   }
 
   if (identical(method, "ftp")) {
-    if (isTRUE(verbose)) message("Trying FTPS download. Workers=", ftp_workers)
+    if (isTRUE(verbose))
+      message("Trying FTPS download. Workers=", ftp_workers)
 
     ok_ids <- .ftps_download_two_pass(
       genome_ids = ids,
@@ -2034,7 +2012,10 @@ retrieveGenomes <- function(base_dir = ".",
     if (isTRUE(verbose)) {
       message("Complete file sets for ", length(ok_ids), " genomes (FTP).")
       if (length(dropped_ids)) {
-        message(length(dropped_ids), " genomes were excluded because BV-BRC did not provide a complete file set.")
+        message(
+          length(dropped_ids),
+          " genomes were excluded because BV-BRC did not provide a complete file set."
+        )
       }
     }
     return(ok_ids)
@@ -2044,44 +2025,54 @@ retrieveGenomes <- function(base_dir = ".",
   chunks <- split(ids, ceiling(seq_along(ids) / chunk_size))
 
   if (isTRUE(verbose)) {
-    message("CLI being run in parallel for ", length(chunks), " data chunks.")
+    message("CLI being run in parallel for ",
+            length(chunks),
+            " data chunks.")
   }
 
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-  future::plan(future::multisession, workers = max(1L, cli_fasta_workers))
+  run_chunk_phase <- function(vecs, tags, workers, fun) {
+    old_plan <- future::plan()
+    on.exit(future::plan(old_plan), add = TRUE)
+    future::plan(future::multisession, workers = max(1L, workers))
+    furrr::future_map2(vecs, tags, fun, .options = furrr::furrr_options(seed = TRUE))
+  }
 
-  fa_res <- future.apply::future_mapply(
-    FUN = function(vec, tag) .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag),
-    vec = chunks,
-    tag = paste0("fa", seq_along(chunks)),
-    SIMPLIFY = TRUE,
-    future.seed = TRUE
+  fa_res <- run_chunk_phase(
+    vecs = chunks,
+    tags = paste0("fa", seq_along(chunks)),
+    workers = cli_fasta_workers,
+    fun = function(vec, tag)
+      .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag)
   )
-  if (!all(fa_res) && isTRUE(verbose)) warning(sum(!fa_res), " data chunks failed.")
+  fa_ok <- purrr::map_lgl(fa_res, identity)
+  if (!all(fa_ok) &&
+      isTRUE(verbose))
+    warning(sum(!fa_ok), " data chunks failed.")
 
   if (isTRUE(verbose)) {
-    message("GFF extraction being run in parallel for ", length(chunks), " data chunks.")
+    message("GFF extraction being run in parallel for ",
+            length(chunks),
+            " data chunks.")
   }
 
-  future::plan(future::multisession, workers = max(1L, cli_gff_workers))
-
-  g_res <- future.apply::future_mapply(
-    FUN = function(vec, tag) .cli_export_gff_chunk(image, genome_path, vec, tag),
-    vec = chunks,
-    tag = paste0("gff", seq_along(chunks)),
-    SIMPLIFY = TRUE,
-    future.seed = TRUE
+  g_res <- run_chunk_phase(
+    vecs = chunks,
+    tags = paste0("gff", seq_along(chunks)),
+    workers = cli_gff_workers,
+    fun = function(vec, tag)
+      .cli_export_gff_chunk(image, genome_path, vec, tag)
   )
-  if (!all(g_res) && isTRUE(verbose)) warning(sum(!g_res), " GFF chunks had failures.")
+  g_ok <- purrr::map_lgl(g_res, identity)
+  if (!all(g_ok) &&
+      isTRUE(verbose))
+    warning(sum(!g_ok), " GFF chunks had failures.")
 
   # Success set: .fna + .PATRIC.faa + .PATRIC.gff all present per isolate
   ok_ids <- ids[purrr::map_lgl(ids, .is_complete_set, dir = genome_path)]
   if (isTRUE(verbose)) {
-    message(
-      "Complete file sets downloaded for ",
-      length(ok_ids), " genomes."
-    )
+    message("Complete file sets downloaded for ",
+            length(ok_ids),
+            " genomes.")
   }
   ok_ids
 }
@@ -2197,6 +2188,8 @@ genomeList <- function(base_dir = ".",
 #' @param evidence_mode Character. Sets what types of AMR evidence is acceptable.
 #'    Default `lab_only`. `any` will not require AMR data for downloads. This will
 #'    return very large download lists for many species!
+#' @param num_workers Integer. Parallel workers used for genome download.
+#'    Applied to both FTP and CLI download branches. Default: 8.
 #' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
 #' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
@@ -2215,6 +2208,7 @@ prepareGenomes <- function(user_bacs,
                            base_dir = ".",
                            method = c("ftp", "cli"),
                            overwrite = FALSE,
+                           num_workers = 8L,
                            evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
                            checkm_contam = 5,
                            checkm_complete = 95,
@@ -2279,6 +2273,9 @@ prepareGenomes <- function(user_bacs,
     user_bacs = user_bacs,
     method = method,
     skip_existing = !overwrite,
+    ftp_workers = num_workers,
+    cli_fasta_workers = num_workers,
+    cli_gff_workers = num_workers,
     evidence_mode = evidence_mode,
     verbose = verbose
   )
@@ -2301,5 +2298,8 @@ prepareGenomes <- function(user_bacs,
     message("Continue with downstream processing using:")
     message('runDataProcessing("', normalizePath(paths$db_path), '")')
   }
-  out
+  invisible(list(
+    duckdb_path = paths$db_path,
+    table_name = "files"
+  ))
 }
