@@ -9,12 +9,14 @@
 #'
 #' @examples
 #' generateSummary(
-#'   metadata_parquet = "results/metadata.parquet",
-#'   out_path = "results/"
+#'   metadata_parquet = "data/metadata.parquet",
+#'   out_path = "data/"
 #' )
 #'
 #' @export
-generateSummary <- function(metadata_parquet, out_path) {
+generateSummary <- function(metadata_parquet, 
+  out_path
+) {
   # Little helper to apply distinct + non-empty + sorted vector
   clean_distinct <- function(df, col) {
     df |>
@@ -60,7 +62,9 @@ generateSummary <- function(metadata_parquet, out_path) {
     dplyr::pull()
 
   # Core summaries
-  TotalEntryCount <- metadata |> dplyr::count()
+  TotalEntryCount <- metadata |> 
+    dplyr::count()
+
   CleanEntryCount <- metadata |>
     dplyr::distinct(genome.genome_id) |>
     dplyr::count()
@@ -172,7 +176,7 @@ ResPropbyDrugClass <- drug_class_calls |>
   # Header
   write_new(
     md_path,
-    sprintf("# AMR summary report for *%s*", Species_name)
+    sprintf("# AMR summary report for *%s*", paste(Species_name, collapse = ", "))
   )
 
   # Basic stats
@@ -218,18 +222,14 @@ ResPropbyDrugClass <- drug_class_calls |>
   append_lines(md_path, c("## Isolation sources", "", md_tbl(SourceCount), "", ""))
   append_lines(md_path, c("## Hosts", "", md_tbl(HostCount), "", ""))
 
-
-  # Hosts as a simple list
-  # if (length(Host)) {
-  #   append_lines(md_path, c("## Hosts", "", paste0("- ", Host), "", ""))
-  # }
+invisible(md_path)
 }
 
 
 #' Write all summary plots to file(s)
 #'
-#' Expects `metadata_parquet` to be the output of `runDataProcessing()`'s
-#' `cleanData()` step (or an export of the resulting `metadata` table), since
+#' Expects `metadata_parquet` to be the output of 
+#' `cleanMetadata()` step (or an export of the resulting `metadata` table), since
 #' `drug_abbr`, `drug_class`, and `num_resistant_classes` are only populated
 #' after that step joins in the reference drug tables.
 #'
@@ -238,9 +238,16 @@ ResPropbyDrugClass <- drug_class_calls |>
 #'
 #' @return Invisibly returns the path to the written PDF (all plots as
 #'   separate pages of one multi-page file).
+#' 
+#' @examples
+#' generatePlots(
+#'   metadata_parquet = "data/metadata.parquet",
+#'   out_path = "data/"
+#' )
 #' @export
 generatePlots <- function(metadata_parquet,
-                          out_path) {
+                          out_path
+                        ) {
   if (!dir.exists(out_path)) {
     dir.create(out_path, showWarnings = FALSE, recursive = TRUE)
   }
