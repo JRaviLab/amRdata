@@ -118,7 +118,7 @@
 
   message("FTPS pass 1 (45s timeout)")
   future::plan(future::multisession, workers = max(1L, workers_first))
-  res1 <- future.apply::future_lapply(
+  res1 <- furrr::future_map(
     genome_ids,
     function(gid) {
       ok <- .ftps_download_one(
@@ -128,7 +128,7 @@
       )
       list(gid = gid, ok = ok)
     },
-    future.seed = TRUE
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
   ok1 <- vapply(res1, `[[`, logical(1), "ok")
@@ -153,7 +153,7 @@
 
   message("FTPS pass 2 (120s timeout) for failed genomes")
   future::plan(future::multisession, workers = max(1L, workers_second))
-  res2 <- future.apply::future_lapply(
+  res2 <- furrr::future_map(
     fail_ids,
     function(gid) {
       ok <- .ftps_download_one(
@@ -163,7 +163,7 @@
       )
       list(gid = gid, ok = ok)
     },
-    future.seed = TRUE
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
   ok2 <- vapply(res2, `[[`, logical(1), "ok")
@@ -1339,7 +1339,7 @@ retrieveMetadata <- function(user_bacs,
   future::plan(future::multisession, workers = n_cores)
 
   if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
-  batch_drug_data <- future.apply::future_lapply(
+  batch_drug_data <- furrr::future_map(
     genome_batches,
     function(batch) {
       raw <- .extractAMRtable(
@@ -1352,7 +1352,7 @@ retrieveMetadata <- function(user_bacs,
       )
       .parse_bvbrc_tsv(raw)
     },
-    future.seed = TRUE
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
   combined_drug_data_tbl <- dplyr::bind_rows(batch_drug_data) |>
@@ -1364,7 +1364,7 @@ retrieveMetadata <- function(user_bacs,
   }
 
   if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
-  batch_genome_data <- future.apply::future_lapply(
+  batch_genome_data <- furrr::future_map(
     genome_batches,
     function(batch) {
       raw <- .extractGenomeData(
@@ -1378,7 +1378,7 @@ retrieveMetadata <- function(user_bacs,
       )
       .parse_bvbrc_tsv(raw)
     },
-    future.seed = TRUE
+    .options = furrr::furrr_options(seed = TRUE)
   )
 
   combined_genome_data_tbl <- dplyr::bind_rows(batch_genome_data) |>
@@ -2051,12 +2051,11 @@ retrieveGenomes <- function(base_dir = ".",
   on.exit(future::plan(old_plan), add = TRUE)
   future::plan(future::multisession, workers = max(1L, cli_fasta_workers))
 
-  fa_res <- future.apply::future_mapply(
-    FUN = function(vec, tag) .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag),
-    vec = chunks,
-    tag = paste0("fa", seq_along(chunks)),
-    SIMPLIFY = TRUE,
-    future.seed = TRUE
+  fa_res <- furrr::future_map2_lgl(
+    chunks,
+    paste0("fa", seq_along(chunks)),
+    function(vec, tag) .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag),
+    .options = furrr::furrr_options(seed = TRUE)
   )
   if (!all(fa_res) && isTRUE(verbose)) warning(sum(!fa_res), " data chunks failed.")
 
@@ -2066,12 +2065,11 @@ retrieveGenomes <- function(base_dir = ".",
 
   future::plan(future::multisession, workers = max(1L, cli_gff_workers))
 
-  g_res <- future.apply::future_mapply(
-    FUN = function(vec, tag) .cli_export_gff_chunk(image, genome_path, vec, tag),
-    vec = chunks,
-    tag = paste0("gff", seq_along(chunks)),
-    SIMPLIFY = TRUE,
-    future.seed = TRUE
+  g_res <- furrr::future_map2_lgl(
+    chunks,
+    paste0("gff", seq_along(chunks)),
+    function(vec, tag) .cli_export_gff_chunk(image, genome_path, vec, tag),
+    .options = furrr::furrr_options(seed = TRUE)
   )
   if (!all(g_res) && isTRUE(verbose)) warning(sum(!g_res), " GFF chunks had failures.")
 
