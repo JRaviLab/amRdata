@@ -1868,6 +1868,13 @@ exportProcessedData <- function(duckdb_path,
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path, read_only = TRUE)
+  DBI::dbExecute(
+    con,
+    sprintf(
+      "SET file_search_path='%s'",
+      dirname(normalizePath(duckdb_path))
+    )
+  )
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
 
   available_tables <- DBI::dbListTables(con)
@@ -1935,16 +1942,16 @@ exportProcessedData <- function(duckdb_path,
       dplyr::arrange(genome_id)
   }
 
+  # Appendable here means whether we glue AST phenotypes on the end or not
   table_specs <- list(
     gene_count = list(source = "gene_count", stem = "gene_count", appendable = TRUE),
     protein_count = list(source = "protein_count", stem = "protein_count", appendable = TRUE),
     domain_count = list(source = "domain_count", stem = "domain_count", appendable = TRUE),
-    struct = list(source = "gene_struct", stem = "struct", appendable = TRUE),
+    struct = list(source = "struct", stem = "struct", appendable = TRUE),
     gene_names = list(source = "gene_names", stem = "gene_names", appendable = FALSE),
     protein_names = list(source = "protein_names", stem = "protein_names", appendable = FALSE),
     domain_names = list(source = "domain_names", stem = "domain_names", appendable = FALSE),
     metadata = list(source = "metadata", stem = "metadata", appendable = FALSE),
-    filtered = list(source = "filtered", stem = "filtered", appendable = FALSE),
     genome_data = list(source = "genome_data", stem = "genome_data", appendable = FALSE),
     amr_phenotype_wide = list(source = NULL, stem = "amr_phenotype_wide", appendable = FALSE)
   )
@@ -1965,7 +1972,6 @@ exportProcessedData <- function(duckdb_path,
       "protein_names",
       "domain_names",
       "metadata",
-      "filtered",
       "genome_data",
       "amr_phenotype_wide"
     )
