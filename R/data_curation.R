@@ -126,6 +126,17 @@
   ok_ids_1 <- genome_ids[ok1]
   fail_ids <- genome_ids[!ok1]
 
+  message(sprintf("Pass 1: ok=%d, fail=%d", length(ok_ids_1), length(fail_ids)))
+  if (!is.null(log_file)) {
+    cat(sprintf("[%s] Pass1 ok=%d fail=%d\n", Sys.time(), length(ok_ids_1), length(fail_ids)),
+        file = log_file, append = TRUE
+    )
+  }
+
+  if (!length(fail_ids)) {
+    return(ok_ids_1)
+  }
+
   message("FTPS pass 2 (120s timeout) for failed genomes")
   future::plan(future::multisession, workers = max(1L, workers_second))
 
@@ -1334,6 +1345,11 @@ retrieveMetadata <- function(user_bacs,
   combined_drug_data_tbl <- dplyr::bind_rows(batch_drug_data) |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
 
+  if (nrow(combined_drug_data_tbl) == 0L) {
+    message("No drug data returned.")
+    return(NULL)
+  }
+
   if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
   batch_genome_data <- furrr::future_map(
     genome_batches,
@@ -2298,8 +2314,5 @@ prepareGenomes <- function(user_bacs,
     message("Continue with downstream processing using:")
     message('runDataProcessing("', normalizePath(paths$db_path), '")')
   }
-  invisible(list(
-    duckdb_path = paths$db_path,
-    table_name = "files"
-  ))
+  invisible(out)
 }
