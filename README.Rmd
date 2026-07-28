@@ -278,7 +278,7 @@ amRdata is designed to work seamlessly with other amR packages:
 ```r
 library(amRdata)
 library(amRml)
-library(amRshiny)
+library(amRviz)
 
 # 1. Curate data
 prepareGenomes("Shigella flexneri")
@@ -295,17 +295,18 @@ launch_dashboard()
 
 - [amR](https://github.com/JRaviLab/amR): Suite metapackage
 - [amRml](https://github.com/JRaviLab/amRml): ML for AMR prediction
-- [amRshiny](https://github.com/JRaviLab/amRshiny): Interactive dashboard
+- [amRviz](https://github.com/JRaviLab/amRviz): Interactive dashboard
 
 ## Citation
 If you use `amRdata` in your research, please cite:
 
-```
-Brenner E, Ghosh A, Wolfe E, Boyer E, Vang C, Lesiyon R, Mayer D, Ravi J. (2026).
-amR: an R package suite to predict antimicrobial resistance in bacterial pathogens.
-R package version 0.99.0.
-https://github.com/JRaviLab/amR
-```
+> Ghosh A^, Brenner EP^, Boyer EA, McKim AP, Vang CK, Wolfe EP, Mayer D, Lesiyon RL, Ravi J.
+>
+> amR: an R package suite to predict antimicrobial resistance in bacterial pathogens.
+>
+> bioRxiv. 2026. DOI: [10.64898/2026.07.10.734579](https://doi.org/10.64898/2026.07.10.734579).
+
+^ Co-first authors
 
 ## Contributing
 
