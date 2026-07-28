@@ -36,7 +36,11 @@ Imports:
     data.table,
     dplyr,
     duckdb,
+    ggplot2,
     glue,
+    grid,
+    gridExtra,
+    knitr,
     purrr,
     readr,
     reshape2,
@@ -46,7 +50,6 @@ Imports:
 biocViews: GenomeAssembly, Annotation, Sequencing
 VignetteBuilder: knitr
 Suggests:
-    knitr,
     rmarkdown,
     testthat (>= 3.0.0)
 Config/roxygen2/version: 8.0.0
