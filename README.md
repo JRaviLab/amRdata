@@ -283,6 +283,14 @@ Processing times vary by species and isolate count:
 - Parallelization significantly reduces processing time when multiple
   cores are available.
 
+- If a `future::multisession` error occurs mid-run (e.g. while testing
+  via `devtools::load_all()` before installing the package), restart
+  your R session fully before retrying. An orphaned background worker
+  process can leave a stale lock on the local DuckDB caches (e.g.
+  `data/bvbrc/bvbrcData.duckdb`), which can produce inconsistent
+  results on the next run that look like a data or QC bug but are
+  actually just leftover session state.
+
 ### Integration with amR suite
 
 amRdata is designed to work seamlessly with other amR packages:
