@@ -278,7 +278,7 @@ generatePlots <- function(metadata_parquet,
     ggplot2::geom_point() +
     ggplot2::facet_wrap(~drug_abbr, scales = "free_y") +
     ggplot2::labs(
-      title = "Resistant phenotypes across antibiotics and time",
+      title = "Distribution of AMR phenotypes across antibiotics by year",
       x = "Year", y = "Number of isolates",
       colour = "Phenotype"
     ) +
@@ -317,7 +317,7 @@ generatePlots <- function(metadata_parquet,
     ggplot2::geom_line() +
     ggplot2::geom_point() +
     ggplot2::labs(
-      title  = "Distribution of AMR isolates over time",
+      title  = "Distribution of resistant isolates by year",
       x      = "Year",
       y      = "Number of AMR isolates",
       colour = "Antibiotic"
@@ -361,7 +361,7 @@ generatePlots <- function(metadata_parquet,
     ggplot2::scale_size(range = c(3, 15)) +
     ggplot2::scale_color_manual(values = PHENOTYPE_COLORS, na.value = "gray70") +
     ggplot2::labs(
-      title = "AMR isolates across time and geography",
+      title = "Distribution of AMR phenotype by year and geography",
       x = "Year", y = "Country",
       size = "Count", color = "Phenotype"
     ) +
@@ -382,7 +382,7 @@ generatePlots <- function(metadata_parquet,
     ggplot2::geom_bar(position = "fill") +
     ggplot2::coord_flip() +
     ggplot2::labs(
-      title = "AMR proportion per antibiotic",
+      title = "Distribution of AMR phenotypes",
       x = "Antibiotic", y = "Proportion", fill = "Phenotype"
     ) +
     ggplot2::scale_fill_manual(values = PHENOTYPE_COLORS, na.value = "gray70") +
