@@ -36,6 +36,8 @@ Imports:
     duckdb,
     ggplot2,
     glue,
+    grid,
+    gridExtra,
     knitr,
     purrr,
     readr,

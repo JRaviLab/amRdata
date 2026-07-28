@@ -7,9 +7,6 @@
 #' @return Writes a structured, human‑readable summary report to
 #'   "<out_path>/amr_metadata_summary.md".
 #'
-#' @import dplyr
-#' @import arrow
-#'
 #' @examples
 #' generateSummary(
 #'   metadata_parquet = "results/metadata.parquet",
@@ -72,14 +69,14 @@ generateSummary <- function(metadata_parquet, out_path) {
   AntibioticClasses <- clean_distinct(metadata, drug_class)
 
   LabMethods <- metadata |>
-  dplyr::mutate(
-    genome_drug.laboratory_typing_method = dplyr::case_when(
-      is.na(genome_drug.laboratory_typing_method) ~ "Not defined",
-      genome_drug.laboratory_typing_method == "" ~ "Not defined",
-      TRUE ~ genome_drug.laboratory_typing_method
-    )
-  ) |>
-  dplyr::count(genome_drug.laboratory_typing_method)
+    dplyr::mutate(
+      genome_drug.laboratory_typing_method = dplyr::case_when(
+        is.na(genome_drug.laboratory_typing_method) ~ "Not defined",
+        genome_drug.laboratory_typing_method == "" ~ "Not defined",
+        TRUE ~ genome_drug.laboratory_typing_method
+      )
+    ) |>
+    dplyr::count(genome_drug.laboratory_typing_method)
 
   PubMed_ids <- clean_distinct(metadata, genome_drug.pmid)
 
