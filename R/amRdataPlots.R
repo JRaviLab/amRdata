@@ -58,8 +58,8 @@ generateSummary <- function(metadata_parquet, out_path) {
   }
 
   # get Species name
-  Species_name <- metadata |> 
-    dplyr::distinct(genome.species) |> 
+  Species_name <- metadata |>
+    dplyr::distinct(genome.species) |>
     dplyr::pull()
 
   # Core summaries
@@ -165,9 +165,9 @@ generateSummary <- function(metadata_parquet, out_path) {
 
   # Header
   write_new(
-  md_path,
-  sprintf("# AMR summary report for *%s*", Species_name)
-)
+    md_path,
+    sprintf("# AMR summary report for *%s*", Species_name)
+  )
 
   # Basic stats
   append_lines(
@@ -234,8 +234,7 @@ generateSummary <- function(metadata_parquet, out_path) {
 #'   separate pages of one multi-page file).
 #' @export
 generatePlots <- function(metadata_parquet,
-                          out_path
-                        ) {
+                          out_path) {
   if (!dir.exists(out_path)) {
     dir.create(out_path, showWarnings = FALSE, recursive = TRUE)
   }
@@ -454,12 +453,14 @@ generatePlots <- function(metadata_parquet,
 
   plots <- list(p1 = p1, p2 = p2, p3 = p3, p4 = p4, p5 = p5, p6 = p6)
 
-  # Table for drug name - abbreviation mapping 
-drug_table <- metadata |> 
-  dplyr::distinct(genome_drug.antibiotic, drug_abbr) |>
-  dplyr::rename("Abbreviation" = "drug_abbr", 
-  "Antibiotic" = "genome_drug.antibiotic") |>
-  dplyr::arrange(Antibiotic)
+  # Table for drug name - abbreviation mapping
+  drug_table <- metadata |>
+    dplyr::distinct(genome_drug.antibiotic, drug_abbr) |>
+    dplyr::rename(
+      "Abbreviation" = "drug_abbr",
+      "Antibiotic" = "genome_drug.antibiotic"
+    ) |>
+    dplyr::arrange(Antibiotic)
 
   ## Write to device
   pdf_path <- file.path(out_path, "amRdata_exploratory_plots.pdf")
@@ -468,17 +469,17 @@ drug_table <- metadata |>
   for (nm in names(plots)) {
     print(plots[[nm]])
   }
-# grid::grid.newpage()
+  # grid::grid.newpage()
 
-gridExtra::grid.arrange(
-  grid::textGrob(
-    "Antibiotic name abbreviations",
-    gp = grid::gpar(fontsize = 16, fontface = "bold")
-  ),
-  gridExtra::tableGrob(drug_table, rows = NULL),
-  ncol = 1,
-  heights = c(0.08, 0.92)
-)
+  gridExtra::grid.arrange(
+    grid::textGrob(
+      "Antibiotic name abbreviations",
+      gp = grid::gpar(fontsize = 16, fontface = "bold")
+    ),
+    gridExtra::tableGrob(drug_table, rows = NULL),
+    ncol = 1,
+    heights = c(0.08, 0.92)
+  )
 
   invisible(pdf_path)
 }
