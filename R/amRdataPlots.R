@@ -57,6 +57,11 @@ generateSummary <- function(metadata_parquet, out_path) {
     stop("The output table is empty. Please check your query or input data.")
   }
 
+  # get Species name
+  Species_name <- metadata |> 
+    dplyr::distinct(genome.species) |> 
+    dplyr::pull()
+
   # Core summaries
   TotalEntryCount <- metadata |> dplyr::count()
   CleanEntryCount <- metadata |>
@@ -151,9 +156,18 @@ generateSummary <- function(metadata_parquet, out_path) {
     dplyr::ungroup()
 
   Host <- clean_distinct(metadata, genome.host_common_name)
+  HostCount <- metadata |>
+    dplyr::group_by(genome.host_common_name) |>
+    dplyr::filter(!is.na(genome.host_common_name), genome.host_common_name != "") |>
+    dplyr::count() |>
+    dplyr::arrange(-n) |>
+    dplyr::ungroup()
 
   # Header
-  write_new(md_path, "# AMR summary report\n")
+  write_new(
+  md_path,
+  sprintf("# AMR summary report for *%s*", Species_name)
+)
 
   # Basic stats
   append_lines(
@@ -196,11 +210,13 @@ generateSummary <- function(metadata_parquet, out_path) {
   append_lines(md_path, c("## Collection years", "", md_tbl(YearCount), "", ""))
   append_lines(md_path, c("## Isolation countries", "", md_tbl(CountryCount), "", ""))
   append_lines(md_path, c("## Isolation sources", "", md_tbl(SourceCount), "", ""))
+  append_lines(md_path, c("## Hosts", "", md_tbl(HostCount), "", ""))
+
 
   # Hosts as a simple list
-  if (length(Host)) {
-    append_lines(md_path, c("## Hosts", "", paste0("- ", Host), "", ""))
-  }
+  # if (length(Host)) {
+  #   append_lines(md_path, c("## Hosts", "", paste0("- ", Host), "", ""))
+  # }
 }
 
 
@@ -218,7 +234,8 @@ generateSummary <- function(metadata_parquet, out_path) {
 #'   separate pages of one multi-page file).
 #' @export
 generatePlots <- function(metadata_parquet,
-                          out_path) {
+                          out_path
+                        ) {
   if (!dir.exists(out_path)) {
     dir.create(out_path, showWarnings = FALSE, recursive = TRUE)
   }
@@ -437,6 +454,13 @@ generatePlots <- function(metadata_parquet,
 
   plots <- list(p1 = p1, p2 = p2, p3 = p3, p4 = p4, p5 = p5, p6 = p6)
 
+  # Table for drug name - abbreviation mapping 
+drug_table <- metadata |> 
+  dplyr::distinct(genome_drug.antibiotic, drug_abbr) |>
+  dplyr::rename("Abbreviation" = "drug_abbr", 
+  "Antibiotic" = "genome_drug.antibiotic") |>
+  dplyr::arrange(Antibiotic)
+
   ## Write to device
   pdf_path <- file.path(out_path, "amRdata_exploratory_plots.pdf")
   grDevices::pdf(pdf_path, onefile = TRUE)
@@ -444,6 +468,17 @@ generatePlots <- function(metadata_parquet,
   for (nm in names(plots)) {
     print(plots[[nm]])
   }
+# grid::grid.newpage()
+
+gridExtra::grid.arrange(
+  grid::textGrob(
+    "Antibiotic name abbreviations",
+    gp = grid::gpar(fontsize = 16, fontface = "bold")
+  ),
+  gridExtra::tableGrob(drug_table, rows = NULL),
+  ncol = 1,
+  heights = c(0.08, 0.92)
+)
 
   invisible(pdf_path)
 }

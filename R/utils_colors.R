@@ -6,7 +6,7 @@
 # neutral grey so Resistant amber stands out as the signal of interest.
 PHENOTYPE_COLORS <- c(
   R = "#d4872a", Resistant = "#d4872a", resistant = "#d4872a",
-  S = "#8a8a8a", Susceptible = "#8a8a8a", susceptible = "#8a8a8a",
+  S = "#5b8db8", Susceptible = "#5b8db8", susceptible = "#5b8db8",
   I = "#e6ab80", Intermediate = "#e6ab80", intermediate = "#e6ab80"
 )
 
