@@ -1325,6 +1325,10 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
+  # Define lab methods 
+  lab_methods <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution", "Biofosun Gram-positive panels broth dilution",
+                  "Vitek_2-P607_card", "cation-adjusted Mueller-Hinton broth", "gradient_diffusion", "kirby-bauer_disc_diffusion")
+  
   dplyr::tbl(con, "filtered") |>
     tibble::as_tibble() |>
     dplyr::select("genome.genome_id") |>
@@ -1332,12 +1336,17 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
       tibble::as_tibble(), by = dplyr::join_by("genome.genome_id" == "genome_drug.genome_id")) |>
     dplyr::select(
       "genome.genome_id", "genome_drug.antibiotic",
-      "genome_drug.genome_name", "genome_drug.laboratory_typing_method",
+      "genome_drug.genome_name", "genome_drug.evidence", "genome_drug.laboratory_typing_method",
       "genome_drug.resistant_phenotype", "genome_drug.taxon_id",
       "genome_drug.pmid", "genome.collection_year",
       "genome.isolation_country", "genome.host_common_name",
       "genome.isolation_source", "genome.species"
     ) |>
+    dplyr::mutate(genome_drug.evidence = dplyr::case_when(
+      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",  
+      genome_drug.laboratory_typing_method == "Computational Prediction"  ~ "Computational Method",
+      TRUE ~ genome_drug.evidence)) |> 
+    dplyr::filter(genome_drug.evidence == "Laboratory Method") |>
     dplyr::left_join(clean_drug, by = c("genome_drug.antibiotic" = "original_drug")) |>
     dplyr::filter(!is.na(cleaned_drug)) |>
     dplyr::left_join(drug_class, by = c("cleaned_drug" = "drug")) |>
