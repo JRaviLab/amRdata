@@ -287,8 +287,8 @@
 #' Deviation-based filters are optional and are best suited to single-taxon runs.
 #'
 #' @param genome_tbl A tibble of genome metadata containing BV-BRC genome columns.
-#' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
-#' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
+#' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
+#' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
 #' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
 #' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
@@ -301,8 +301,8 @@
 #' }
 #' @keywords internal
 .apply_metadata_qc <- function(genome_tbl,
-                               checkm_contam = 5,
-                               checkm_complete = 95,
+                               max_checkm_contam = 5,
+                               min_checkm_complete = 95,
                                gc_deviations = NULL,
                                length_deviations = NULL,
                                cds_deviations = NULL) {
@@ -361,8 +361,8 @@
   qc <- qc |>
     dplyr::mutate(
       flag_checkm_missing = is.na(.data$checkm_completeness_qc) | is.na(.data$checkm_contamination_qc),
-      flag_checkm_contam = !is.na(.data$checkm_contamination_qc) & .data$checkm_contamination_qc > checkm_contam,
-      flag_checkm_complete = !is.na(.data$checkm_completeness_qc) & .data$checkm_completeness_qc < checkm_complete,
+      flag_checkm_contam = !is.na(.data$checkm_contamination_qc) & .data$checkm_contamination_qc > max_checkm_contam,
+      flag_checkm_complete = !is.na(.data$checkm_completeness_qc) & .data$checkm_completeness_qc < min_checkm_complete,
       flag_checkm = .data$flag_checkm_missing | .data$flag_checkm_contam | .data$flag_checkm_complete,
       flag_length = if (!is.null(length_deviations) && is.finite(sd_len) && sd_len > 0) {
         !is.na(z_len) & z_len > length_deviations
@@ -382,7 +382,7 @@
       qc_keep = !(.data$flag_checkm | .data$flag_length | .data$flag_gc | .data$flag_cds)
     )
 
-  make_rej <- function(flag, rule, observed, threshold, comparator) {
+  make_rejects <- function(flag, rule, observed, threshold, comparator) {
     idx <- which(flag %in% TRUE)
     if (!length(idx)) {
       return(NULL)
@@ -399,32 +399,32 @@
     )
   }
 
-  rej_list <- list(
-    make_rej(
+  reject_list <- list(
+    make_rejects(
       qc$flag_checkm_missing,
       "checkm_missing",
       ifelse(qc$flag_checkm_missing, "missing", NA_character_),
       "present",
       "is present"
     ),
-    make_rej(
+    make_rejects(
       qc$flag_checkm_contam,
       "checkm_contamination",
       qc$checkm_contamination_qc,
-      checkm_contam,
+      max_checkm_contam,
       ">"
     ),
-    make_rej(
+    make_rejects(
       qc$flag_checkm_complete,
       "checkm_completeness",
       qc$checkm_completeness_qc,
-      checkm_complete,
+      min_checkm_complete,
       "<"
     )
   )
 
   if (!is.null(gc_deviations)) {
-    rej_list[[length(rej_list) + 1L]] <- make_rej(
+    reject_list[[length(reject_list) + 1L]] <- make_rejects(
       qc$flag_gc,
       "gc_deviation_sd",
       z_gc,
@@ -434,7 +434,7 @@
   }
 
   if (!is.null(length_deviations)) {
-    rej_list[[length(rej_list) + 1L]] <- make_rej(
+    reject_list[[length(reject_list) + 1L]] <- make_rejects(
       qc$flag_length,
       "length_deviation_sd",
       z_len,
@@ -444,7 +444,7 @@
   }
 
   if (!is.null(cds_deviations)) {
-    rej_list[[length(rej_list) + 1L]] <- make_rej(
+    reject_list[[length(reject_list) + 1L]] <- make_rejects(
       qc$flag_cds,
       "cds_deviation_sd",
       z_cds,
@@ -453,7 +453,7 @@
     )
   }
 
-  rejections <- dplyr::bind_rows(rej_list)
+  rejections <- dplyr::bind_rows(reject_list)
   if (nrow(rejections) == 0L) {
     rejections <- tibble::tibble(
       genome_id = character(),
@@ -1190,8 +1190,8 @@
 #' @param abx Character or vector. Antibiotic filter. "All" for all antibiotics, else names.
 #' @param overwrite Logical. If FALSE and DuckDB exists already, abort. Default FALSE.
 #' @param image Character. Docker image. Default "danylmb/bvbrc:5.3".
-#' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
-#' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
+#' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
+#' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
 #' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
 #' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
@@ -1209,8 +1209,8 @@ retrieveMetadata <- function(user_bacs,
                              abx = "All",
                              overwrite = FALSE,
                              image = "danylmb/bvbrc:5.3",
-                             checkm_contam = 5,
-                             checkm_complete = 95,
+                             max_checkm_contam = 5,
+                             min_checkm_complete = 95,
                              gc_deviations = NULL,
                              length_deviations = NULL,
                              cds_deviations = NULL,
@@ -1391,8 +1391,8 @@ retrieveMetadata <- function(user_bacs,
 
   qc_out <- .apply_metadata_qc(
     genome_tbl = combined_genome_data_tbl,
-    checkm_contam = checkm_contam,
-    checkm_complete = checkm_complete,
+    max_checkm_contam = max_checkm_contam,
+    min_checkm_complete = min_checkm_complete,
     gc_deviations = gc_deviations,
     length_deviations = length_deviations,
     cds_deviations = cds_deviations
@@ -1962,7 +1962,6 @@ retrieveGenomes <- function(base_dir = ".",
                             cli_gff_workers = 8L,
                             chunk_size = 50L,
                             evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
-                            # NEW
                             verbose = TRUE) {
   method <- match.arg(method)
   evidence_mode <- match.arg(evidence_mode)
@@ -1978,7 +1977,7 @@ retrieveGenomes <- function(base_dir = ".",
 
   if (has_filtered) {
     if (isTRUE(verbose))
-      message("Using existing 'filtered' table (skipping re-filter).")
+      message("Found existing 'filtered' table.")
     con <- con0
     tbl <- "filtered"
     on.exit(try(DBI::dbDisconnect(con0, shutdown = TRUE), silent = TRUE), add = TRUE)
@@ -1998,6 +1997,7 @@ retrieveGenomes <- function(base_dir = ".",
     on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
   }
 
+  # What genomes need to be downloaded? Build set as `ids`
   ids <- tibble::as_tibble(DBI::dbReadTable(con, tbl)) |>
     dplyr::distinct(`genome.genome_id`) |>
     dplyr::pull(`genome.genome_id`)
@@ -2008,6 +2008,7 @@ retrieveGenomes <- function(base_dir = ".",
   dir.create(genome_path, recursive = TRUE, showWarnings = FALSE)
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
 
+  # Checks what is already  downloaded vs. the full list needed; takes diff
   if (isTRUE(skip_existing)) {
     already <- .list_complete(genome_path, ids)
     if (isTRUE(verbose))
@@ -2015,6 +2016,7 @@ retrieveGenomes <- function(base_dir = ".",
     ids <- setdiff(ids, already)
   }
 
+  # Is diff length 0? If so, all genomes ready to go!
   if (length(ids) == 0L) {
     if (isTRUE(verbose))
       message("All genomes already complete.")
@@ -2226,8 +2228,8 @@ genomeList <- function(base_dir = ".",
 #'    return very large download lists for many species!
 #' @param num_workers Integer. Parallel workers used for genome download.
 #'    Applied to both FTP and CLI download branches. Default: 8.
-#' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
-#' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
+#' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
+#' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
 #' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
 #' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
@@ -2246,8 +2248,8 @@ prepareGenomes <- function(user_bacs,
                            overwrite = FALSE,
                            num_workers = 8L,
                            evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
-                           checkm_contam = 5,
-                           checkm_complete = 95,
+                           max_checkm_contam = 5,
+                           min_checkm_complete = 95,
                            gc_deviations = NULL,
                            length_deviations = NULL,
                            cds_deviations = NULL,
@@ -2269,8 +2271,8 @@ prepareGenomes <- function(user_bacs,
     base_dir = base_dir,
     abx = "All",
     overwrite = overwrite,
-    checkm_contam = checkm_contam,
-    checkm_complete = checkm_complete,
+    max_checkm_contam = max_checkm_contam,
+    min_checkm_complete = min_checkm_complete,
     gc_deviations = gc_deviations,
     length_deviations = length_deviations,
     cds_deviations = cds_deviations,
