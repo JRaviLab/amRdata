@@ -36,6 +36,8 @@ Imports:
     data.table,
     dplyr,
     duckdb,
+    furrr,
+    future,
     ggplot2,
     glue,
     grid,
