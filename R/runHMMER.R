@@ -7,90 +7,232 @@
 #'
 #' @export
 #' @examples
-.checkHmmerDatabase <- function(hmmer_db_dir, db_name) {
+.prepareHmmerDatabases <- function(
+    hmmer_db_dir,
+    databases = c("Pfam", "COG", "AMRFinder"),
+    docker_image = "staphb/hmmer"
+  ) {
+  
+  hmmer_db_dir <- path.expand(hmmer_db_dir)
 
-  dir.create(db_dir, recursive = TRUE, showWarnings = FALSE)
+  options(timeout = max(3600, getOption("timeout")))
 
   dbs <- list(
 
     Pfam = list(
-      hmm = file.path(db_dir, "Pfam-A", "Pfam-A.hmm"),
-      url = "https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz"
+      dir = file.path(hmmer_db_dir, "Pfam"),
+      hmm_name = "Pfam-A.hmm",
+      url = "https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz",
+      type = "gz"
     ),
 
     COG = list(
-      hmm = file.path(db_dir, "COG", "COG.hmm"),
-      url = "http://boabio.belozersky.msu.ru/media/COG_database2024.zip"
+      dir = file.path(hmmer_db_dir, "COG"),
+      hmm_name = "COG_database2024.hmm",
+      url = "http://boabio.belozersky.msu.ru/media/COG_database2024.zip",
+      type = "zip"
     ),
 
     AMRFinder = list(
-      hmm = file.path(db_dir, "AMRFinder", "AMRFinder.hmm"),
-      url = "https://ftp.ncbi.nlm.nih.gov/hmm/NCBIfam-AMRFinder/latest/NCBIfam-AMRFinder.HMM.tar.gz"
+      dir = file.path(hmmer_db_dir, "AMRFinder"),
+      hmm_name = NULL,
+      url = "https://ftp.ncbi.nlm.nih.gov/hmm/NCBIfam-AMRFinder/latest/NCBIfam-AMRFinder.HMM.tar.gz",
+      type = "tar.gz"
     )
   )
 
-  db <- dbs[[db_name]]
+  dbs <- dbs[databases]
 
-  if (!file.exists(db$hmm)) {
+  db_paths <- list()
 
-    if (is.na(db$url)) {
-      stop(
-        db_name,
-        " database not found in ",
-        db_dir,
-        ". Please place ",
-        basename(db$hmm),
-        " in this directory."
+  for (db_name in names(dbs)) {
+
+    db <- dbs[[db_name]]
+
+    dir.create(
+      db$dir,
+      recursive = TRUE,
+      showWarnings = FALSE
+    )
+
+    message("Checking ", db_name)
+
+    hmm_files <- list.files(
+      db$dir,
+      pattern = "\\.hmm$",
+      recursive = TRUE,
+      full.names = TRUE,
+      ignore.case = TRUE
+    )
+
+    if (length(hmm_files) == 0) {
+
+      message("Downloading ", db_name)
+
+      tmp <- tempfile()
+
+      utils::download.file(
+        url = db$url,
+        destfile = tmp,
+        mode = "wb",
+        method = "libcurl"
+      )
+
+      switch(
+        db$type,
+
+        gz = {
+          hmm_file <- file.path(
+            db$dir,
+            db$hmm_name
+          )
+
+          R.utils::gunzip(
+            filename = tmp,
+            destname = hmm_file,
+            overwrite = TRUE,
+            remove = FALSE
+          )
+        },
+
+        zip = {
+          utils::unzip(
+            zipfile = tmp,
+            exdir = db$dir
+          )
+        },
+
+        `tar.gz` = {
+          utils::untar(
+            tarfile = tmp,
+            exdir = db$dir
+          )
+        }
+      )
+
+      hmm_files <- list.files(
+        db$dir,
+        pattern = "\\.hmm$",
+        recursive = TRUE,
+        full.names = TRUE,
+        ignore.case = TRUE
       )
     }
 
-    message("Downloading ", db_name, " database")
+   if (db_name == "AMRFinder") {
 
-    tmp <- tempfile(fileext = ".gz")
-
-    utils::download.file(
-      db$url,
-      tmp,
-      mode = "wb"
-    )
-
-    R.utils::gunzip(
-      tmp,
-      destname = db$hmm,
-      overwrite = TRUE,
-      remove = FALSE
-    )
-  }
-
-  pressed_files <- paste0(
-    db$hmm,
-    c(".h3m", ".h3i", ".h3f", ".h3p")
+  hmm_files <- list.files(
+    db$dir,
+    pattern = "\\.hmm$",
+    recursive = TRUE,
+    full.names = TRUE,
+    ignore.case = TRUE
   )
 
-  if (!all(file.exists(pressed_files))) {
+  hmm_file <- file.path(
+    db$dir,
+    "AMRFinder.hmm"
+  )
 
-    message("Running hmmpress on ", basename(db$hmm))
+  source_hmms <- setdiff(
+    normalizePath(hmm_files),
+    normalizePath(hmm_file, mustWork = FALSE)
+  )
 
-    output <- system2(
-      "hmmpress",
-      db$hmm,
-      stdout = TRUE,
-      stderr = TRUE
+  if (!file.exists(hmm_file)) {
+
+    message(
+      "Combining ",
+      length(source_hmms),
+      " AMRFinder HMM files"
+    )
+
+    file.create(hmm_file)
+
+    for (f in sort(source_hmms)) {
+      file.append(hmm_file, f)
+    }
+  }
+
+} else {
+      hmm_files <- list.files(
+        db$dir,
+        pattern = "\\.hmm$",
+        recursive = TRUE,
+        full.names = TRUE,
+        ignore.case = TRUE
+      )
+      
+      if (length(hmm_files) == 0) {
+        stop(
+          "No .hmm file found for ",
+          db_name
+        )
+      }
+      
+      hmm_file <- hmm_files[1]
+    }
+
+    pressed_files <- paste0(
+      hmm_file,
+      c(
+        ".h3m",
+        ".h3i",
+        ".h3f",
+        ".h3p"
+      )
     )
 
     if (!all(file.exists(pressed_files))) {
-      stop(
-        "hmmpress failed for ",
-        db$hmm,
-        "\n",
-        paste(output, collapse = "\n")
+
+      message(
+        "Running hmmpress for ",
+        basename(hmm_file)
       )
+
+      output <- system2(
+        "docker",
+        args = c(
+          "run",
+          "--rm",
+          "-v",
+          paste0(
+            dirname(hmm_file),
+            ":/db"
+          ),
+          docker_image,
+          "hmmpress",
+          file.path(
+            "/db",
+            basename(hmm_file)
+          )
+        ),
+        stdout = TRUE,
+        stderr = TRUE
+      )
+
+      if (!all(file.exists(pressed_files))) {
+
+        stop(
+          "hmmpress failed for ",
+          db_name,
+          "\n",
+          paste(output, collapse = "\n")
+        )
+      }
     }
+
+    db_paths[[db_name]] <- hmm_file
+
+    message(
+      db_name,
+      " ready: ",
+      hmm_file
+    )
   }
 
-  normalizePath(db$hmm)
+  db_paths
 }
-
 #' Write a data frame to a compressed Parquet file
 #'
 #' @param df A data frame or tibble to write.
@@ -107,19 +249,37 @@
   )
 }
 
+#' Title
+#'
+#' @param duckdb_path
+#' @param output_path
+#' @param threads
+#' @param hmmer_db_dir
+#' @param databases
+#' @param docker_image
+#' @param split_jobs
+#' @param num_of_splits
+#' @param n_workers
+#'
+#' @returns
+#'
+#' @export
+#' @examples
 .runHMMER <- function(duckdb_path,
                       output_path,
                       threads = 8L,
-                      database_path,
+                      hmmer_db_dir,
+                      databases = c("Pfam", "COG", "AMRFinder"),
                       docker_image = "staphb/hmmer",
                       split_jobs = TRUE,
                       num_of_splits = 20L,
-                      n_workers = 4L) {
+                      n_workers = 4L
+                    ) {
   # Fail fast if Docker is missing
   if (!nzchar(Sys.which("docker"))) {
     stop("Docker is not available on your PATH but is required to run HMMER.")
   }
-
+  
   duckdb_path <- .docker_path(duckdb_path)
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
     output_path <- dirname(duckdb_path)
@@ -133,8 +293,14 @@
   prot_seqs <- DBI::dbReadTable(con, "protein_cluster_seq") |>
     tibble::as_tibble()
 
-  # derive a clean label from the database filename
-  database <- tools::file_path_sans_ext(basename(database_path))
+  # database paths 
+ db_paths <- .prepareHmmerDatabases(
+  hmmer_db_dir = hmmer_db_dir,
+  databases = databases,
+  docker_image = docker_image
+)
+
+db_paths <- db_paths[databases]
 
   # clamp splits to the number of sequences available
   chunk_count <- min(as.integer(num_of_splits), nrow(prot_seqs))
@@ -154,7 +320,7 @@
 
   job_list <- expand.grid(
     chunk = sprintf("%02d", seq_len(chunk_count)),
-    db = database,
+    db = databases,
     stringsAsFactors = FALSE
   ) |>
     dplyr::mutate(
@@ -169,6 +335,7 @@
     hmmer_output <- file.path(output_path, paste0(JOB_NAME, ".tbl"))
 
     # database paths
+    database_path <- db_paths[[DB]]
     db_host_dir <- dirname(database_path)
     db_filename <- basename(database_path)
     db_cont_dir <- "/opt/hmmer/data"
@@ -178,13 +345,18 @@
     mount_host <- output_path
     mount_cont <- "/work"
 
+    threads_per_job <- max(
+  1L,
+  floor(threads / n_workers)
+)
+
     cmd_args <- c(
       "run", "--rm",
       "-v", paste0(mount_host, ":", mount_cont),
       "-v", paste0(db_host_dir, ":", db_cont_dir),
       docker_image,
       "hmmscan",
-      "--cpu", as.character(threads),
+      "--cpu", as.character(threads_per_job),
       "--tblout", .to_container(hmmer_output, mount_host, mount_cont),
       db_cont_path,
       .to_container(hmmer_input, mount_host, mount_cont)
@@ -219,27 +391,90 @@
     hmmer_tbl_filename
   }
 
-  hmmer_param <- BiocParallel::SnowParam(workers = max(1L, n_workers))
-  parquet_files <- BiocParallel::bpmapply(
-    FUN = .runHmmerJob,
-    JOB_NAME = job_list$JOB_NAME,
-    FASTA = job_list$FASTA,
-    DB = job_list$DB,
-    SIMPLIFY = TRUE,
-    USE.NAMES = FALSE,
-    BPPARAM = hmmer_param
+  future::plan(
+  future::multisession,
+  workers = max(1L, n_workers)
+)
+
+parquet_files <- furrr::future_map_chr(
+  seq_len(nrow(job_list)),
+  function(i) {
+
+    .runHmmerJob(
+      JOB_NAME = job_list$JOB_NAME[i],
+      FASTA = job_list$FASTA[i],
+      DB = job_list$DB[i]
+    )
+  }
+)
+
+future::plan(future::sequential)
+  
+  parquet_tbl <- tibble::tibble(
+  parquet = parquet_files,
+  db = job_list$DB
+)
+  
+ final_parquets <- list()
+
+for (database_name in databases) {
+
+  message("Combining ", database_name)
+
+  db_files <- parquet_tbl |>
+    dplyr::filter(
+      db == database_name
+    ) |>
+    dplyr::pull(parquet)
+
+  combined_tbl <- purrr::map(
+    db_files,
+    arrow::read_parquet
+  ) |>
+    dplyr::bind_rows()
+
+  final_parquet <- file.path(
+    output_path,
+    paste0(
+      "protein_",
+      database_name,
+      ".parquet"
+    )
   )
 
-  final_parquet <- file.path(output_path, paste0("protein_", database, ".parquet"))
+  .write_compressed_parquet(
+    combined_tbl,
+    final_parquet
+  )
 
-  purrr::map(parquet_files, arrow::read_parquet) |>
-    dplyr::bind_rows() |>
-    .write_compressed_parquet(final_parquet)
+  DBI::dbWriteTable(
+    con,
+    name = paste0(
+      "protein_",
+      database_name
+    ),
+    value = combined_tbl,
+    overwrite = TRUE
+  )
 
-  message("Combined parquet written.")
+  final_parquets[[database_name]] <- final_parquet
 
-  arrow::read_parquet(final_parquet) |>
-    DBI::dbWriteTable(conn = con, name = tools::file_path_sans_ext(basename(final_parquet)), overwrite = TRUE)
+  message(
+    "Created ",
+    basename(final_parquet)
+  )
+}
+
+invisible(final_parquets)
+
+  # purrr::map(parquet_files, arrow::read_parquet) |>
+  #   dplyr::bind_rows() |>
+  #   .write_compressed_parquet(final_parquet)
+
+  # message("Combined parquet written.")
+
+  # arrow::read_parquet(final_parquet) |>
+  #   DBI::dbWriteTable(conn = con, name = tools::file_path_sans_ext(basename(final_parquet)), overwrite = TRUE)
 }
 
 
