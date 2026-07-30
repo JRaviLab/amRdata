@@ -1,3 +1,96 @@
+#' Title
+#'
+#' @param db_dir
+#' @param db_name
+#'
+#' @returns
+#'
+#' @export
+#' @examples
+.checkHmmerDatabase <- function(hmmer_db_dir, db_name) {
+
+  dir.create(db_dir, recursive = TRUE, showWarnings = FALSE)
+
+  dbs <- list(
+
+    Pfam = list(
+      hmm = file.path(db_dir, "Pfam-A", "Pfam-A.hmm"),
+      url = "https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz"
+    ),
+
+    COG = list(
+      hmm = file.path(db_dir, "COG", "COG.hmm"),
+      url = "http://boabio.belozersky.msu.ru/media/COG_database2024.zip"
+    ),
+
+    AMRFinder = list(
+      hmm = file.path(db_dir, "AMRFinder", "AMRFinder.hmm"),
+      url = "https://ftp.ncbi.nlm.nih.gov/hmm/NCBIfam-AMRFinder/latest/NCBIfam-AMRFinder.HMM.tar.gz"
+    )
+  )
+
+  db <- dbs[[db_name]]
+
+  if (!file.exists(db$hmm)) {
+
+    if (is.na(db$url)) {
+      stop(
+        db_name,
+        " database not found in ",
+        db_dir,
+        ". Please place ",
+        basename(db$hmm),
+        " in this directory."
+      )
+    }
+
+    message("Downloading ", db_name, " database")
+
+    tmp <- tempfile(fileext = ".gz")
+
+    utils::download.file(
+      db$url,
+      tmp,
+      mode = "wb"
+    )
+
+    R.utils::gunzip(
+      tmp,
+      destname = db$hmm,
+      overwrite = TRUE,
+      remove = FALSE
+    )
+  }
+
+  pressed_files <- paste0(
+    db$hmm,
+    c(".h3m", ".h3i", ".h3f", ".h3p")
+  )
+
+  if (!all(file.exists(pressed_files))) {
+
+    message("Running hmmpress on ", basename(db$hmm))
+
+    output <- system2(
+      "hmmpress",
+      db$hmm,
+      stdout = TRUE,
+      stderr = TRUE
+    )
+
+    if (!all(file.exists(pressed_files))) {
+      stop(
+        "hmmpress failed for ",
+        db$hmm,
+        "\n",
+        paste(output, collapse = "\n")
+      )
+    }
+  }
+
+  normalizePath(db$hmm)
+}
+
 #' Write a data frame to a compressed Parquet file
 #'
 #' @param df A data frame or tibble to write.
