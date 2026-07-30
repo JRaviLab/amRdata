@@ -13,6 +13,7 @@ runDataProcessing(
   panaroo_len_dif_percent = 0.95,
   panaroo_cluster_threshold = 0.95,
   panaroo_family_seq_identity = 0.5,
+  panaroo_refind_mode = c("off", "default", "strict"),
   cdhit_identity = 0.9,
   cdhit_word_length = 5,
   cdhit_memory = 0,
@@ -50,6 +51,10 @@ merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaro
 \item{panaroo_cluster_threshold}{Numeric. Panaroo \code{--threshold}. Default: \code{0.95}.}
 
 \item{panaroo_family_seq_identity}{Numeric. Panaroo \code{-f} (gene family identity). Default: \code{0.5}.}
+
+\item{panaroo_refind_mode}{Character. Panaroo's \code{--refind-mode} (\code{"off"}, \code{"default"},
+or \code{"strict"}). See \code{\link[=.processPanaroo]{.processPanaroo()}} for what refinding does and the runtime
+caveat behind the current default. Default \code{"off"}.}
 
 \item{cdhit_identity}{Numeric. CD-HIT \code{-c} identity threshold. Default: \code{0.9}.}
 

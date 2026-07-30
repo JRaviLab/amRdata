@@ -40,6 +40,15 @@ NULL
 #' @param cluster_threshold Numeric. Sequence identity threshold (`--threshold`). Default `0.95`.
 #' @param family_seq_identity Numeric. Gene family clustering identity (`-f`). Default `0.5`.
 #' @param panaroo_threads_per_job Integer. Number of threads for Panaroo and parallel execution.
+#' @param refind_mode Character. Panaroo's `--refind-mode` (`"off"`, `"default"`, or
+#'   `"strict"`). Refinding searches for and recovers gene calls that annotation
+#'   tools missed, comparing each candidate against the rest of the pangenome.
+#'   Caveat: this search can take substantially longer (and in rare cases fail to
+#'   complete within hours) when a genome carries a cluster of CDS with internal
+#'   stop codons, which existing upstream genome-quality fields do not flag.
+#'   Default `"off"` for now, to avoid that runtime risk; plan to move this back to
+#'   `"default"` once a QC step upstream (e.g. in `.apply_metadata_qc()`) can screen
+#'   out affected genomes before they reach Panaroo.
 #'
 #' @returns A list of results for each Panaroo batch in its output directory.
 #'
@@ -51,7 +60,9 @@ NULL
                             len_dif_percent,
                             cluster_threshold,
                             family_seq_identity,
-                            panaroo_threads_per_job) {
+                            panaroo_threads_per_job,
+                            refind_mode = c("off", "default", "strict")) {
+  refind_mode <- match.arg(refind_mode)
   output_path <- .docker_path(output_path)
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
 
@@ -100,6 +111,7 @@ NULL
     "--clean-mode", "strict",
     "--merge_paralogs",
     "--remove-invalid-genes",
+    "--refind-mode", refind_mode,
     "--core_threshold", as.character(core_threshold),
     "--len_dif_percent", as.character(len_dif_percent),
     "--threshold", as.character(cluster_threshold),
@@ -143,6 +155,9 @@ NULL
 #' @param threads Integer. Number of threads for Panaroo and parallel execution. Default `8`.
 #' @param split_jobs Logical. If TRUE, split into multiple smaller pangenome
 #'   generation jobs that can be merged by [.mergePanaroo()]. If FALSE, all isolates in one run.
+#' @param refind_mode Character. Panaroo's `--refind-mode` (`"off"`, `"default"`, or
+#'   `"strict"`). See [.processPanaroo()] for what refinding does and the runtime
+#'   caveat behind the current default. Default `"off"`.
 #'
 #' @return A list of results for each Panaroo batch in its output directory.
 #'
@@ -159,7 +174,9 @@ NULL
                         cluster_threshold = 0.95,
                         family_seq_identity = 0.5,
                         threads = 8,
-                        split_jobs = FALSE) {
+                        split_jobs = FALSE,
+                        refind_mode = c("off", "default", "strict")) {
+  refind_mode <- match.arg(refind_mode)
   duckdb_path <- normalizePath(duckdb_path)
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
@@ -220,7 +237,8 @@ NULL
       len_dif_percent         = len_dif_percent,
       cluster_threshold       = cluster_threshold,
       family_seq_identity     = family_seq_identity,
-      panaroo_threads_per_job = panaroo_threads_per_job
+      panaroo_threads_per_job = panaroo_threads_per_job,
+      refind_mode             = refind_mode
     ),
     .options = furrr::furrr_options(seed = TRUE)
   )
@@ -595,6 +613,10 @@ NULL
 #'   using `.mergePanaroo()`. If `FALSE`, only one Panaroo invocation is run.
 #'   Default: `FALSE`.
 #'
+#' @param refind_mode Character. Panaroo's `--refind-mode` (`"off"`, `"default"`, or
+#'   `"strict"`). See [.processPanaroo()] for what refinding does and the runtime
+#'   caveat behind the current default. Default `"off"`.
+#'
 #' @param verbose Logical. Print status messages during Panaroo execution,
 #'   merging, and DuckDB import. Default: `TRUE`.
 #'
@@ -657,7 +679,9 @@ runPanaroo2Duckdb <- function(duckdb_path,
                               family_seq_identity = 0.5,
                               threads = 16,
                               split_jobs = FALSE,
+                              refind_mode = c("off", "default", "strict"),
                               verbose = TRUE) {
+  refind_mode <- match.arg(refind_mode)
   duckdb_path <- normalizePath(duckdb_path)
   out_dir <- if (is.null(output_path)) dirname(duckdb_path) else normalizePath(output_path)
 
@@ -670,7 +694,8 @@ runPanaroo2Duckdb <- function(duckdb_path,
     cluster_threshold = cluster_threshold,
     family_seq_identity = family_seq_identity,
     threads = threads,
-    split_jobs = split_jobs
+    split_jobs = split_jobs,
+    refind_mode = refind_mode
   )
 
   # Identify Panaroo outputs that contain a final_graph.gml file
@@ -1636,6 +1661,9 @@ cleanData <- function(duckdb_path, path) {
 #' @param panaroo_len_dif_percent Numeric. Panaroo `--len_dif_percent`. Default: `0.95`.
 #' @param panaroo_cluster_threshold Numeric. Panaroo `--threshold`. Default: `0.95`.
 #' @param panaroo_family_seq_identity Numeric. Panaroo `-f` (gene family identity). Default: `0.5`.
+#' @param panaroo_refind_mode Character. Panaroo's `--refind-mode` (`"off"`, `"default"`,
+#'   or `"strict"`). See [.processPanaroo()] for what refinding does and the runtime
+#'   caveat behind the current default. Default `"off"`.
 #'
 #' @param cdhit_identity Numeric. CD-HIT `-c` identity threshold. Default: `0.9`.
 #' @param cdhit_word_length Integer. CD-HIT `-n` word length. Default: `5`.
@@ -1722,6 +1750,7 @@ runDataProcessing <- function(duckdb_path,
                               panaroo_len_dif_percent = 0.95,
                               panaroo_cluster_threshold = 0.95,
                               panaroo_family_seq_identity = 0.5,
+                              panaroo_refind_mode = c("off", "default", "strict"),
                               # CD-HIT
                               cdhit_identity = 0.9,
                               cdhit_word_length = 5,
@@ -1738,6 +1767,7 @@ runDataProcessing <- function(duckdb_path,
                               # Metadata cleaning
                               ref_file_path = "data_raw/",
                               verbose = TRUE) {
+  panaroo_refind_mode <- match.arg(panaroo_refind_mode)
   duckdb_path <- normalizePath(duckdb_path)
   out_dir <- if (is.null(output_path)) dirname(duckdb_path) else normalizePath(output_path)
 
@@ -1751,6 +1781,7 @@ runDataProcessing <- function(duckdb_path,
     family_seq_identity    = panaroo_family_seq_identity,
     threads                = threads,
     split_jobs             = panaroo_split_jobs,
+    refind_mode            = panaroo_refind_mode,
     verbose                = verbose
   )
 

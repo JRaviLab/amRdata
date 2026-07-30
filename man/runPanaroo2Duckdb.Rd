@@ -13,6 +13,7 @@ runPanaroo2Duckdb(
   family_seq_identity = 0.5,
   threads = 16,
   split_jobs = FALSE,
+  refind_mode = c("off", "default", "strict"),
   verbose = TRUE
 )
 }
@@ -44,6 +45,10 @@ Default: \code{16}.}
 batches (up to 5, depending on dataset size), and batch outputs are merged
 using \code{.mergePanaroo()}. If \code{FALSE}, only one Panaroo invocation is run.
 Default: \code{FALSE}.}
+
+\item{refind_mode}{Character. Panaroo's \code{--refind-mode} (\code{"off"}, \code{"default"}, or
+\code{"strict"}). See \code{\link[=.processPanaroo]{.processPanaroo()}} for what refinding does and the runtime
+caveat behind the current default. Default \code{"off"}.}
 
 \item{verbose}{Logical. Print status messages during Panaroo execution,
 merging, and DuckDB import. Default: \code{TRUE}.}

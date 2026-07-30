@@ -291,6 +291,30 @@ Processing times vary by species and isolate count:
   results on the next run that look like a data or QC bug but are
   actually just leftover session state.
 
+- If a `furrr`/`future::multisession` worker fails with
+  `could not find function ".xxx"` for an internal amRdata helper,
+  your installed copy of amRdata is stale relative to the source
+  you're editing. `future::multisession` workers are fresh R
+  processes that resolve `amRdata` by loading the *installed* package
+  from `.libPaths()` — they do not see changes made only via
+  `devtools::load_all()` in your interactive session. Run
+  `devtools::install()` before exercising any function that runs work
+  via `future`/`furrr`, or temporarily set
+  `future::plan(future::sequential)` while iterating with `load_all()`
+  alone.
+
+- `runDataProcessing()`/`runPanaroo2Duckdb()` default
+  `panaroo_refind_mode` to `"off"` rather than Panaroo's own default.
+  Refinding recovers gene calls that annotation tools missed, but its
+  search can take substantially longer (or in rare cases fail to
+  complete within hours) when a genome carries a cluster of CDS with
+  internal stop codons — a condition existing genome-quality metadata
+  (CheckM completeness/contamination, consistency scores, quality
+  flags) does not flag. This default trades some gene-recovery
+  accuracy for predictable runtime until a QC step upstream can screen
+  out affected genomes; set `panaroo_refind_mode = "default"` to
+  restore Panaroo's normal behavior.
+
 ### Integration with amR suite
 
 amRdata is designed to work seamlessly with other amR packages:

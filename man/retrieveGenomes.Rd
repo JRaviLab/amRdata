@@ -10,9 +10,9 @@ retrieveGenomes(
   method = c("ftp", "cli"),
   image = "danylmb/bvbrc:5.3",
   skip_existing = TRUE,
-  ftp_workers = 4L,
-  cli_fasta_workers = 4L,
-  cli_gff_workers = 4L,
+  ftp_workers = 8L,
+  cli_fasta_workers = 8L,
+  cli_gff_workers = 8L,
   chunk_size = 50L,
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
   verbose = TRUE
@@ -31,9 +31,9 @@ retrieveGenomes(
 
 \item{ftp_workers}{Parallel workers for FTP path (default 8).}
 
-\item{cli_fasta_workers}{Parallel chunk containers for FASTA+GTO (default 4).}
+\item{cli_fasta_workers}{Parallel chunk containers for FASTA+GTO (default 8).}
 
-\item{cli_gff_workers}{Parallel chunk containers for GFF export (default 4).}
+\item{cli_gff_workers}{Parallel chunk containers for GFF export (default 8).}
 
 \item{chunk_size}{Genomes per chunk container (default 50).}
 
