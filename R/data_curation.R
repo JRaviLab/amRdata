@@ -2378,7 +2378,7 @@ prepareGenomes <- function(user_bacs,
 #'
 #' @return Invisibly returns a list with exported file paths and, if requested,
 #'   in-memory tables.
-#' @keywords internal
+#' @export
 exportTables <- function(duckdb_path,
                          output_dir = NULL,
                          tables = NULL,
