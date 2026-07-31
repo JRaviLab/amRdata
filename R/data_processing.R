@@ -184,6 +184,7 @@ NULL
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
     output_path <- dirname(duckdb_path)
   }
+  dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- normalizePath(output_path)
 
   genome_query_output <- DBI::dbGetQuery(con, "SELECT * FROM files ORDER BY genome_id")
