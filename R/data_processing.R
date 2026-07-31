@@ -93,12 +93,13 @@ NULL
     "--rm",
     "-v", paste0(mount_host, ":", mount_cont),
     "-w", mount_cont,
-    "staphb/panaroo:1.5.1",
+    "staphb/panaroo:1.7.0",
     "panaroo",
     "-i", genome_filepath_cont,
     "-o", output_dir_cont,
     "--clean-mode", "strict",
     "--merge_paralogs",
+    "--refind-mode off",
     "--remove-invalid-genes",
     "--core_threshold", as.character(core_threshold),
     "--len_dif_percent", as.character(len_dif_percent),
@@ -278,11 +279,12 @@ NULL
       "--rm",
       "-v", paste0(mount_host, ":", mount_cont),
       "-w", mount_cont,
-      "staphb/panaroo:1.5.1",
+      "staphb/panaroo:1.7.0",
       "panaroo-merge",
       "-d", dir_args,
       "-o", file.path(mount_cont, "merge_output"),
       "--merge_paralogs",
+      "--refind-mode off",
       "--core_threshold", as.character(core_threshold),
       "--len_dif_percent", as.character(len_dif_percent),
       "--threshold", as.character(cluster_threshold),
@@ -1886,7 +1888,36 @@ exportProcessedData <- function(duckdb_path,
     tibble::as_tibble(DBI::dbReadTable(con, tbl))
   }
 
+  # Save trailing zeroes
+  preserve_id_text <- function(df) {
+    df <- tibble::as_tibble(df)
+
+    id_pattern <- paste0(
+      "(^|[._])(",
+      "genome_id|taxon_id|assembly_accession|bioproject_accession|biosample_accession|",
+      "refseq_accessions?|genbank_accessions?|sra_accession|pmid|",
+      "gene_id|protein_id|domain_id|cluster_id|AccNum|id",
+      ")$"
+    )
+
+    id_cols <- names(df)[grepl(id_pattern, names(df), ignore.case = TRUE)]
+    if (length(id_cols)) {
+      df[id_cols] <- lapply(df[id_cols], as.character)
+    }
+
+    if ("genome_id" %in% names(df)) {
+      df$genome_id <- as.character(df$genome_id)
+    }
+    if ("AccNum" %in% names(df)) {
+      df$AccNum <- as.character(df$AccNum)
+    }
+
+    df
+  }
+
   write_one <- function(df, stem) {
+    df <- preserve_id_text(df)
+
     if ("csv" %in% export_formats) {
       readr::write_csv(df, file.path(output_path, paste0(stem, ".csv")), na = "")
     }
@@ -1923,9 +1954,9 @@ exportProcessedData <- function(duckdb_path,
 
     md |>
       dplyr::transmute(
-        genome_id = `genome.genome_id`,
-        antibiotic = `genome_drug.antibiotic`,
-        phenotype = `genome_drug.resistant_phenotype`
+        genome_id = as.character(`genome.genome_id`),
+        antibiotic = as.character(`genome_drug.antibiotic`),
+        phenotype = as.character(`genome_drug.resistant_phenotype`)
       ) |>
       dplyr::filter(!is.na(genome_id), !is.na(antibiotic), !is.na(phenotype)) |>
       dplyr::distinct() |>
@@ -1942,7 +1973,6 @@ exportProcessedData <- function(duckdb_path,
       dplyr::arrange(genome_id)
   }
 
-  # Appendable here means whether we glue AST phenotypes on the end or not
   table_specs <- list(
     gene_count = list(source = "gene_count", stem = "gene_count", appendable = TRUE),
     protein_count = list(source = "protein_count", stem = "protein_count", appendable = TRUE),
@@ -1986,7 +2016,7 @@ exportProcessedData <- function(duckdb_path,
     stop("No requested tables were found in the DuckDB.")
   }
 
-  phenotype_wide <- build_amr_wide()
+  phenotype_wide <- preserve_id_text(build_amr_wide())
   exported <- character(0)
 
   for (key in selected_keys) {
@@ -2008,7 +2038,7 @@ exportProcessedData <- function(duckdb_path,
       next
     }
 
-    df <- read_tbl(spec$source)
+    df <- preserve_id_text(read_tbl(spec$source))
     out_stem <- spec$stem
 
     if (identical(amr_phenotype_mode, "append") &&
@@ -2016,6 +2046,7 @@ exportProcessedData <- function(duckdb_path,
         !is.null(phenotype_wide) &&
         "genome_id" %in% names(df)) {
       df <- dplyr::left_join(df, phenotype_wide, by = "genome_id")
+      df <- preserve_id_text(df)
       out_stem <- paste0(spec$stem, "_with_phenotypes")
     }
 

@@ -1969,7 +1969,7 @@ retrieveGenomes <- function(base_dir = ".",
 
   # Use 'filtered' if already prepared, or start filtering
   if (isTRUE(verbose))
-    message("Preparing download set (checking for existing 'filtered').")
+    message("Preparing download set (checking for existing 'filtered' table).")
   paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
   db_path <- paths$db_path
   con0 <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
@@ -2019,7 +2019,7 @@ retrieveGenomes <- function(base_dir = ".",
   # Is diff length 0? If so, all genomes ready to go!
   if (length(ids) == 0L) {
     if (isTRUE(verbose))
-      message("All genomes already complete.")
+      message("Download of all genomes already complete.")
     all_ids <- tibble::as_tibble(DBI::dbReadTable(con, tbl)) |>
       dplyr::distinct(`genome.genome_id`) |>
       dplyr::pull(`genome.genome_id`)
@@ -2403,45 +2403,76 @@ exportTables <- function(duckdb_path,
     stop("No tables found in DuckDB: ", duckdb_path)
   }
 
-  # More tables will exist in a full DuckDB output after data processing, but
-  # limiting this to the basic genome stats and metadata you'd get from only
-  # running data_curation.R
-  basic_tables <- c(
+  default_tables <- c(
     "bac_data",
     "filtered",
     "metadata",
     "genome_data",
     "amr_phenotype",
     "metadata_qc",
-    "metadata_qc_rejections"
+    "metadata_qc_rejections",
+    "files"
   )
 
-  if (is.null(tables)) {
-    tables <- intersect(basic_tables, available_tables)
+  selected_tables <- if (is.null(tables)) {
+    intersect(default_tables, available_tables)
   } else {
-    tables <- intersect(as.character(tables), available_tables)
-    if (!length(tables)) {
-      stop("None of the requested tables were found in the DuckDB.")
-    }
+    intersect(unique(as.character(tables)), available_tables)
   }
 
   if (length(skip_tables)) {
-    tables <- setdiff(tables, skip_tables)
+    selected_tables <- setdiff(selected_tables, skip_tables)
   }
-  if (!length(tables)) {
+
+  if (!length(selected_tables)) {
     stop("No tables left to export after applying skip_tables.")
+  }
+
+  preserve_id_text <- function(df) {
+    df <- tibble::as_tibble(df)
+
+    id_pattern <- paste0(
+      "(^|\\.)(",
+      "genome(_drug)?_id|taxon_id|",
+      "assembly_accession|bioproject_accession|biosample_accession|",
+      "refseq_accessions?|genbank_accessions?|sra_accession|",
+      "pmid|accession|version|^id$",
+      ")$"
+    )
+
+    id_cols <- names(df)[grepl(id_pattern, names(df), ignore.case = TRUE)]
+    if (length(id_cols)) {
+      df[id_cols] <- lapply(df[id_cols], as.character)
+    }
+
+    df
+  }
+
+  write_csv_quoted <- function(df, path) {
+    utils::write.table(
+      df,
+      file = path,
+      sep = ",",
+      row.names = FALSE,
+      col.names = TRUE,
+      quote = TRUE,
+      na = "",
+      qmethod = "double",
+      fileEncoding = "UTF-8"
+    )
   }
 
   exported_files <- list()
   loaded_tables <- list()
 
-  for (tbl in tables) {
-    out_file <- file.path(output_dir, paste0(tbl, ".csv"))
-    df <- DBI::dbReadTable(con, tbl)
+  for (tbl in selected_tables) {
+    df <- preserve_id_text(DBI::dbReadTable(con, tbl))
 
     if (isTRUE(export_tables)) {
-      readr::write_csv(df, out_file, na = "")
+      out_file <- file.path(output_dir, paste0(tbl, ".csv"))
+      write_csv_quoted(df, out_file)
       exported_files[[tbl]] <- out_file
+
       if (isTRUE(verbose)) {
         message("Exported table: ", tbl, " -> ", out_file)
       }
@@ -2453,59 +2484,49 @@ exportTables <- function(duckdb_path,
   }
 
   count_if_present <- function(tbl) {
-    if (tbl %in% available_tables) {
-      as.character(DBI::dbGetQuery(
-        con,
-        paste0("SELECT COUNT(*) AS n FROM ", DBI::dbQuoteIdentifier(con, tbl))
-      )$n[[1]])
-    } else {
-      NA_character_
+    if (!(tbl %in% available_tables)) {
+      return(NA_character_)
     }
+    as.character(DBI::dbGetQuery(
+      con,
+      paste0("SELECT COUNT(*) AS n FROM ", DBI::dbQuoteIdentifier(con, tbl))
+    )$n[[1]])
   }
+
+  summary_tables <- available_tables
 
   summary_tbl <- tibble::tibble(
     metric = c(
       "duckdb_path",
       "export_dir",
+      "tables_requested",
       "tables_exported",
       "table_names",
-      "metadata_rows",
-      "genome_data_rows",
-      "amr_phenotype_rows",
-      "metadata_qc_rows",
-      "metadata_qc_rejections_rows",
-      "filtered_rows",
-      "files_rows",
-      "bac_data_rows"
+      paste0(summary_tables, "_rows")
     ),
     value = c(
       duckdb_path,
       output_dir,
-      as.character(length(tables)),
-      paste(tables, collapse = ", "),
-      count_if_present("metadata"),
-      count_if_present("genome_data"),
-      count_if_present("amr_phenotype"),
-      count_if_present("metadata_qc"),
-      count_if_present("metadata_qc_rejections"),
-      count_if_present("filtered"),
-      count_if_present("files"),
-      count_if_present("bac_data")
+      if (is.null(tables)) "default" else paste(unique(as.character(tables)), collapse = ", "),
+      as.character(length(exported_files)),
+      paste(summary_tables, collapse = ", "),
+      vapply(summary_tables, count_if_present, character(1))
     )
   )
 
   if (isTRUE(export_tables) && isTRUE(include_summary)) {
-    readr::write_csv(summary_tbl, file.path(output_dir, "summary.csv"), na = "")
+    write_csv_quoted(summary_tbl, file.path(output_dir, "summary.csv"))
     writeLines(
       c(
         paste0("DuckDB: ", duckdb_path),
         paste0("Export directory: ", output_dir),
-        paste0("Tables exported: ", length(tables)),
-        paste0("Table names: ", paste(tables, collapse = ", "))
+        paste0("Tables exported: ", length(exported_files)),
+        paste0("Table names: ", paste(summary_tables, collapse = ", "))
       ),
       file.path(output_dir, "summary.txt"),
       useBytes = TRUE
     )
+
     if (isTRUE(verbose)) {
       message("Exported summary files.")
     }
@@ -2513,7 +2534,7 @@ exportTables <- function(duckdb_path,
 
   invisible(list(
     export_dir = output_dir,
-    tables = tables,
+    tables = selected_tables,
     files = exported_files,
     data = if (isTRUE(load_tables)) loaded_tables else NULL,
     summary = summary_tbl
