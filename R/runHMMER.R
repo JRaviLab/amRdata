@@ -583,52 +583,134 @@ invisible(final_parquets)
 #' )
 #' }
 #'
-#' @export
-proteinAnnotations2Duckdb <- function(annotated_parquet, duckdb_path) {
-  annotated_parquet <- .docker_path(annotated_parquet)
+#' @internal
+.proteinAnnotations2Duckdb <- function(
+    duckdb_path,
+    databases = c("Pfam", "COG", "AMRFinder")
+) {
+
   duckdb_path <- .docker_path(duckdb_path)
 
-  # derive table name from the annotation filename stem
-  database <- tools::file_path_sans_ext(basename(annotated_parquet))
+  con <- DBI::dbConnect(
+    duckdb::duckdb(),
+    duckdb_path
+  )
 
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
+  on.exit(
+    try(
+      DBI::dbDisconnect(
+        con,
+        shutdown = FALSE
+      ),
+      silent = TRUE
+    ),
+    add = TRUE
+  )
 
-  protein_long <- DBI::dbReadTable(con, "protein_count") |>
+  protein_long <- DBI::dbReadTable(
+    con,
+    "protein_count"
+  ) |>
     tibble::as_tibble() |>
     tidyr::pivot_longer(
       cols = -genome_id,
       names_to = "query_name",
       values_to = "count"
     ) |>
-    dplyr::filter(count > 0)
-
-  annotation <- arrow::read_parquet(annotated_parquet)
-
-  genome_annot_matrix <- protein_long |>
-    # protein IDs are stored with "." separator in DuckDB but "|" in HMMER output
-    dplyr::mutate(query_name = stringr::str_replace(query_name, "^fig\\.", "fig|")) |>
-    dplyr::inner_join(
-      dplyr::select(annotation, name, query_name),
-      by = "query_name"
-    ) |>
-    dplyr::group_by(genome_id, name) |>
-    dplyr::summarise(count = sum(count), .groups = "drop") |>
-    tidyr::pivot_wider(
-      names_from = name,
-      values_from = count,
-      values_fill = 0
+    dplyr::filter(count > 0) |>
+    dplyr::mutate(
+      query_name = stringr::str_replace(
+        query_name,
+        "^fig\\.",
+        "fig|"
+      )
     )
 
-  count_path <- file.path(dirname(duckdb_path), paste0(database, "_count.parquet"))
-  arrow::write_parquet(genome_annot_matrix, count_path)
+  count_paths <- list()
 
-  DBI::dbWriteTable(
-    conn = con,
-    name = tools::file_path_sans_ext(basename(count_path)),
-    value = genome_annot_matrix,
-    overwrite = TRUE
-  )
+  for (database in databases) {
 
-  invisible(count_path)
+    annotation_table <- paste0(
+      "protein_",
+      database
+    )
+
+    if (!DBI::dbExistsTable(con, annotation_table)) {
+
+      warning(
+        annotation_table,
+        " not found in DuckDB. Skipping."
+      )
+
+      next
+    }
+
+    message(
+      "Processing ",
+      annotation_table
+    )
+
+    annotation <- DBI::dbReadTable(
+      con,
+      annotation_table
+    ) |>
+      tibble::as_tibble()
+
+    genome_annot_matrix <- protein_long |>
+      dplyr::inner_join(
+        dplyr::select(
+          annotation,
+          name,
+          query_name
+        ),
+        by = "query_name"
+      ) |>
+      dplyr::group_by(
+        genome_id,
+        name
+      ) |>
+      dplyr::summarise(
+        count = sum(count),
+        .groups = "drop"
+      ) |>
+      tidyr::pivot_wider(
+        names_from = name,
+        values_from = count,
+        values_fill = 0
+      )
+
+    count_table <- paste0(
+      annotation_table,
+      "_count"
+    )
+
+    count_path <- file.path(
+      dirname(duckdb_path),
+      paste0(
+        count_table,
+        ".parquet"
+      )
+    )
+
+    arrow::write_parquet(
+      genome_annot_matrix,
+      count_path
+    )
+
+    DBI::dbWriteTable(
+      con,
+      count_table,
+      genome_annot_matrix,
+      overwrite = TRUE
+    )
+
+    count_paths[[database]] <- count_path
+
+    message(
+      "Created ",
+      count_table
+    )
+  }
+
+  invisible(count_paths)
 }
