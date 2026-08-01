@@ -63,8 +63,8 @@ NULL
                             panaroo_threads_per_job,
                             refind_mode = c("off", "default", "strict")) {
   refind_mode <- match.arg(refind_mode)
-  output_path <- .docker_path(output_path)
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
+  output_path <- .docker_path(output_path)
 
   # Fail fast if Docker is missing
   if (!nzchar(Sys.which("docker"))) {
@@ -499,8 +499,8 @@ NULL
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
     output_path <- dirname(duckdb_path)
   }
+  dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- .docker_path(output_path)
-  if (!dir.exists(output_path)) dir.create(output_path, recursive = TRUE)
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
@@ -909,6 +909,7 @@ CDHIT2duckdb <- function(duckdb_path,
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
     output_path <- dirname(duckdb_path) # e.g., ./results/<bug>
   }
+  dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- normalizePath(output_path)
 
   cdhit_outputs <- .runCDHIT(duckdb_path,
@@ -1110,10 +1111,9 @@ CDHIT2duckdb <- function(duckdb_path,
                            file_format,
                            docker_image = sprintf("interpro/interproscan:%s", "5.76-107.0")) {
   # Normalize and mount paths
+  dir.create(file.path(path, "tmp", "iprscan"), recursive = TRUE, showWarnings = FALSE)
   path <- .docker_path(path)
   bind_data <- .docker_path(ipr_data_path)
-
-  dir.create(file.path(path, "tmp", "iprscan"), recursive = TRUE, showWarnings = FALSE)
 
   fasta_sequences <- Biostrings::AAStringSet(chunk$sequence)
   names(fasta_sequences) <- chunk$name
@@ -1200,6 +1200,7 @@ domainFromIPR <- function(duckdb_path,
   if (missing(path) || path %in% c(".", "results", "results/")) {
     path <- dirname(duckdb_path)
   }
+  dir.create(path, recursive = TRUE, showWarnings = FALSE)
   path <- normalizePath(path)
 
   ipr_image <- sprintf("%s:%s", docker_repo, ipr_version)
