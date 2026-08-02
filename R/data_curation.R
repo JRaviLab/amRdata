@@ -8,7 +8,8 @@
 #' Helps tag genomes with their AMR evidence for parsing
 #' @keywords internal
 .create_amr_tagged_view <- function(con) {
-  lab_methods <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution")
+  lab_methods <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution", "Biofosun Gram-positive panels broth dilution",
+                  "Vitek_2-P607_card", "cation-adjusted Mueller-Hinton broth", "gradient_diffusion", "kirby-bauer_disc_diffusion")
   lab_list_sql <- paste(DBI::dbQuoteString(con, lab_methods), collapse = ", ")
   comp_str_sql <- DBI::dbQuoteString(con, "Computational Method")
 
