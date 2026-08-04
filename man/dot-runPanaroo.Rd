@@ -13,7 +13,10 @@
   family_seq_identity = 0.5,
   threads = 8,
   split_jobs = FALSE,
-  refind_mode = c("off", "default", "strict")
+  refind_mode = c("off", "default", "strict"),
+  strip_pseudogenes = FALSE,
+  pseudogene_clean_dir = "gff_clean",
+  write_pseudogene_audit = TRUE
 )
 }
 \arguments{

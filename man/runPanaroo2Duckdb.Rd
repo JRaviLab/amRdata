@@ -11,9 +11,12 @@ runPanaroo2Duckdb(
   len_dif_percent = 0.95,
   cluster_threshold = 0.95,
   family_seq_identity = 0.5,
-  threads = 16,
+  threads = 8,
   split_jobs = FALSE,
   refind_mode = c("off", "default", "strict"),
+  strip_pseudogenes = FALSE,
+  pseudogene_clean_dir = "gff_clean",
+  write_pseudogene_audit = TRUE,
   verbose = TRUE
 )
 }
@@ -39,7 +42,7 @@ Default: \code{0.5}.}
 
 \item{threads}{Integer. Total CPU budget to allocate for Panaroo.
 If \code{split_jobs = TRUE}, threads are divided across batches.
-Default: \code{16}.}
+Default: \code{8}.}
 
 \item{split_jobs}{Logical. If \code{TRUE}, Panaroo is run in multiple parallel
 batches (up to 5, depending on dataset size), and batch outputs are merged
@@ -109,7 +112,7 @@ and modeling steps in \code{amRdata} and \code{amRml}.
 runPanaroo2Duckdb(
   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
   output_path = "data/Shigella_flexneri",
-  threads     = 12,
+  threads     = 8,
   split_jobs  = FALSE
 )
 
