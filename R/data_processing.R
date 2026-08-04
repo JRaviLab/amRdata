@@ -138,6 +138,120 @@ NULL
   invisible(res)
 }
 
+#' Remove pseudogene annotations from Panaroo input GFF files
+#'
+#' Cleans GFF annotation files of `pseudogene` feature records only. Cleaned
+#' GFFs are written to a subdirectory under `output_path` and swapped into the
+#' Panaroo input list, leaving the original genome annotations alone.
+#'
+#' This optional preprocessing step can reduce weird runtime stalls during
+#' Panaroo graph construction for some BV-BRC/PATRIC genome annotations that
+#' contain troublesome pseudogene features.
+#'
+#' @param panaroo_input_files Character vector of `"gff fna"` input lines used
+#'   by Panaroo.
+#' @param output_path Character scalar. Base directory for temporary cleaned
+#'   GFF files and audit outputs.
+#' @param clean_dir Character scalar. Name of the subdirectory created beneath
+#'   `output_path` to store cleaned GFF files. Default `"gff_clean"`.
+#'
+#' @return A list containing:
+#' \itemize{
+#'   \item `panaroo_input_files` — rewritten Panaroo input lines pointing to the
+#'   cleaned GFF files.
+#'   \item `audit` — a tibble summarizing, for each genome, the total number of
+#'   annotated features, the number of pseudogenes removed, and the number of
+#'   remaining features.
+#' }
+#'
+#' @details
+#' This performs lightweight preprocessing only, removing feature records whose
+#' third GFF column is exactly `"pseudogene"` and does not otherwise modify
+#' annotation coordinates, attributes, or sequence files. FASTA paths are unchanged.
+#'
+#' @keywords internal
+.stripPseudogeneGFFs <- function(panaroo_input_files,
+                                 output_path,
+                                 clean_dir = "gff_clean") {
+  # Normalize our paths
+  panaroo_input_files <- as.character(panaroo_input_files)
+  output_path <- .docker_path(output_path)
+
+  # Set the directory to place cleaned GFFs into
+  clean_root <- file.path(output_path, clean_dir)
+  dir.create(clean_root, recursive = TRUE, showWarnings = FALSE)
+
+  # Where the cleaned up Panaroo input and clean audit is stored
+  out_lines <- character(length(panaroo_input_files))
+  audit <- vector("list", length(panaroo_input_files))
+
+  for (i in seq_along(panaroo_input_files)) {
+
+    # Read the Panaroo gff + fna input lines
+    line <- panaroo_input_files[[i]]
+    parts <- strsplit(line, "\\s+")[[1]]
+
+    # If you're missing either a gff or an fna file in there somehow
+    if (length(parts) < 2L) {
+      stop("Broken Panaroo input line: ", line)
+    }
+
+    # Read in the files parsed above
+    gff_in <- .docker_path(parts[1])
+    fna_in <- .docker_path(parts[2])
+
+    # If it didn't read in
+    if (!file.exists(gff_in)) {
+      stop("Missing GFF file: ", gff_in)
+    }
+
+    # What we're saving out
+    gff_out <- file.path(clean_root, basename(gff_in))
+
+    # Read in the GFF lines and fine the comment lined headers
+    gff_lines <- readLines(gff_in, warn = FALSE)
+    is_header <- startsWith(gff_lines, "#")
+    body <- gff_lines[!is_header]
+
+    # If there's nothing in there to parse
+    if (length(body) == 0L) {
+      writeLines(gff_lines, gff_out, useBytes = TRUE)
+      n_total <- 0L
+      n_pseudogene <- 0L
+      n_kept <- 0L
+    } else {
+      # Otherwise, find the pseudogene lines and save everything but those
+      fields <- strsplit(body, "\t", fixed = TRUE)
+      types <- vapply(fields, function(x) if (length(x) >= 3L) x[[3]] else NA_character_, character(1))
+      keep <- !is.na(types) & types != "pseudogene"
+
+      cleaned <- c(gff_lines[is_header], body[keep])
+      writeLines(cleaned, gff_out, useBytes = TRUE)
+
+      # We love stats
+      n_total <- length(body)
+      n_pseudogene <- sum(!keep, na.rm = TRUE)
+      n_kept <- sum(keep, na.rm = TRUE)
+    }
+
+    # Record what we did and save it into the audit log
+    audit[[i]] <- tibble::tibble(
+      gff_in = gff_in,
+      gff_out = gff_out,
+      n_total_features = n_total,
+      n_pseudogene = n_pseudogene,
+      n_kept = n_kept
+    )
+
+    out_lines[[i]] <- paste(gff_out, fna_in)
+  }
+
+  list(
+    panaroo_input_files = out_lines,
+    audit = dplyr::bind_rows(audit)
+  )
+}
+
 
 #' Run Panaroo for Pangenome Analysis in Parallel Batches
 #'
@@ -175,7 +289,10 @@ NULL
                         family_seq_identity = 0.5,
                         threads = 8,
                         split_jobs = FALSE,
-                        refind_mode = c("off", "default", "strict")) {
+                        refind_mode = c("off", "default", "strict"),
+                        strip_pseudogenes = FALSE,
+                        pseudogene_clean_dir = "gff_clean",
+                        write_pseudogene_audit = TRUE) {
   refind_mode <- match.arg(refind_mode)
   duckdb_path <- normalizePath(duckdb_path)
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
@@ -194,6 +311,19 @@ NULL
 
   # Drop true NAs
   panaroo_input_files <- panaroo_input_files[!is.na(panaroo_input_files)]
+
+  # Cleaning pseudogene lines out of GFF files
+  if (isTRUE(strip_pseudogenes)) {
+    cleaned <- .stripPseudogeneGFFs(
+      panaroo_input_files = panaroo_input_files,
+      output_path = output_path,
+      clean_dir = pseudogene_clean_dir
+    )
+    panaroo_input_files <- cleaned$panaroo_input_files
+    if (isTRUE(write_pseudogene_audit)) {
+      readr::write_csv(cleaned$audit, file.path(output_path, "panaroo_pseudogene_audit.csv"))
+    }
+  }
 
   split_files <- strsplit(panaroo_input_files, " ")
 
@@ -607,7 +737,7 @@ NULL
 #'
 #' @param threads Integer. Total CPU budget to allocate for Panaroo.
 #'   If `split_jobs = TRUE`, threads are divided across batches.
-#'   Default: `16`.
+#'   Default: `8`.
 #'
 #' @param split_jobs Logical. If `TRUE`, Panaroo is run in multiple parallel
 #'   batches (up to 5, depending on dataset size), and batch outputs are merged
@@ -658,7 +788,7 @@ NULL
 #' runPanaroo2Duckdb(
 #'   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
 #'   output_path = "data/Shigella_flexneri",
-#'   threads     = 12,
+#'   threads     = 8,
 #'   split_jobs  = FALSE
 #' )
 #'
@@ -678,9 +808,12 @@ runPanaroo2Duckdb <- function(duckdb_path,
                               len_dif_percent = 0.95,
                               cluster_threshold = 0.95,
                               family_seq_identity = 0.5,
-                              threads = 16,
+                              threads = 8,
                               split_jobs = FALSE,
                               refind_mode = c("off", "default", "strict"),
+                              strip_pseudogenes = FALSE,
+                              pseudogene_clean_dir = "gff_clean",
+                              write_pseudogene_audit = TRUE,
                               verbose = TRUE) {
   refind_mode <- match.arg(refind_mode)
   duckdb_path <- normalizePath(duckdb_path)
@@ -696,7 +829,10 @@ runPanaroo2Duckdb <- function(duckdb_path,
     family_seq_identity = family_seq_identity,
     threads = threads,
     split_jobs = split_jobs,
-    refind_mode = refind_mode
+    refind_mode = refind_mode,
+    strip_pseudogenes = strip_pseudogenes,
+    pseudogene_clean_dir = pseudogene_clean_dir,
+    write_pseudogene_audit = write_pseudogene_audit
   )
 
   # Identify Panaroo outputs that contain a final_graph.gml file
@@ -1655,7 +1791,7 @@ cleanData <- function(duckdb_path, path) {
 #'   outputs and final Parquet files. If `NULL`, defaults to `dirname(duckdb_path)`.
 #'
 #' @param threads Integer. Shared concurrency budget used across tools (Panaroo, CD-HIT,
-#'   InterProScan). Passed through to each stage as appropriate. Defaults to `16`.
+#'   InterProScan). Passed through to each stage as appropriate. Defaults to `8`.
 #'
 #' @param panaroo_split_jobs Logical. If `TRUE`, Panaroo runs in multiple batches that can be
 #'   merged by [.mergePanaroo()]. If `FALSE`, Panaroo runs once on all isolates. Default: `FALSE`.
@@ -1732,7 +1868,7 @@ cleanData <- function(duckdb_path, path) {
 #' runDataProcessing(
 #'   duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
 #'   output_path   = "data/Shigella_flexneri",
-#'   threads       = 16,
+#'   threads       = 8,
 #'   ref_file_path = "data_raw/"
 #' )
 #'
@@ -1745,7 +1881,7 @@ cleanData <- function(duckdb_path, path) {
 runDataProcessing <- function(duckdb_path,
                               output_path = NULL,
                               # unified threads for all tools
-                              threads = 16,
+                              threads = 8,
                               # Panaroo
                               panaroo_split_jobs = FALSE,
                               panaroo_core_threshold = 0.90,
@@ -1753,6 +1889,9 @@ runDataProcessing <- function(duckdb_path,
                               panaroo_cluster_threshold = 0.95,
                               panaroo_family_seq_identity = 0.5,
                               panaroo_refind_mode = c("off", "default", "strict"),
+                              panaroo_strip_pseudogenes = FALSE,
+                              panaroo_pseudogene_clean_dir = "gff_clean",
+                              panaroo_write_pseudogene_audit = TRUE,
                               # CD-HIT
                               cdhit_identity = 0.9,
                               cdhit_word_length = 5,
@@ -1784,6 +1923,9 @@ runDataProcessing <- function(duckdb_path,
     threads                = threads,
     split_jobs             = panaroo_split_jobs,
     refind_mode            = panaroo_refind_mode,
+    strip_pseudogenes      = panaroo_strip_pseudogenes,
+    pseudogene_clean_dir   = panaroo_pseudogene_clean_dir,
+    write_pseudogene_audit = panaroo_write_pseudogene_audit,
     verbose                = verbose
   )
 
