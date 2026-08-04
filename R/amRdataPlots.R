@@ -4,14 +4,16 @@
 #'   standardized AMR metadata.
 #' @param out_path Character string. Directory where the Markdown report is written.
 #'
-#' @return Writes a structured, human‑readable summary report to
-#'   "<out_path>/amr_metadata_summary.md".
+#' @return Invisibly returns the path to the written Markdown summary report
+#'   ("<out_path>/amr_metadata_summary.md").
 #'
 #' @examples
+#' \dontrun{
 #' generateSummary(
 #'   metadata_parquet = "data/metadata.parquet",
 #'   out_path = "data/"
 #' )
+#' }
 #'
 #' @export
 generateSummary <- function(metadata_parquet, 
@@ -228,8 +230,8 @@ invisible(md_path)
 
 #' Write all summary plots to file(s)
 #'
-#' Expects `metadata_parquet` to be the output of 
-#' `cleanMetadata()` step (or an export of the resulting `metadata` table), since
+#' Expects `metadata_parquet` to be the output of
+#' `cleanMetaData()` step (or an export of the resulting `metadata` table), since
 #' `drug_abbr`, `drug_class`, and `num_resistant_classes` are only populated
 #' after that step joins in the reference drug tables.
 #'
@@ -240,10 +242,12 @@ invisible(md_path)
 #'   separate pages of one multi-page file).
 #' 
 #' @examples
+#' \dontrun{
 #' generatePlots(
 #'   metadata_parquet = "data/metadata.parquet",
 #'   out_path = "data/"
 #' )
+#' }
 #' @export
 generatePlots <- function(metadata_parquet,
                           out_path

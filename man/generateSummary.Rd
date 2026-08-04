@@ -13,16 +13,18 @@ standardized AMR metadata.}
 \item{out_path}{Character string. Directory where the Markdown report is written.}
 }
 \value{
-Writes a structured, human‑readable summary report to
-"<out_path>/amr_metadata_summary.md".
+Invisibly returns the path to the written Markdown summary report
+("<out_path>/amr_metadata_summary.md").
 }
 \description{
 Generate a summary report for AMR metadata
 }
 \examples{
+\dontrun{
 generateSummary(
-  metadata_parquet = "results/metadata.parquet",
-  out_path = "results/"
+  metadata_parquet = "data/metadata.parquet",
+  out_path = "data/"
 )
+}
 
 }
