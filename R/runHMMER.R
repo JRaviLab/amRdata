@@ -814,27 +814,6 @@ invisible(final_parquets)
   invisible(count_paths)
 }
 
-# Annotate the proteins using defense finder and cas finder
- #' Annotate proteins using DefenseFinder + CasFinder HMMs
-#'
-#' Downloads DefenseFinder and CasFinder model repositories,
-#' extracts all HMMs located within profile directories,
-#' concatenates them into a single DefenseCas.hmm database,
-#' runs hmmpress, performs HMMER annotation against proteins
-#' stored in DuckDB, and stores the results in DuckDB.
-#'
-#' @param defense_db_dir Directory used to store downloaded models.
-#' @param docker_image Docker image containing HMMER.
-#' @param duckdb_path Path to duckdb database.
-#' @param output_path Output directory.
-#' @param threads Number of HMMER threads.
-#' @param split_jobs Split sequences into chunks.
-#' @param num_of_splits Number of fasta chunks.
-#' @param n_workers Parallel workers.
-#'
-#' @returns Invisibly returns parquet file path.
-#'
-#' @export
 #' Annotate proteins using DefenseFinder + CasFinder models
 #'
 #' @param defense_db_dir Directory used to store downloaded HMMs
@@ -844,7 +823,7 @@ invisible(final_parquets)
 #' @param threads Number of HMMER threads
 #'
 #' @returns Path to annotation parquet
-#' @export
+#' @keywords internal
 .defenseHMMER <- function(
     defense_db_dir,
     docker_image = "staphb/hmmer",
