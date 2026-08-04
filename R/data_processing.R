@@ -93,7 +93,7 @@ NULL
     "--rm",
     "-v", paste0(mount_host, ":", mount_cont),
     "-w", mount_cont,
-    "staphb/panaroo:1.5.1",
+    "staphb/panaroo:1.7.0",
     "panaroo",
     "-i", genome_filepath_cont,
     "-o", output_dir_cont,
@@ -278,7 +278,7 @@ NULL
       "--rm",
       "-v", paste0(mount_host, ":", mount_cont),
       "-w", mount_cont,
-      "staphb/panaroo:1.5.1",
+      "staphb/panaroo:1.7.0",
       "panaroo-merge",
       "-d", dir_args,
       "-o", file.path(mount_cont, "merge_output"),
@@ -1337,10 +1337,10 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
-  # Define lab methods 
+  # Define lab methods
   lab_methods <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution", "Biofosun Gram-positive panels broth dilution",
                   "Vitek_2-P607_card", "cation-adjusted Mueller-Hinton broth", "gradient_diffusion", "kirby-bauer_disc_diffusion")
-  
+
   dplyr::tbl(con, "filtered") |>
     tibble::as_tibble() |>
     dplyr::select("genome.genome_id") |>
@@ -1355,9 +1355,9 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
       "genome.isolation_source", "genome.species"
     ) |>
     dplyr::mutate(genome_drug.evidence = dplyr::case_when(
-      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",  
+      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",
       genome_drug.laboratory_typing_method == "Computational Prediction"  ~ "Computational Method",
-      TRUE ~ genome_drug.evidence)) |> 
+      TRUE ~ genome_drug.evidence)) |>
     dplyr::filter(genome_drug.evidence == "Laboratory Method") |>
     dplyr::left_join(clean_drug, by = c("genome_drug.antibiotic" = "original_drug")) |>
     dplyr::filter(!is.na(cleaned_drug)) |>
