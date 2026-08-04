@@ -1,3 +1,11 @@
+#' Validate a HMM file has old HMMER3 format and remove them
+#'
+#' @param hmm_file
+#'
+#' @returns
+#'
+#' @keywords internal
+#' @examples
 .isValidHmmFile <- function(hmm_file) {
 
   lines <- tryCatch(
@@ -18,14 +26,16 @@
   starts_ok && ends_ok
 }
 
-#' Title
+#' Download and prepare HMMER databases for generating new file types. 
 #'
-#' @param db_dir
-#' @param db_name
+#' @param hmmer_db_dir Directory to store HMMER databases
+#' @param databases List of databases to prepare (default: c("Pfam", "COG", "AMRFinder"))
+#' @param docker_image Docker image containing HMMER (default: "staphb/hmmer")
+#' @param hmmer_db_url If the databases contain custom database(s), the url is required to download the database. 
 #'
-#' @returns
+#' @returns A list of paths to the database hmm files. 
 #'
-#' @export
+#' @keywords internal
 #' @examples
 .prepareHmmerDatabases <- function(
     hmmer_db_dir,
@@ -344,7 +354,7 @@ if (length(source_hmms) == 0) {
   )
 }
 
-#' Title
+#' Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.
 #'
 #' @param duckdb_path
 #' @param output_path
@@ -358,7 +368,7 @@ if (length(source_hmms) == 0) {
 #'
 #' @returns
 #'
-#' @export
+#' @keywords internal
 #' @examples
 .runHMMER <- function(duckdb_path,
                       output_path,
@@ -682,7 +692,7 @@ invisible(final_parquets)
 #' )
 #' }
 #'
-#' @internal
+#' @keywords internal
 .proteinAnnotations2Duckdb <- function(
     duckdb_path,
     databases = c("Pfam", "COG", "AMRFinder")
@@ -814,7 +824,8 @@ invisible(final_parquets)
   invisible(count_paths)
 }
 
-#' Annotate proteins using DefenseFinder + CasFinder models
+#' Annotate proteins using DefenseFinder + CasFinder HMMs
+#' Will add to the duckdb + create the parquet file. 
 #'
 #' @param defense_db_dir Directory used to store downloaded HMMs
 #' @param docker_image Docker image containing HMMER
