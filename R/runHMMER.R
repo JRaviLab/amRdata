@@ -1,3 +1,23 @@
+.isValidHmmFile <- function(hmm_file) {
+
+  lines <- tryCatch(
+    readLines(hmm_file, warn = FALSE),
+    error = function(e) character(0)
+  )
+
+  if (length(lines) == 0) {
+    return(FALSE)
+  }
+
+  first_line <- trimws(lines[1])
+  last_line  <- trimws(tail(lines, 1))
+
+  starts_ok <- grepl("^HMMER3/f", first_line)
+  ends_ok   <- identical(last_line, "//")
+
+  starts_ok && ends_ok
+}
+
 #' Title
 #'
 #' @param db_dir
@@ -208,10 +228,38 @@
         paste0(db_name, ".hmm")
       )
 
-      source_hmms <- setdiff(
-        normalizePath(hmm_files),
-        normalizePath(hmm_file, mustWork = FALSE)
-      )
+     source_hmms <- setdiff(
+  normalizePath(hmm_files),
+  normalizePath(hmm_file, mustWork = FALSE)
+)
+
+valid_hmms <- vapply(
+  source_hmms,
+  .isValidHmmFile,
+  logical(1)
+)
+
+if (any(!valid_hmms)) {
+
+  bad_files <- source_hmms[!valid_hmms]
+
+  warning(
+    "Ignoring ",
+    length(bad_files),
+    " invalid HMM file(s):\n",
+    paste(basename(bad_files), collapse = "\n")
+  )
+
+  source_hmms <- source_hmms[valid_hmms]
+}
+
+if (length(source_hmms) == 0) {
+
+  stop(
+    "No valid HMM files found for ",
+    db_name
+  )
+}
 
       if (!file.exists(hmm_file)) {
 
