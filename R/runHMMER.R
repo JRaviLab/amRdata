@@ -968,29 +968,33 @@ invisible(final_parquets)
       )
     }
 
-    hmm_files <- hmm_files[
-      vapply(
-        hmm_files,
-        function(f) {
+    valid_hmms <- vapply(
+  hmm_files,
+  .isValidHmmFile,
+  logical(1)
+)
 
-          first_line <- tryCatch(
-            readLines(
-              f,
-              n = 1,
-              warn = FALSE
-            ),
-            error = function(e) ""
-          )
+if (any(!valid_hmms)) {
 
-          grepl(
-            "^HMMER",
-            first_line
-          )
+  warning(
+    "Ignoring ",
+    sum(!valid_hmms),
+    " invalid HMM file(s):\n",
+    paste(
+      basename(hmm_files[!valid_hmms]),
+      collapse = "\n"
+    )
+  )
+}
 
-        },
-        logical(1)
-      )
-    ]
+hmm_files <- hmm_files[valid_hmms]
+
+if (length(hmm_files) == 0) {
+  stop(
+    "No valid HMM files found for ",
+    db_name
+  )
+}
 
     combined_hmm <- file.path(
       repo_dir,
