@@ -204,6 +204,9 @@ NULL
     if (!file.exists(gff_in)) {
       stop("Missing GFF file: ", gff_in)
     }
+    if (!file.exists(fna_in)) {
+      stop("Missing FNA file: ", fna_in)
+    }
 
     # What we're saving out
     gff_out <- file.path(clean_root, basename(gff_in))

@@ -2366,17 +2366,18 @@ prepareGenomes <- function(user_bacs,
 #'   all tables in the database.
 #' @param skip_tables Character vector of table names to exclude.
 #' @param include_summary Logical. If TRUE, writes summary.csv and summary.txt.
+#' @param export_tables Logical. If TRUE, writes tables to CSV files in `output_dir`.
 #' @param load_tables Logical. If TRUE, also return the exported tables as
 #'   in-memory R data frames.
 #' @param verbose Logical. If TRUE, prints progress messages.
 #'
 #' @return Invisibly returns a list with exported file paths and, if requested,
 #'   in-memory tables.
-#' @keywords internal
+#' @export
 exportTables <- function(duckdb_path,
                          output_dir = NULL,
                          tables = NULL,
-                         skip_tables = c(NULL),
+                         skip_tables = NULL,
                          include_summary = TRUE,
                          export_tables = TRUE,
                          load_tables = FALSE,
