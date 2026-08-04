@@ -93,13 +93,12 @@ NULL
     "--rm",
     "-v", paste0(mount_host, ":", mount_cont),
     "-w", mount_cont,
-    "staphb/panaroo:1.7.0",
+    "staphb/panaroo:1.5.1",
     "panaroo",
     "-i", genome_filepath_cont,
     "-o", output_dir_cont,
     "--clean-mode", "strict",
     "--merge_paralogs",
-    "--refind-mode off",
     "--remove-invalid-genes",
     "--core_threshold", as.character(core_threshold),
     "--len_dif_percent", as.character(len_dif_percent),
@@ -279,12 +278,11 @@ NULL
       "--rm",
       "-v", paste0(mount_host, ":", mount_cont),
       "-w", mount_cont,
-      "staphb/panaroo:1.7.0",
+      "staphb/panaroo:1.5.1",
       "panaroo-merge",
       "-d", dir_args,
       "-o", file.path(mount_cont, "merge_output"),
       "--merge_paralogs",
-      "--refind-mode off",
       "--core_threshold", as.character(core_threshold),
       "--len_dif_percent", as.character(len_dif_percent),
       "--threshold", as.character(cluster_threshold),
@@ -1339,10 +1337,10 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
-  # Define lab methods 
+  # Define lab methods
   lab_methods <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution", "Biofosun Gram-positive panels broth dilution",
                   "Vitek_2-P607_card", "cation-adjusted Mueller-Hinton broth", "gradient_diffusion", "kirby-bauer_disc_diffusion")
-  
+
   dplyr::tbl(con, "filtered") |>
     tibble::as_tibble() |>
     dplyr::select("genome.genome_id") |>
@@ -1357,9 +1355,9 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
       "genome.isolation_source", "genome.species"
     ) |>
     dplyr::mutate(genome_drug.evidence = dplyr::case_when(
-      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",  
+      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",
       genome_drug.laboratory_typing_method == "Computational Prediction"  ~ "Computational Method",
-      TRUE ~ genome_drug.evidence)) |> 
+      TRUE ~ genome_drug.evidence)) |>
     dplyr::filter(genome_drug.evidence == "Laboratory Method") |>
     dplyr::left_join(clean_drug, by = c("genome_drug.antibiotic" = "original_drug")) |>
     dplyr::filter(!is.na(cleaned_drug)) |>
@@ -1852,24 +1850,39 @@ exportProcessedData <- function(duckdb_path,
                                 export_formats = c("csv"),
                                 export_sequences = FALSE,
                                 tables = NULL,
+                                export_tables = TRUE,
                                 verbose = TRUE) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
   amr_phenotype_mode <- match.arg(amr_phenotype_mode)
 
   export_formats <- unique(tolower(export_formats))
-  allowed_formats <- c("csv", "tsv", "parquet", "xlsx")
+  export_formats[export_formats == "excel"] <- "xlsx"
+
+  allowed_formats <- c("csv", "tsv", "xlsx", "parquet")
   unknown_formats <- setdiff(export_formats, allowed_formats)
   if (length(unknown_formats)) {
     stop("Unsupported export format(s): ", paste(unknown_formats, collapse = ", "))
   }
 
-  if ("xlsx" %in% export_formats) {
+  if (isTRUE(export_tables) && !length(export_formats)) {
+    stop("At least one export format must be supplied when export_tables = TRUE.")
+  }
+
+  warn_text_exports <- any(export_formats %in% c("csv", "tsv", "xlsx"))
+  if (isTRUE(export_tables) && warn_text_exports) {
     message(
-      "Excel spreadsheets of these features can be extremely large and may not open properly even on powerful hardware."
+      "\nNote: CSV, TSV, and Excel exports are intended primarily for human readability.\n",
+      "However, BV-BRC genome accession are differentiated by trailing zero values.\n",
+      "Example: 1282.2280 is a different genome than 1282.228\n",
+      "If reading these files into software like Excel, or even re-reading them into R,\n",
+      "accession IDs can be read as 'numeric' and trailing zeroes dropped!\n",
+      "For programmatic reuse, we suggest using Parquet format, or \n",
+      "explicitly import accession ID columns as 'character', not 'numeric'.\n"
     )
-    if (!requireNamespace("writexl", quietly = TRUE)) {
-      stop("Format 'xlsx' was requested but package 'writexl' is not available.")
-    }
+  }
+
+  if ("xlsx" %in% export_formats && !requireNamespace("writexl", quietly = TRUE)) {
+    stop("Format 'xlsx' was requested but package 'writexl' is not available.")
   }
 
   if (is.null(output_path)) {
@@ -1897,41 +1910,22 @@ exportProcessedData <- function(duckdb_path,
     tibble::as_tibble(DBI::dbReadTable(con, tbl))
   }
 
-  # Save trailing zeroes
-  preserve_id_text <- function(df) {
-    df <- tibble::as_tibble(df)
-
-    id_pattern <- paste0(
-      "(^|[._])(",
-      "genome_id|taxon_id|assembly_accession|bioproject_accession|biosample_accession|",
-      "refseq_accessions?|genbank_accessions?|sra_accession|pmid|",
-      "gene_id|protein_id|domain_id|cluster_id|AccNum|id",
-      ")$"
-    )
-
-    id_cols <- names(df)[grepl(id_pattern, names(df), ignore.case = TRUE)]
-    if (length(id_cols)) {
-      df[id_cols] <- lapply(df[id_cols], as.character)
-    }
-
-    if ("genome_id" %in% names(df)) {
-      df$genome_id <- as.character(df$genome_id)
-    }
-    if ("AccNum" %in% names(df)) {
-      df$AccNum <- as.character(df$AccNum)
-    }
-
-    df
-  }
-
   write_one <- function(df, stem) {
-    df <- preserve_id_text(df)
+    df <- .preserve_export_id_text(df)
 
     if ("csv" %in% export_formats) {
-      readr::write_csv(df, file.path(output_path, paste0(stem, ".csv")), na = "")
+      utils::write.table(
+        df, file = file.path(output_path, paste0(stem, ".csv")),
+        sep = ",", row.names = FALSE, col.names = TRUE,
+        quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
+      )
     }
     if ("tsv" %in% export_formats) {
-      readr::write_tsv(df, file.path(output_path, paste0(stem, ".tsv")), na = "")
+      utils::write.table(
+        df, file = file.path(output_path, paste0(stem, ".tsv")),
+        sep = "\t", row.names = FALSE, col.names = TRUE,
+        quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
+      )
     }
     if ("parquet" %in% export_formats) {
       arrow::write_parquet(df, file.path(output_path, paste0(stem, ".parquet")))
@@ -2025,7 +2019,7 @@ exportProcessedData <- function(duckdb_path,
     stop("No requested tables were found in the DuckDB.")
   }
 
-  phenotype_wide <- preserve_id_text(build_amr_wide())
+  phenotype_wide <- .preserve_export_id_text(build_amr_wide())
   exported <- character(0)
 
   for (key in selected_keys) {
@@ -2047,7 +2041,7 @@ exportProcessedData <- function(duckdb_path,
       next
     }
 
-    df <- preserve_id_text(read_tbl(spec$source))
+    df <- .preserve_export_id_text(read_tbl(spec$source))
     out_stem <- spec$stem
 
     if (identical(amr_phenotype_mode, "append") &&
@@ -2055,7 +2049,7 @@ exportProcessedData <- function(duckdb_path,
         !is.null(phenotype_wide) &&
         "genome_id" %in% names(df)) {
       df <- dplyr::left_join(df, phenotype_wide, by = "genome_id")
-      df <- preserve_id_text(df)
+      df <- .preserve_export_id_text(df)
       out_stem <- paste0(spec$stem, "_with_phenotypes")
     }
 

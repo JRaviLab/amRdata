@@ -5,6 +5,30 @@
   grepl("^[0-9]+$", x)
 }
 
+#' A helper used in data_curation.R and data_processing.R to ensure exported tables
+#' don't lose trailing zeroes. Should be relocated into a common helpers/utilities
+#' script later.
+#' @keywords internal
+.preserve_export_id_text <- function(df) {
+  df <- tibble::as_tibble(df)
+
+  id_pattern <- paste0(
+    "(^|[._])(",
+    "genome(_drug)?_id|taxon_id|",
+    "assembly_accession|bioproject_accession|biosample_accession|",
+    "refseq_accessions?|genbank_accessions?|sra_accession|pmid|",
+    "gene_id|protein_id|domain_id|cluster_id|AccNum|id",
+    ")$"
+  )
+
+  id_cols <- names(df)[grepl(id_pattern, names(df), ignore.case = TRUE)]
+  if (length(id_cols)) {
+    df[id_cols] <- lapply(df[id_cols], as.character)
+  }
+
+  df
+}
+
 #' Helps tag genomes with their AMR evidence for parsing
 #' @keywords internal
 .create_amr_tagged_view <- function(con) {
@@ -2385,6 +2409,7 @@ exportTables <- function(duckdb_path,
                          tables = NULL,
                          skip_tables = c(NULL),
                          include_summary = TRUE,
+                         export_formats = c("csv"),
                          export_tables = TRUE,
                          load_tables = FALSE,
                          verbose = TRUE) {
@@ -2395,6 +2420,36 @@ exportTables <- function(duckdb_path,
   }
   output_dir <- normalizePath(output_dir, mustWork = FALSE)
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+  export_formats <- unique(tolower(export_formats))
+  export_formats[export_formats == "excel"] <- "xlsx"
+
+  allowed_formats <- c("csv", "tsv", "xlsx", "parquet")
+  unknown_formats <- setdiff(export_formats, allowed_formats)
+  if (length(unknown_formats)) {
+    stop("Unsupported export format(s): ", paste(unknown_formats, collapse = ", "))
+  }
+
+  if (isTRUE(export_tables) && !length(export_formats)) {
+    stop("At least one export format must be supplied when export_tables = TRUE.")
+  }
+
+  warn_text_exports <- any(export_formats %in% c("csv", "tsv", "xlsx"))
+  if (isTRUE(export_tables) && warn_text_exports) {
+    message(
+      "\nNote: CSV, TSV, and Excel exports are intended primarily for human readability.\n",
+      "However, BV-BRC genome accession are differentiated by trailing zero values.\n",
+      "Example: 1282.2280 is a different genome than 1282.228\n",
+      "If reading these files into software like Excel, or even re-reading them into R,\n",
+      "accession IDs can be read as 'numeric' and trailing zeroes dropped!\n",
+      "For programmatic reuse, we suggest using Parquet format, or \n",
+      "explicitly import accession ID columns as 'character', not 'numeric'.\n"
+    )
+  }
+
+  if ("xlsx" %in% export_formats && !requireNamespace("writexl", quietly = TRUE)) {
+    stop("Format 'xlsx' was requested but package 'writexl' is not available.")
+  }
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
@@ -2421,7 +2476,7 @@ exportTables <- function(duckdb_path,
     intersect(unique(as.character(tables)), available_tables)
   }
 
-  if (length(skip_tables)) {
+  if (!is.null(skip_tables) && length(skip_tables)) {
     selected_tables <- setdiff(selected_tables, skip_tables)
   }
 
@@ -2429,77 +2484,85 @@ exportTables <- function(duckdb_path,
     stop("No tables left to export after applying skip_tables.")
   }
 
-  preserve_id_text <- function(df) {
-    df <- tibble::as_tibble(df)
+  preserve_id_text <- .preserve_export_id_text
 
-    id_pattern <- paste0(
-      "(^|\\.)(",
-      "genome(_drug)?_id|taxon_id|",
-      "assembly_accession|bioproject_accession|biosample_accession|",
-      "refseq_accessions?|genbank_accessions?|sra_accession|",
-      "pmid|accession|version|^id$",
-      ")$"
-    )
+  write_one <- function(df, stem, fmt) {
+    df <- preserve_id_text(df)
+    out_file <- file.path(output_dir, paste0(stem, ".", fmt))
 
-    id_cols <- names(df)[grepl(id_pattern, names(df), ignore.case = TRUE)]
-    if (length(id_cols)) {
-      df[id_cols] <- lapply(df[id_cols], as.character)
+    if (fmt == "csv") {
+      utils::write.table(
+        df,
+        file = out_file,
+        sep = ",",
+        row.names = FALSE,
+        col.names = TRUE,
+        quote = TRUE,
+        na = "",
+        qmethod = "double",
+        fileEncoding = "UTF-8"
+      )
+    } else if (fmt == "tsv") {
+      utils::write.table(
+        df,
+        file = out_file,
+        sep = "\t",
+        row.names = FALSE,
+        col.names = TRUE,
+        quote = TRUE,
+        na = "",
+        qmethod = "double",
+        fileEncoding = "UTF-8"
+      )
+    } else if (fmt == "xlsx") {
+      writexl::write_xlsx(list(data = df), out_file)
+    } else if (fmt == "parquet") {
+      arrow::write_parquet(df, out_file)
+    } else {
+      stop("Unhandled format: ", fmt)
     }
 
-    df
-  }
-
-  write_csv_quoted <- function(df, path) {
-    utils::write.table(
-      df,
-      file = path,
-      sep = ",",
-      row.names = FALSE,
-      col.names = TRUE,
-      quote = TRUE,
-      na = "",
-      qmethod = "double",
-      fileEncoding = "UTF-8"
-    )
+    out_file
   }
 
   exported_files <- list()
   loaded_tables <- list()
 
   for (tbl in selected_tables) {
-    df <- preserve_id_text(DBI::dbReadTable(con, tbl))
+    df <- tibble::as_tibble(DBI::dbReadTable(con, tbl))
 
     if (isTRUE(export_tables)) {
-      out_file <- file.path(output_dir, paste0(tbl, ".csv"))
-      write_csv_quoted(df, out_file)
-      exported_files[[tbl]] <- out_file
-
+      for (fmt in export_formats) {
+        out_file <- write_one(df, tbl, fmt)
+        exported_files[[paste(tbl, fmt, sep = ".")]] <- out_file
+      }
       if (isTRUE(verbose)) {
-        message("Exported table: ", tbl, " -> ", out_file)
+        message("Exported table: ", tbl, " -> ", paste(export_formats, collapse = ", "))
       }
     }
 
     if (isTRUE(load_tables)) {
-      loaded_tables[[tbl]] <- df
+      loaded_tables[[tbl]] <- preserve_id_text(df)
     }
   }
 
   count_if_present <- function(tbl) {
-    if (!(tbl %in% available_tables)) {
-      return(NA_character_)
+    if (tbl %in% available_tables) {
+      as.character(DBI::dbGetQuery(
+        con,
+        paste0("SELECT COUNT(*) AS n FROM ", DBI::dbQuoteIdentifier(con, tbl))
+      )$n[[1]])
+    } else {
+      NA_character_
     }
-    as.character(DBI::dbGetQuery(
-      con,
-      paste0("SELECT COUNT(*) AS n FROM ", DBI::dbQuoteIdentifier(con, tbl))
-    )$n[[1]])
   }
 
   summary_tables <- available_tables
-
   summary_tbl <- tibble::tibble(
     metric = c(
       "duckdb_path",
       "export_dir",
+      "export_formats",
       "tables_requested",
       "tables_exported",
       "table_names",
@@ -2508,6 +2571,7 @@ exportTables <- function(duckdb_path,
     value = c(
       duckdb_path,
       output_dir,
+      paste(export_formats, collapse = ", "),
       if (is.null(tables)) "default" else paste(unique(as.character(tables)), collapse = ", "),
       as.character(length(exported_files)),
       paste(summary_tables, collapse = ", "),
@@ -2516,18 +2580,30 @@ exportTables <- function(duckdb_path,
   )
 
   if (isTRUE(export_tables) && isTRUE(include_summary)) {
-    write_csv_quoted(summary_tbl, file.path(output_dir, "summary.csv"))
+    utils::write.table(
+      summary_tbl,
+      file = file.path(output_dir, "summary.csv"),
+      sep = ",",
+      row.names = FALSE,
+      col.names = TRUE,
+      quote = TRUE,
+      na = "",
+      qmethod = "double",
+      fileEncoding = "UTF-8"
+    )
     writeLines(
       c(
         paste0("DuckDB: ", duckdb_path),
         paste0("Export directory: ", output_dir),
+        paste0("Export formats: ", paste(export_formats, collapse = ", ")),
         paste0("Tables exported: ", length(exported_files)),
-        paste0("Table names: ", paste(summary_tables, collapse = ", "))
+        paste0("Table names: ", paste(summary_tables, collapse = ", ")),
+        "",
+        "Caution: CSV/TSV/XLSX exports may be re-read as numeric by default. Force accession/ID columns to character on import. Parquet is safer for programmatic reuse."
       ),
       file.path(output_dir, "summary.txt"),
       useBytes = TRUE
     )
-
     if (isTRUE(verbose)) {
       message("Exported summary files.")
     }
