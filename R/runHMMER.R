@@ -1152,16 +1152,17 @@ invisible(final_parquets)
       stderr = TRUE
     )
 
-    if (!file.exists(tbl_file)) {
+   if (!file.exists(tbl_file)) {
 
-      stop(
-        "hmmscan failed for ",
-        db_name,
-        "\n",
-        paste(output,
-              collapse = "\n")
-      )
-    }
+  warning(
+    "hmmscan failed for ",
+    db_name,
+    "\n",
+    paste(output, collapse = "\n")
+  )
+
+  next
+}
 
     hits <- .parseHMMEROutput(
       tbl_file
