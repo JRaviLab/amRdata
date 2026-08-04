@@ -10,10 +10,11 @@
 .prepareHmmerDatabases <- function(
     hmmer_db_dir,
     databases = c("Pfam", "COG", "AMRFinder"),
-    docker_image = "staphb/hmmer"
-  ) {
-  
-  hmmer_db_dir <- path.expand(hmmer_db_dir)
+    docker_image = "staphb/hmmer",
+    hmmer_db_url = NULL
+) {
+
+  hmmer_db_dir <- normalizePath(hmmer_db_dir)
 
   options(timeout = max(3600, getOption("timeout")))
 
@@ -40,6 +41,59 @@
       type = "tar.gz"
     )
   )
+
+  ## Add custom database(s)
+  missing_dbs <- setdiff(databases, names(dbs))
+
+  if (length(missing_dbs) > 0) {
+
+    if (is.null(hmmer_db_url)) {
+      stop(
+        "hmmer_db_url must be supplied when using custom databases"
+      )
+    }
+
+    get_db_type <- function(url) {
+
+      file <- basename(url)
+
+      if (grepl("\\.(tar\\.gz|tgz)$",
+                file,
+                ignore.case = TRUE)) {
+
+        return("tar.gz")
+
+      } else if (grepl("\\.zip$",
+                       file,
+                       ignore.case = TRUE)) {
+
+        return("zip")
+
+      } else if (grepl("\\.gz$",
+                       file,
+                       ignore.case = TRUE)) {
+
+        return("gz")
+
+      } else {
+
+        stop(
+          "Unsupported archive type: ",
+          file
+        )
+      }
+    }
+
+    for (db_name in missing_dbs) {
+
+      dbs[[db_name]] <- list(
+        dir = file.path(hmmer_db_dir, db_name),
+        hmm_name = NULL,
+        url = hmmer_db_url,
+        type = get_db_type(hmmer_db_url)
+      )
+    }
+  }
 
   dbs <- dbs[databases]
 
@@ -79,12 +133,19 @@
       )
 
       switch(
+
         db$type,
 
         gz = {
+
           hmm_file <- file.path(
             db$dir,
-            db$hmm_name
+            db$hmm_name %||% basename(
+              sub("\\.gz$",
+                  "",
+                  basename(db$url),
+                  ignore.case = TRUE)
+            )
           )
 
           R.utils::gunzip(
@@ -96,6 +157,7 @@
         },
 
         zip = {
+
           utils::unzip(
             zipfile = tmp,
             exdir = db$dir
@@ -103,6 +165,7 @@
         },
 
         `tar.gz` = {
+
           utils::untar(
             tarfile = tmp,
             exdir = db$dir
@@ -119,68 +182,57 @@
       )
     }
 
-   if (db_name == "AMRFinder") {
-
-  hmm_files <- list.files(
-    db$dir,
-    pattern = "\\.hmm$",
-    recursive = TRUE,
-    full.names = TRUE,
-    ignore.case = TRUE
-  )
-
-  hmm_file <- file.path(
-    db$dir,
-    "AMRFinder.hmm"
-  )
-
-  source_hmms <- setdiff(
-    normalizePath(hmm_files),
-    normalizePath(hmm_file, mustWork = FALSE)
-  )
-
-  if (!file.exists(hmm_file)) {
-
-    message(
-      "Combining ",
-      length(source_hmms),
-      " AMRFinder HMM files"
+      hmm_files <- list.files(
+      db$dir,
+      pattern = "\\.hmm$",
+      recursive = TRUE,
+      full.names = TRUE,
+      ignore.case = TRUE
     )
 
-    file.create(hmm_file)
+    if (length(hmm_files) == 0) {
 
-    for (f in sort(source_hmms)) {
-      file.append(hmm_file, f)
-    }
-  }
-
-} else {
-      hmm_files <- list.files(
-        db$dir,
-        pattern = "\\.hmm$",
-        recursive = TRUE,
-        full.names = TRUE,
-        ignore.case = TRUE
+      stop(
+        "No .hmm file found for ",
+        db_name
       )
-      
-      if (length(hmm_files) == 0) {
-        stop(
-          "No .hmm file found for ",
+
+    } else if (length(hmm_files) == 1) {
+
+      hmm_file <- hmm_files[1]
+
+    } else {
+
+      hmm_file <- file.path(
+        db$dir,
+        paste0(db_name, ".hmm")
+      )
+
+      source_hmms <- setdiff(
+        normalizePath(hmm_files),
+        normalizePath(hmm_file, mustWork = FALSE)
+      )
+
+      if (!file.exists(hmm_file)) {
+
+        message(
+          "Combining ",
+          length(source_hmms),
+          " HMM files for ",
           db_name
         )
+
+        file.create(hmm_file)
+
+        for (f in sort(source_hmms)) {
+          file.append(hmm_file, f)
+        }
       }
-      
-      hmm_file <- hmm_files[1]
     }
 
     pressed_files <- paste0(
       hmm_file,
-      c(
-        ".h3m",
-        ".h3i",
-        ".h3f",
-        ".h3p"
-      )
+      c(".h3m", ".h3i", ".h3f", ".h3p")
     )
 
     if (!all(file.exists(pressed_files))) {
@@ -196,16 +248,10 @@
           "run",
           "--rm",
           "-v",
-          paste0(
-            dirname(hmm_file),
-            ":/db"
-          ),
+          paste0(dirname(hmm_file), ":/db"),
           docker_image,
           "hmmpress",
-          file.path(
-            "/db",
-            basename(hmm_file)
-          )
+          file.path("/db", basename(hmm_file))
         ),
         stdout = TRUE,
         stderr = TRUE
@@ -233,6 +279,7 @@
 
   db_paths
 }
+
 #' Write a data frame to a compressed Parquet file
 #'
 #' @param df A data frame or tibble to write.
@@ -292,6 +339,10 @@
 
   prot_seqs <- DBI::dbReadTable(con, "protein_cluster_seq") |>
     tibble::as_tibble()
+
+  if(is.null(hmmer_db_dir)) {
+  hmmer_db_dir <- output_path
+  }
 
   # database paths 
  db_paths <- .prepareHmmerDatabases(
@@ -713,4 +764,448 @@ invisible(final_parquets)
   }
 
   invisible(count_paths)
+}
+
+# Annotate the proteins using defense finder and cas finder
+ #' Annotate proteins using DefenseFinder + CasFinder HMMs
+#'
+#' Downloads DefenseFinder and CasFinder model repositories,
+#' extracts all HMMs located within profile directories,
+#' concatenates them into a single DefenseCas.hmm database,
+#' runs hmmpress, performs HMMER annotation against proteins
+#' stored in DuckDB, and stores the results in DuckDB.
+#'
+#' @param defense_db_dir Directory used to store downloaded models.
+#' @param docker_image Docker image containing HMMER.
+#' @param duckdb_path Path to duckdb database.
+#' @param output_path Output directory.
+#' @param threads Number of HMMER threads.
+#' @param split_jobs Split sequences into chunks.
+#' @param num_of_splits Number of fasta chunks.
+#' @param n_workers Parallel workers.
+#'
+#' @returns Invisibly returns parquet file path.
+#'
+#' @export
+#' Annotate proteins using DefenseFinder + CasFinder models
+#'
+#' @param defense_db_dir Directory used to store downloaded HMMs
+#' @param docker_image Docker image containing HMMER
+#' @param duckdb_path DuckDB database path
+#' @param output_path Output directory
+#' @param threads Number of HMMER threads
+#'
+#' @returns Path to annotation parquet
+#' @export
+.defenseHMMER <- function(
+    defense_db_dir,
+    docker_image = "staphb/hmmer",
+    duckdb_path = "inst/extdata/Sfl.duckdb",
+    output_path = NULL,
+    threads = 8L
+) {
+
+  if (!nzchar(Sys.which("docker"))) {
+    stop("Docker is required.")
+  }
+
+  defense_db_dir <- normalizePath(
+    defense_db_dir,
+    mustWork = FALSE
+  )
+
+  if (is.null(output_path)) {
+    output_path <- dirname(
+      normalizePath(
+        duckdb_path,
+        mustWork = FALSE
+      )
+    )
+  }
+
+  dir.create(
+    defense_db_dir,
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+
+  dir.create(
+    output_path,
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+
+  ####################################################################
+  # download repositories
+  ####################################################################
+
+  defense_dir <- file.path(
+    defense_db_dir,
+    "DefenseFinder"
+  )
+
+  cas_dir <- file.path(
+    defense_db_dir,
+    "CasFinder"
+  )
+
+  if (!dir.exists(defense_dir)) {
+
+    message(
+      "Downloading DefenseFinder models"
+    )
+
+    tmp <- tempfile(fileext = ".zip")
+
+    utils::download.file(
+      "https://github.com/mdmparis/defense-finder-models/archive/refs/heads/master.zip",
+      tmp,
+      mode = "wb",
+      method = "libcurl"
+    )
+
+    utils::unzip(
+      tmp,
+      exdir = defense_dir
+    )
+
+    unlink(tmp)
+  }
+
+  if (!dir.exists(cas_dir)) {
+
+    message(
+      "Downloading CasFinder models"
+    )
+
+    tmp <- tempfile(fileext = ".zip")
+
+    utils::download.file(
+      "https://github.com/macsy-models/CasFinder/archive/refs/heads/main.zip",
+      tmp,
+      mode = "wb",
+      method = "libcurl"
+    )
+
+    utils::unzip(
+      tmp,
+      exdir = cas_dir
+    )
+
+    unlink(tmp)
+  }
+
+  ####################################################################
+  # helper
+  ####################################################################
+
+  build_database <- function(
+      repo_dir,
+      db_name
+  ) {
+
+    profile_dirs <- list.dirs(
+      repo_dir,
+      recursive = TRUE,
+      full.names = TRUE
+    )
+
+    profile_dirs <- profile_dirs[
+      basename(profile_dirs) == "profiles"
+    ]
+
+    hmm_files <- unique(
+      unlist(
+        lapply(
+          profile_dirs,
+          function(x) {
+
+            list.files(
+              x,
+              pattern = "\\.hmm$",
+              recursive = TRUE,
+              full.names = TRUE,
+              ignore.case = TRUE
+            )
+
+          }
+        )
+      )
+    )
+
+    if (length(hmm_files) == 0) {
+
+      stop(
+        "No HMM files found for ",
+        db_name
+      )
+    }
+
+    hmm_files <- hmm_files[
+      vapply(
+        hmm_files,
+        function(f) {
+
+          first_line <- tryCatch(
+            readLines(
+              f,
+              n = 1,
+              warn = FALSE
+            ),
+            error = function(e) ""
+          )
+
+          grepl(
+            "^HMMER",
+            first_line
+          )
+
+        },
+        logical(1)
+      )
+    ]
+
+    combined_hmm <- file.path(
+      repo_dir,
+      paste0(
+        db_name,
+        ".hmm"
+      )
+    )
+
+    if (file.exists(combined_hmm)) {
+      unlink(combined_hmm)
+    }
+
+    file.create(combined_hmm)
+
+    for (f in sort(hmm_files)) {
+
+      file.append(
+        combined_hmm,
+        f
+      )
+    }
+
+    pressed_files <- paste0(
+      combined_hmm,
+      c(
+        ".h3m",
+        ".h3i",
+        ".h3f",
+        ".h3p"
+      )
+    )
+
+    if (!all(file.exists(pressed_files))) {
+
+      message(
+        "Running hmmpress for ",
+        db_name
+      )
+
+      output <- system2(
+        "docker",
+        args = c(
+          "run",
+          "--rm",
+          "-v",
+          paste0(
+            dirname(combined_hmm),
+            ":/db"
+          ),
+          docker_image,
+          "hmmpress",
+          file.path(
+            "/db",
+            basename(combined_hmm)
+          )
+        ),
+        stdout = TRUE,
+        stderr = TRUE
+      )
+
+      if (!all(file.exists(pressed_files))) {
+
+        stop(
+          "hmmpress failed for ",
+          db_name,
+          "\n",
+          paste(output,
+                collapse = "\n")
+        )
+      }
+    }
+
+    combined_hmm
+  }
+
+  ####################################################################
+  # build separate databases
+  ####################################################################
+
+  defense_hmm <- build_database(
+    defense_dir,
+    "DefenseFinder"
+  )
+
+  cas_hmm <- build_database(
+    cas_dir,
+    "CasFinder"
+  )
+
+  ####################################################################
+  # load proteins
+  ####################################################################
+
+  con <- DBI::dbConnect(
+    duckdb::duckdb(),
+    duckdb_path
+  )
+
+  on.exit(
+    try(
+      DBI::dbDisconnect(
+        con,
+        shutdown = FALSE
+      ),
+      silent = TRUE
+    ),
+    add = TRUE
+  )
+
+  prot_seqs <- DBI::dbReadTable(
+    con,
+    "protein_seq"
+  ) |>
+    tibble::as_tibble()
+
+  fasta_file <- file.path(
+    output_path,
+    "protein_DefenseCas.faa"
+  )
+
+  readr::write_lines(
+    paste0(
+      ">",
+      prot_seqs$name,
+      "\n",
+      prot_seqs$sequence
+    ),
+    fasta_file
+  )
+
+  ####################################################################
+  # run hmmscan separately
+  ####################################################################
+
+  databases <- list(
+    DefenseFinder = defense_hmm,
+    CasFinder = cas_hmm
+  )
+
+  all_hits <- list()
+
+  for (db_name in names(databases)) {
+
+    message(
+      "Running ",
+      db_name
+    )
+
+    hmm_file <- databases[[db_name]]
+
+    tbl_file <- file.path(
+      output_path,
+      paste0(
+        "protein_",
+        db_name,
+        ".tbl"
+      )
+    )
+
+    output <- system2(
+      "docker",
+      args = c(
+        "run",
+        "--rm",
+        "-v",
+        paste0(output_path, ":/work"),
+        "-v",
+        paste0(dirname(hmm_file), ":/db"),
+        docker_image,
+        "hmmscan",
+        "--cpu",
+        as.character(threads),
+        "--tblout",
+        file.path(
+          "/work",
+          basename(tbl_file)
+        ),
+        file.path(
+          "/db",
+          basename(hmm_file)
+        ),
+        "/work/protein_DefenseCas.faa"
+      ),
+      stdout = TRUE,
+      stderr = TRUE
+    )
+
+    if (!file.exists(tbl_file)) {
+
+      stop(
+        "hmmscan failed for ",
+        db_name,
+        "\n",
+        paste(output,
+              collapse = "\n")
+      )
+    }
+
+    hits <- .parseHMMEROutput(
+      tbl_file
+    ) |>
+      dplyr::select(
+        name,
+        query_name,
+        description
+      ) |>
+      dplyr::mutate(
+        database = db_name
+      )
+
+    all_hits[[db_name]] <- hits
+  }
+
+  ####################################################################
+  # merge at parquet stage
+  ####################################################################
+
+  combined_tbl <- dplyr::bind_rows(
+    all_hits
+  )
+
+  parquet_file <- file.path(
+    output_path,
+    "protein_DefenseCas.parquet"
+  )
+
+  .write_compressed_parquet(
+    combined_tbl,
+    parquet_file
+  )
+
+  DBI::dbWriteTable(
+    con,
+    "protein_DefenseCas",
+    combined_tbl,
+    overwrite = TRUE
+  )
+
+  message(
+    "Created protein_DefenseCas"
+  )
+
+  invisible(parquet_file)
 }
