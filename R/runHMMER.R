@@ -1076,7 +1076,7 @@ invisible(final_parquets)
 
   prot_seqs <- DBI::dbReadTable(
     con,
-    "protein_seq"
+    "protein_cluster_seq"
   ) |>
     tibble::as_tibble()
 
