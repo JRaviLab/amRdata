@@ -398,6 +398,81 @@ if (length(source_hmms) == 0) {
   )
 }
 
+#' Title
+#'
+#' @param JOB_NAME
+#' @param FASTA
+#' @param DB
+#' @param Total_proteins
+#'
+#' @returns
+#'
+#' @export
+#' @examples
+.runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins) {
+    hmmer_input <- file.path(output_path, FASTA)
+    hmmer_output <- file.path(output_path, paste0(JOB_NAME, ".tbl"))
+
+    # database paths
+    database_path <- db_paths[[DB]]
+    db_host_dir <- dirname(database_path)
+    db_filename <- basename(database_path)
+    db_cont_dir <- "/opt/hmmer/data"
+    db_cont_path <- file.path(db_cont_dir, db_filename)
+
+    # mounts
+    mount_host <- output_path
+    mount_cont <- "/work"
+
+    threads_per_job <- max(
+  1L,
+  floor(threads / n_workers)
+)
+
+    cmd_args <- c(
+      "run", "--rm",
+      "-v", paste0(mount_host, ":", mount_cont),
+      "-v", paste0(db_host_dir, ":", db_cont_dir),
+      docker_image,
+      "hmmsearch",
+      "--notextw",
+      "--cpu", as.character(threads_per_job),
+      "-Z", Total_proteins,
+      "--domZ", Total_proteins,
+      "--domtblout", .to_container(hmmer_output, mount_host, mount_cont),
+      db_cont_path,
+      .to_container(hmmer_input, mount_host, mount_cont)
+    )
+
+    message("Running hmmsearch via Docker...")
+    output <- tryCatch(
+      {
+        system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+      },
+      error = function(e) {
+        stop("hmmsearch execution failed: ", e$message)
+      }
+    )
+
+    if (!file.exists(hmmer_output)) {
+      stop("hmmsearch failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
+    }
+
+    message("hmmsearch completed successfully.")
+
+    hmmer_tbl <- .parseHMMEROutput(hmmer_output) |>
+      dplyr::select("protein", "query_name")
+
+    hmmer_tbl_filename <- file.path(
+      dirname(hmmer_output),
+      paste0(tools::file_path_sans_ext(basename(hmmer_output)), ".parquet")
+    )
+
+    .write_compressed_parquet(hmmer_tbl, hmmer_tbl_filename)
+
+    hmmer_tbl_filename
+  }
+
 
 #' Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.
 #'
@@ -487,70 +562,6 @@ db_paths <- db_paths[databases]
     ) |>
     dplyr::select(JOB_NAME, FASTA, DB)
 
-  .runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins) {
-    hmmer_input <- file.path(output_path, FASTA)
-    hmmer_output <- file.path(output_path, paste0(JOB_NAME, ".tbl"))
-
-    # database paths
-    database_path <- db_paths[[DB]]
-    db_host_dir <- dirname(database_path)
-    db_filename <- basename(database_path)
-    db_cont_dir <- "/opt/hmmer/data"
-    db_cont_path <- file.path(db_cont_dir, db_filename)
-
-    # mounts
-    mount_host <- output_path
-    mount_cont <- "/work"
-
-    threads_per_job <- max(
-  1L,
-  floor(threads / n_workers)
-)
-
-    cmd_args <- c(
-      "run", "--rm",
-      "-v", paste0(mount_host, ":", mount_cont),
-      "-v", paste0(db_host_dir, ":", db_cont_dir),
-      docker_image,
-      "hmmsearch",
-      "--notextw",
-      "--cpu", as.character(threads_per_job),
-      "-Z", Total_proteins,
-      "--domZ", Total_proteins,
-      "--domtblout", .to_container(hmmer_output, mount_host, mount_cont),
-      db_cont_path,
-      .to_container(hmmer_input, mount_host, mount_cont)
-    )
-
-    message("Running hmmsearch via Docker...")
-    output <- tryCatch(
-      {
-        system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
-      },
-      error = function(e) {
-        stop("hmmsearch execution failed: ", e$message)
-      }
-    )
-
-    if (!file.exists(hmmer_output)) {
-      stop("hmmsearch failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
-    }
-
-    message("hmmsearch completed successfully.")
-
-    hmmer_tbl <- .parseHMMEROutput(hmmer_output) |>
-      dplyr::select("protein", "query_name")
-
-    hmmer_tbl_filename <- file.path(
-      dirname(hmmer_output),
-      paste0(tools::file_path_sans_ext(basename(hmmer_output)), ".parquet")
-    )
-
-    .write_compressed_parquet(hmmer_tbl, hmmer_tbl_filename)
-
-    hmmer_tbl_filename
-  }
-
   future::plan(
   future::multisession,
   workers = max(1L, n_workers)
@@ -592,8 +603,11 @@ for (database_name in databases) {
     db_files,
     arrow::read_parquet
   ) |>
-    dplyr::bind_rows() 
-
+    dplyr::bind_rows() |>
+dplyr::left_join(.parse_hmmer_profiles(db_paths[[database_name]]) |>
+  dplyr::select(query_name = profile_name, profile_accession, profile_description),
+by = "query_name")
+  
   final_parquet <- file.path(
     output_path,
     paste0(
