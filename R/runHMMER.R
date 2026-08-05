@@ -1215,6 +1215,9 @@ if (length(hmm_files) == 0) {
     "protein_DefenseCas.faa"
   )
 
+   # required to define the database size for hmmsearch --Z and --domZ parameters
+  Total_proteins <- nrow(prot_seqs)
+
   readr::write_lines(
     paste0(
       ">",
@@ -1253,7 +1256,7 @@ if (length(hmm_files) == 0) {
         ".tbl"
       )
     )
-
+    
     output <- system2(
       "docker",
       args = c(
@@ -1265,9 +1268,12 @@ if (length(hmm_files) == 0) {
         paste0(dirname(hmm_file), ":/db"),
         docker_image,
         "hmmsearch",
+         "--notextw",
         "--cpu",
         as.character(threads),
-        "--tblout",
+         "-Z", Total_proteins,
+        "--domZ", Total_proteins,
+        "--domtblout",
         file.path(
           "/work",
           basename(tbl_file)
@@ -1303,7 +1309,10 @@ if (length(hmm_files) == 0) {
       ) |>
       dplyr::mutate(
         database = db_name
-      )
+      )|>
+dplyr::left_join(.parse_hmmer_profiles(hmm_file) |>
+  dplyr::select(query_name = profile_name, query_accession = profile_accession, description = profile_description),
+by = "query_name")
 
     all_hits[[db_name]] <- hits
   }
@@ -1314,7 +1323,7 @@ if (length(hmm_files) == 0) {
 
   combined_tbl <- dplyr::bind_rows(
     all_hits
-  )
+  ) 
 
   parquet_file <- file.path(
     output_path,
