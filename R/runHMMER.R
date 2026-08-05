@@ -409,7 +409,11 @@ if (length(source_hmms) == 0) {
 #'
 #' @export
 #' @examples
-.runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins) {
+.runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins, 
+  output_path = NULL, db_paths, 
+  docker_image = "staphb/hmmer", threads = 8L, 
+  n_workers = 4L
+) {
     hmmer_input <- file.path(output_path, FASTA)
     hmmer_output <- file.path(output_path, paste0(JOB_NAME, ".tbl"))
 
@@ -575,7 +579,12 @@ parquet_files <- furrr::future_map_chr(
       JOB_NAME = job_list$JOB_NAME[i],
       FASTA = job_list$FASTA[i],
       DB = job_list$DB[i],
-      Total_proteins = Total_proteins
+      Total_proteins = Total_proteins,
+      output_path = output_path,
+      db_paths = db_paths,
+      docker_image = docker_image,
+      threads = threads,
+      n_workers = n_workers
     )
   }
 )
