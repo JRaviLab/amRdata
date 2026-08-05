@@ -354,6 +354,51 @@ if (length(source_hmms) == 0) {
   )
 }
 
+#' Title
+#'
+#' @param hmm_file
+#'
+#' @returns
+#'
+#' @export
+#' @examples
+.parse_hmmer_profiles <- function(hmm_file) {
+
+  lines <- readLines(hmm_file, warn = FALSE)
+
+  starts <- c(
+    which(grepl("^NAME\\s+", lines)),
+    length(lines) + 1L
+  )
+
+  blocks <- purrr::map2(
+    starts[-length(starts)],
+    starts[-1L] - 1L,
+    ~ lines[.x:.y]
+  )
+
+  extract_field <- function(block, pattern) {
+
+    hit <- stringr::str_subset(block, pattern)
+
+    if (length(hit) == 0) {
+      return(NA_character_)
+    }
+
+    stringr::str_remove(hit[[1]], pattern)
+  }
+
+  purrr::map_dfr(
+    blocks,
+    ~ tibble::tibble(
+      profile_name = extract_field(.x, "^NAME\\s+"),
+      profile_accession = extract_field(.x, "^ACC\\s+"),
+      profile_description = extract_field(.x, "^DESC\\s+")
+    )
+  )
+}
+
+
 #' Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.
 #'
 #' @param duckdb_path
@@ -398,6 +443,9 @@ if (length(source_hmms) == 0) {
   prot_seqs <- DBI::dbReadTable(con, "protein_cluster_seq") |>
     tibble::as_tibble()
 
+  # required to define the database size for hmmsearch --Z and --domZ parameters
+  Total_proteins <- nrow(prot_seqs)
+
   if(is.null(hmmer_db_dir)) {
   hmmer_db_dir <- output_path
   }
@@ -439,7 +487,7 @@ db_paths <- db_paths[databases]
     ) |>
     dplyr::select(JOB_NAME, FASTA, DB)
 
-  .runHmmerJob <- function(JOB_NAME, FASTA, DB) {
+  .runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins) {
     hmmer_input <- file.path(output_path, FASTA)
     hmmer_output <- file.path(output_path, paste0(JOB_NAME, ".tbl"))
 
@@ -464,31 +512,34 @@ db_paths <- db_paths[databases]
       "-v", paste0(mount_host, ":", mount_cont),
       "-v", paste0(db_host_dir, ":", db_cont_dir),
       docker_image,
-      "hmmscan",
+      "hmmsearch",
+      "--notextw",
       "--cpu", as.character(threads_per_job),
-      "--tblout", .to_container(hmmer_output, mount_host, mount_cont),
+      "-Z", Total_proteins,
+      "--domZ", Total_proteins,
+      "--domtblout", .to_container(hmmer_output, mount_host, mount_cont),
       db_cont_path,
       .to_container(hmmer_input, mount_host, mount_cont)
     )
 
-    message("Running hmmscan via Docker...")
+    message("Running hmmsearch via Docker...")
     output <- tryCatch(
       {
         system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
       },
       error = function(e) {
-        stop("hmmscan execution failed: ", e$message)
+        stop("hmmsearch execution failed: ", e$message)
       }
     )
 
     if (!file.exists(hmmer_output)) {
-      stop("hmmscan failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
+      stop("hmmsearch failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
     }
 
-    message("hmmscan completed successfully.")
+    message("hmmsearch completed successfully.")
 
     hmmer_tbl <- .parseHMMEROutput(hmmer_output) |>
-      dplyr::select("name", "query_name", "description")
+      dplyr::select("protein", "query_name")
 
     hmmer_tbl_filename <- file.path(
       dirname(hmmer_output),
@@ -512,7 +563,8 @@ parquet_files <- furrr::future_map_chr(
     .runHmmerJob(
       JOB_NAME = job_list$JOB_NAME[i],
       FASTA = job_list$FASTA[i],
-      DB = job_list$DB[i]
+      DB = job_list$DB[i],
+      Total_proteins = Total_proteins
     )
   }
 )
@@ -540,7 +592,7 @@ for (database_name in databases) {
     db_files,
     arrow::read_parquet
   ) |>
-    dplyr::bind_rows()
+    dplyr::bind_rows() 
 
   final_parquet <- file.path(
     output_path,
@@ -593,13 +645,9 @@ invisible(final_parquets)
 #' target-query hit. Comment lines are stripped and the free-text description
 #' field is reunited from the remaining whitespace-delimited columns.
 #'
-#' @param file Path to a HMMER `.tbl` output file produced with `--tblout`.
+#' @param file Path to a HMMER `.tbl` output file produced with `--domtblout`.
 #'
-#' @return A tibble with 19 columns matching the HMMER per-sequence hit table:
-#'   `name`, `accession`, `query_name`, `query_accession`, `sequence_evalue`,
-#'   `sequence_score`, `sequence_bias`, `best_evalue`, `best_score`,
-#'   `best_bias`, `number_exp`, `number_reg`, `number_clu`, `number_ov`,
-#'   `number_env`, `number_dom`, `number_rep`, `number_inc`, `description`.
+#' @return A tibble with 19 columns matching the HMMER per-sequence hit table
 #'
 #' @references Adapted from the rhmmer package
 #'   (<https://github.com/arendsee/rhmmer>).
@@ -612,27 +660,43 @@ invisible(final_parquets)
 #'
 #' @keywords internal
 .parseHMMEROutput <- function(file) {
+
+  # target name         accession   tlen query name           accession   qlen   E-value  score  bias   #  of  c-Evalue  i-Evalue  score  bias  from    to  from    to  from    to  acc description of target
   col_types <- readr::cols(
-    name = readr::col_character(),
-    accession = readr::col_character(),
-    query_name = readr::col_character(),
-    query_accession = readr::col_character(),
-    sequence_evalue = readr::col_double(),
-    sequence_score = readr::col_double(),
-    sequence_bias = readr::col_double(),
-    best_evalue = readr::col_double(),
-    best_score = readr::col_double(),
-    best_bias = readr::col_double(),
-    number_exp = readr::col_double(),
-    number_reg = readr::col_integer(),
-    number_clu = readr::col_integer(),
-    number_ov = readr::col_integer(),
-    number_env = readr::col_integer(),
-    number_dom = readr::col_integer(),
-    number_rep = readr::col_integer(),
-    number_inc = readr::col_character(),
-    description = readr::col_character()
-  )
+  protein           = readr::col_character(),  # target name
+  protein_accession = readr::col_character(),
+  tlen              = readr::col_integer(),
+
+  query_name               = readr::col_character(),  # query name
+  query_accession     = readr::col_character(),
+  qlen              = readr::col_integer(),
+
+  sequence_evalue   = readr::col_double(),
+  sequence_score    = readr::col_double(),
+  sequence_bias     = readr::col_double(),
+
+  domain_num        = readr::col_integer(),
+  domain_of         = readr::col_integer(),
+
+  c_evalue          = readr::col_double(),
+  i_evalue          = readr::col_double(),
+
+  domain_score      = readr::col_double(),
+  domain_bias       = readr::col_double(),
+
+  hmm_from          = readr::col_integer(),
+  hmm_to            = readr::col_integer(),
+
+  ali_from          = readr::col_integer(),
+  ali_to            = readr::col_integer(),
+
+  env_from          = readr::col_integer(),
+  env_to            = readr::col_integer(),
+
+  acc               = readr::col_double(),
+
+  target_description = readr::col_character()
+)
   # the line delimiter should always be just "\n", even on Windows
   lines <- readr::read_lines(file, lazy = FALSE, progress = FALSE)
 
@@ -660,9 +724,10 @@ invisible(final_parquets)
       col_types = col_types,
       lazy = FALSE,
       progress = FALSE
-    ) |>
-    tidyr::unite(description, description:last_col(), sep = " ")
-  table$description <- gsub("\t", " ", table$description)
+    ) 
+  # |>
+  #   tidyr::unite(description, description:last_col(), sep = " ")
+  # table$description <- gsub("\t", " ", table$description)
 
   table
 }
@@ -1138,7 +1203,7 @@ if (length(hmm_files) == 0) {
   )
 
   ####################################################################
-  # run hmmscan separately
+  # run hmmsearch separately
   ####################################################################
 
   databases <- list(
@@ -1176,7 +1241,7 @@ if (length(hmm_files) == 0) {
         "-v",
         paste0(dirname(hmm_file), ":/db"),
         docker_image,
-        "hmmscan",
+        "hmmsearch",
         "--cpu",
         as.character(threads),
         "--tblout",
@@ -1197,7 +1262,7 @@ if (length(hmm_files) == 0) {
    if (!file.exists(tbl_file)) {
 
   warning(
-    "hmmscan failed for ",
+    "hmmsearch failed for ",
     db_name,
     "\n",
     paste(output, collapse = "\n")
@@ -1210,9 +1275,8 @@ if (length(hmm_files) == 0) {
       tbl_file
     ) |>
       dplyr::select(
-        name,
-        query_name,
-        description
+        protein,
+        query_name
       ) |>
       dplyr::mutate(
         database = db_name
