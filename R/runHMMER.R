@@ -614,7 +614,7 @@ for (database_name in databases) {
   ) |>
     dplyr::bind_rows() |>
 dplyr::left_join(.parse_hmmer_profiles(db_paths[[database_name]]) |>
-  dplyr::select(query_name = profile_name, profile_accession, description = profile_description),
+  dplyr::select(query_name = profile_name, query_accession = profile_accession, description = profile_description),
 by = "query_name")
   
   final_parquet <- file.path(
@@ -811,13 +811,13 @@ invisible(final_parquets)
     tibble::as_tibble() |>
     tidyr::pivot_longer(
       cols = -genome_id,
-      names_to = "query_name",
+      names_to = "protein",
       values_to = "count"
     ) |>
     dplyr::filter(count > 0) |>
     dplyr::mutate(
-      query_name = stringr::str_replace(
-        query_name,
+      protein = stringr::str_replace(
+        protein,
         "^fig\\.",
         "fig|"
       )
@@ -854,24 +854,24 @@ invisible(final_parquets)
       tibble::as_tibble()
 
     genome_annot_matrix <- protein_long |>
-      dplyr::inner_join(
+      dplyr::inner_join( 
+        annotation |>
         dplyr::select(
-          annotation,
-          name,
+          protein,
           query_name
         ),
-        by = "query_name"
+        by = "protein"
       ) |>
       dplyr::group_by(
         genome_id,
-        name
+        query_name
       ) |>
       dplyr::summarise(
         count = sum(count),
         .groups = "drop"
       ) |>
       tidyr::pivot_wider(
-        names_from = name,
+        names_from = query_name,
         values_from = count,
         values_fill = 0
       )
