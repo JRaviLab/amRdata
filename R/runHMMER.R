@@ -1,4 +1,4 @@
-#' Validate a HMM file has old HMMER3 format and remove them
+#' Validate if a HMM file has old HMMER3 format and remove them
 #'
 #' @param hmm_file
 #'
@@ -354,14 +354,13 @@ if (length(source_hmms) == 0) {
   )
 }
 
-#' Title
+#' Parsing HMM database to extract profile names, accessions and descriptions
 #'
-#' @param hmm_file
+#' @param hmm_file path to the HMM database file (`.hmm`)
 #'
-#' @returns
+#' @returns a tibble 
 #'
-#' @export
-#' @examples
+#' @keywords internal
 .parse_hmmer_profiles <- function(hmm_file) {
 
   lines <- readLines(hmm_file, warn = FALSE)
@@ -398,17 +397,21 @@ if (length(source_hmms) == 0) {
   )
 }
 
-#' Title
+#' The function to run HMMER with docker
 #'
-#' @param JOB_NAME
+#' @param JOB_NAME 
 #' @param FASTA
 #' @param DB
 #' @param Total_proteins
+#' @param output_path
+#' @param db_paths
+#' @param docker_image
+#' @param threads
+#' @param n_workers
 #'
 #' @returns
 #'
-#' @export
-#' @examples
+#' @keywords internal
 .runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins, 
   output_path = NULL, db_paths, 
   docker_image = "staphb/hmmer", threads = 8L, 
@@ -661,10 +664,9 @@ invisible(final_parquets)
   #   DBI::dbWriteTable(conn = con, name = tools::file_path_sans_ext(basename(final_parquet)), overwrite = TRUE)
 }
 
-
 #' Parse HMMER tabular output into a tibble
 #'
-#' Reads a HMMER `--tblout` file and returns a tidy tibble with one row per
+#' Reads a HMMER `--domtblout` file and returns a tidy tibble with one row per
 #' target-query hit. Comment lines are stripped and the free-text description
 #' field is reunited from the remaining whitespace-delimited columns.
 #'
