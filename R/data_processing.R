@@ -2019,7 +2019,11 @@ exportProcessedData <- function(duckdb_path,
     stop("No requested tables were found in the DuckDB.")
   }
 
-  phenotype_wide <- .preserve_export_id_text(build_amr_wide())
+  # Ensuring we don't accidentally pass a NULL through silently
+  phenotype_wide <- build_amr_wide()
+  if (!is.null(phenotype_wide)) {
+    phenotype_wide <- .preserve_export_id_text(phenotype_wide)
+  }
   exported <- character(0)
 
   for (key in selected_keys) {
