@@ -61,7 +61,8 @@ NULL
                             cluster_threshold,
                             family_seq_identity,
                             panaroo_threads_per_job,
-                            refind_mode = c("off", "default", "strict")) {
+                            refind_mode = c("off", "default", "strict"),
+                            verbose = TRUE) {
   refind_mode <- match.arg(refind_mode)
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- .docker_path(output_path)
@@ -119,20 +120,20 @@ NULL
     "-t", as.character(panaroo_threads_per_job)
   )
 
-  res <- tryCatch(
-    {
-      system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
-    },
-    error = function(e) e
-  )
+  # Updating to try controlling Panaroo's print verbosity
+  res <- system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+  status <- attr(res, "status")
+
+  if (!is.null(status) && status != 0L) {
+    stop(sprintf("Panaroo failed with exit status %s:\n%s", status, paste(res, collapse = "\n")))
+  }
+
+  if(isTRUE(verbose)) {
+    message("Panaroo output: \n", paste(res, collapse = "\n"))
+  }
 
   if (inherits(res, "error")) {
     stop(sprintf("Docker/Panaroo failed to launch: %s", res$message))
-  }
-
-  # If Panaroo wrote an error but system2 didn't throw, scan output for clues
-  if (length(res) && any(grepl("Traceback|Error|No such file|not found|failed", res, ignore.case = TRUE))) {
-    message("Panaroo output:\n", paste(res, collapse = "\n"))
   }
 
   invisible(res)
@@ -224,8 +225,12 @@ NULL
       n_kept <- 0L
     } else {
       # Otherwise, find the pseudogene lines and save everything but those
+      # Now with 100% more purrr
       fields <- strsplit(body, "\t", fixed = TRUE)
-      types <- vapply(fields, function(x) if (length(x) >= 3L) x[[3]] else NA_character_, character(1))
+      types <- purrr::map_chr(
+        fields,
+        \(x) if (length(x) >= 3L) x[[3]] else NA_character_
+      )
       keep <- !is.na(types) & types != "pseudogene"
 
       cleaned <- c(gff_lines[is_header], body[keep])
@@ -295,7 +300,8 @@ NULL
                         refind_mode = c("off", "default", "strict"),
                         strip_pseudogenes = FALSE,
                         pseudogene_clean_dir = "gff_clean",
-                        write_pseudogene_audit = TRUE) {
+                        write_pseudogene_audit = TRUE,
+                        verbose = TRUE) {
   refind_mode <- match.arg(refind_mode)
   duckdb_path <- normalizePath(duckdb_path)
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
@@ -322,9 +328,21 @@ NULL
       output_path = output_path,
       clean_dir = pseudogene_clean_dir
     )
+
     panaroo_input_files <- cleaned$panaroo_input_files
+
     if (isTRUE(write_pseudogene_audit)) {
       readr::write_csv(cleaned$audit, file.path(output_path, "panaroo_pseudogene_audit.csv"))
+    }
+
+    if (isTRUE(verbose)) {
+      audit <- cleaned$audit
+      message(sprintf(
+        "Pseudogene audit: %d genomes, %d removed pseudogenes, %d features remain.",
+        nrow(audit),
+        sum(audit$n_pseudogene, na.rm = TRUE),
+        sum(audit$n_kept, na.rm = TRUE)
+      ))
     }
   }
 
@@ -372,7 +390,8 @@ NULL
       cluster_threshold       = cluster_threshold,
       family_seq_identity     = family_seq_identity,
       panaroo_threads_per_job = panaroo_threads_per_job,
-      refind_mode             = refind_mode
+      refind_mode             = refind_mode,
+      verbose                 = verbose
     ),
     .options = furrr::furrr_options(seed = TRUE)
   )
@@ -835,7 +854,8 @@ runPanaroo2Duckdb <- function(duckdb_path,
     refind_mode = refind_mode,
     strip_pseudogenes = strip_pseudogenes,
     pseudogene_clean_dir = pseudogene_clean_dir,
-    write_pseudogene_audit = write_pseudogene_audit
+    write_pseudogene_audit = write_pseudogene_audit,
+    verbose = verbose
   )
 
   # Identify Panaroo outputs that contain a final_graph.gml file
@@ -1503,10 +1523,10 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
-  # Define lab methods 
+  # Define lab methods
   lab_methods <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution", "Biofosun Gram-positive panels broth dilution",
                   "Vitek_2-P607_card", "cation-adjusted Mueller-Hinton broth", "gradient_diffusion", "kirby-bauer_disc_diffusion")
-  
+
   dplyr::tbl(con, "filtered") |>
     tibble::as_tibble() |>
     dplyr::select("genome.genome_id") |>
@@ -1521,9 +1541,9 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
       "genome.isolation_source", "genome.species"
     ) |>
     dplyr::mutate(genome_drug.evidence = dplyr::case_when(
-      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",  
+      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",
       genome_drug.laboratory_typing_method == "Computational Prediction"  ~ "Computational Method",
-      TRUE ~ genome_drug.evidence)) |> 
+      TRUE ~ genome_drug.evidence)) |>
     dplyr::filter(genome_drug.evidence == "Laboratory Method") |>
     dplyr::left_join(clean_drug, by = c("genome_drug.antibiotic" = "original_drug")) |>
     dplyr::filter(!is.na(cleaned_drug)) |>
