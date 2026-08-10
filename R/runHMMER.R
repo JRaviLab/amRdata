@@ -26,14 +26,14 @@
   starts_ok && ends_ok
 }
 
-#' Download and prepare HMMER databases for generating new file types. 
+#' Download and prepare HMMER databases for generating new file types.
 #'
 #' @param hmmer_db_dir Directory to store HMMER databases
 #' @param databases List of databases to prepare (default: c("Pfam", "COG", "AMRFinder"))
 #' @param docker_image Docker image containing HMMER (default: "staphb/hmmer")
-#' @param hmmer_db_url If the databases contain custom database(s), the url is required to download the database. 
+#' @param hmmer_db_url If the databases contain custom database(s), the url is required to download the database.
 #'
-#' @returns A list of paths to the database hmm files. 
+#' @returns A list of paths to the database hmm files.
 #'
 #' @keywords internal
 #' @examples
@@ -41,7 +41,8 @@
     hmmer_db_dir,
     databases = c("Pfam", "COG", "AMRFinder"),
     docker_image = "staphb/hmmer",
-    hmmer_db_url = NULL
+    hmmer_db_url = NULL,
+    verbose = TRUE
 ) {
 
   hmmer_db_dir <- normalizePath(hmmer_db_dir)
@@ -139,7 +140,7 @@
       showWarnings = FALSE
     )
 
-    message("Checking ", db_name)
+    if(verbose) message("Checking ", db_name)
 
     hmm_files <- list.files(
       db$dir,
@@ -243,24 +244,23 @@
   normalizePath(hmm_file, mustWork = FALSE)
 )
 
-valid_hmms <- vapply(
-  source_hmms,
-  .isValidHmmFile,
-  logical(1)
-)
+     # purrr implementation
+     valid_hmms <- purrr::map_lgl(source_hmms, .isValidHmmFile)
 
 if (any(!valid_hmms)) {
+  bad_files <- basename(hmm_files[!valid_hmms])
 
-  bad_files <- source_hmms[!valid_hmms]
+  if (isTRUE(verbose)) {
+    warning(
+      "Ignoring ",
+      length(bad_files),
+      " invalid HMM file(s):\n",
+      paste(bad_files, collapse = "\n"),
+      call. = FALSE
+    )
+  }
 
-  warning(
-    "Ignoring ",
-    length(bad_files),
-    " invalid HMM file(s):\n",
-    paste(basename(bad_files), collapse = "\n")
-  )
-
-  source_hmms <- source_hmms[valid_hmms]
+  hmm_files <- hmm_files[valid_hmms]
 }
 
 if (length(source_hmms) == 0) {
@@ -273,7 +273,7 @@ if (length(source_hmms) == 0) {
 
       if (!file.exists(hmm_file)) {
 
-        message(
+        if(verbose) message(
           "Combining ",
           length(source_hmms),
           " HMM files for ",
@@ -295,7 +295,7 @@ if (length(source_hmms) == 0) {
 
     if (!all(file.exists(pressed_files))) {
 
-      message(
+      if(verbose) message(
         "Running hmmpress for ",
         basename(hmm_file)
       )
@@ -358,7 +358,7 @@ if (length(source_hmms) == 0) {
 #'
 #' @param hmm_file path to the HMM database file (`.hmm`)
 #'
-#' @returns a tibble 
+#' @returns a tibble
 #'
 #' @keywords internal
 .parse_hmmer_profiles <- function(hmm_file) {
@@ -399,7 +399,7 @@ if (length(source_hmms) == 0) {
 
 #' The function to run HMMER with docker
 #'
-#' @param JOB_NAME 
+#' @param JOB_NAME
 #' @param FASTA
 #' @param DB
 #' @param Total_proteins
@@ -412,10 +412,11 @@ if (length(source_hmms) == 0) {
 #' @returns
 #'
 #' @keywords internal
-.runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins, 
-  output_path = NULL, db_paths, 
-  docker_image = "staphb/hmmer", threads = 8L, 
-  n_workers = 4L
+.runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins,
+  output_path = NULL, db_paths,
+  docker_image = "staphb/hmmer", threads = 8L,
+  n_workers = 8L,
+  verbose = TRUE
 ) {
     hmmer_input <- file.path(output_path, FASTA)
     hmmer_output <- file.path(output_path, paste0(JOB_NAME, ".tbl"))
@@ -451,7 +452,7 @@ if (length(source_hmms) == 0) {
       .to_container(hmmer_input, mount_host, mount_cont)
     )
 
-    message("Running hmmsearch via Docker...")
+    if(verbose) message("Running hmmsearch via Docker...")
     output <- tryCatch(
       {
         system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
@@ -465,7 +466,7 @@ if (length(source_hmms) == 0) {
       stop("hmmsearch failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
     }
 
-    message("hmmsearch completed successfully.")
+    if(verbose) message("hmmsearch completed successfully.")
 
     hmmer_tbl <- .parseHMMEROutput(hmmer_output) |>
       dplyr::select("protein", "query_name")
@@ -489,7 +490,6 @@ if (length(source_hmms) == 0) {
 #' @param hmmer_db_dir
 #' @param databases
 #' @param docker_image
-#' @param split_jobs
 #' @param num_of_splits
 #' @param n_workers
 #'
@@ -503,15 +503,30 @@ if (length(source_hmms) == 0) {
                       hmmer_db_dir,
                       databases = c("Pfam", "COG", "AMRFinder"),
                       docker_image = "staphb/hmmer",
-                      split_jobs = TRUE,
-                      num_of_splits = 20L,
-                      n_workers = 4L
+                      num_of_splits = 8L,
+                      n_workers = 8L,
+                      verbose = TRUE
                     ) {
   # Fail fast if Docker is missing
   if (!nzchar(Sys.which("docker"))) {
     stop("Docker is not available on your PATH but is required to run HMMER.")
   }
-  
+
+  # But also check if Docker is on the PATH but isn't running
+  docker_ok <- system2(
+    "docker",
+    "info",
+    stdout = FALSE,
+    stderr = FALSE
+  ) == 0L
+
+  if (!docker_ok) {
+    stop(
+      "Docker is installed but is not running or cannot be reached. ",
+      "Please (re)start Docker Desktop and try again."
+    )
+  }
+
   duckdb_path <- .docker_path(duckdb_path)
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
     output_path <- dirname(duckdb_path)
@@ -532,11 +547,13 @@ if (length(source_hmms) == 0) {
   hmmer_db_dir <- output_path
   }
 
-  # database paths 
+  # database paths
+  if(verbose) message ("Preparing HMM databases")
  db_paths <- .prepareHmmerDatabases(
   hmmer_db_dir = hmmer_db_dir,
   databases = databases,
-  docker_image = docker_image
+  docker_image = docker_image,
+  verbose = verbose
 )
 
 db_paths <- db_paths[databases]
@@ -574,6 +591,7 @@ db_paths <- db_paths[databases]
   workers = max(1L, n_workers)
 )
 
+  if (verbose) message("Running HMMER jobs")
 parquet_files <- furrr::future_map_chr(
   seq_len(nrow(job_list)),
   function(i) {
@@ -587,23 +605,24 @@ parquet_files <- furrr::future_map_chr(
       db_paths = db_paths,
       docker_image = docker_image,
       threads = threads,
-      n_workers = n_workers
+      n_workers = n_workers,
+      verbose = verbose
     )
   }
 )
 
 future::plan(future::sequential)
-  
+
   parquet_tbl <- tibble::tibble(
   parquet = parquet_files,
   db = job_list$DB
 )
-  
+
  final_parquets <- list()
 
 for (database_name in databases) {
 
-  message("Combining ", database_name)
+  if(verbose) message("Combining ", database_name)
 
   db_files <- parquet_tbl |>
     dplyr::filter(
@@ -619,7 +638,7 @@ for (database_name in databases) {
 dplyr::left_join(.parse_hmmer_profiles(db_paths[[database_name]]) |>
   dplyr::select(query_name = profile_name, query_accession = profile_accession, description = profile_description),
 by = "query_name")
-  
+
   final_parquet <- file.path(
     output_path,
     paste0(
@@ -734,25 +753,25 @@ invisible(final_parquets)
   # count space separated fields
   N <- max(sapply(split_fields, length))
 
-  table <- sub(
+  # Parsing differently to avoid fussy read_tsv() warnings
+  txt <- sub(
     pattern = sprintf("(%s).*", paste0(rep("\\S+", N), collapse = " +")),
     replacement = "\\1",
     x = lines,
     perl = TRUE
   ) |>
     gsub(pattern = "  *", replacement = "\t") |>
-    paste0(collapse = "\n") |>
-    readr::read_tsv(
-      col_names = names(col_types$cols),
-      comment = "#",
-      na = "-",
-      col_types = col_types,
-      lazy = FALSE,
-      progress = FALSE
-    ) 
-  # |>
-  #   tidyr::unite(description, description:last_col(), sep = " ")
-  # table$description <- gsub("\t", " ", table$description)
+    paste0(collapse = "\n")
+
+  table <- readr::read_tsv(
+    I(txt),
+    col_names = names(col_types$cols),
+    comment = "#",
+    na = "-",
+    col_types = col_types,
+    lazy = FALSE,
+    progress = FALSE
+  )
 
   table
 }
@@ -856,7 +875,7 @@ invisible(final_parquets)
       tibble::as_tibble()
 
     genome_annot_matrix <- protein_long |>
-      dplyr::inner_join( 
+      dplyr::inner_join(
         annotation |>
         dplyr::select(
           protein,
@@ -915,7 +934,7 @@ invisible(final_parquets)
 }
 
 #' Annotate proteins using DefenseFinder + CasFinder HMMs
-#' Will add to the duckdb + create the parquet file. 
+#' Will add to the duckdb + create the parquet file.
 #'
 #' @param defense_db_dir Directory used to store downloaded HMMs
 #' @param docker_image Docker image containing HMMER
@@ -930,7 +949,8 @@ invisible(final_parquets)
     docker_image = "staphb/hmmer",
     duckdb_path = "inst/extdata/Sfl.duckdb",
     output_path = NULL,
-    threads = 8L
+    threads = 8L,
+    verbose = TRUE
 ) {
 
   if (!nzchar(Sys.which("docker"))) {
@@ -979,7 +999,7 @@ invisible(final_parquets)
 
   if (!dir.exists(defense_dir)) {
 
-    message(
+    if(verbose) message(
       "Downloading DefenseFinder models"
     )
 
@@ -1002,7 +1022,7 @@ invisible(final_parquets)
 
   if (!dir.exists(cas_dir)) {
 
-    message(
+    if(verbose) message(
       "Downloading CasFinder models"
     )
 
@@ -1042,24 +1062,15 @@ invisible(final_parquets)
       basename(profile_dirs) == "profiles"
     ]
 
-    hmm_files <- unique(
-      unlist(
-        lapply(
-          profile_dirs,
-          function(x) {
-
-            list.files(
-              x,
-              pattern = "\\.hmm$",
-              recursive = TRUE,
-              full.names = TRUE,
-              ignore.case = TRUE
-            )
-
-          }
-        )
-      )
-    )
+    # moving to purrr implementation
+    hmm_files <- profile_dirs |>
+      purrr::map(\(x) list.files(x,
+                                 pattern = "\\.hmm$",
+                                 recursive = TRUE,
+                                 full.names = TRUE,
+                                 ignore.case = TRUE)) |>
+      purrr::flatten_chr() |>
+      unique()
 
     if (length(hmm_files) == 0) {
 
@@ -1069,26 +1080,23 @@ invisible(final_parquets)
       )
     }
 
-    valid_hmms <- vapply(
-  hmm_files,
-  .isValidHmmFile,
-  logical(1)
-)
+    valid_hmms <- purrr::map_lgl(hmm_files, .isValidHmmFile)
 
-if (any(!valid_hmms)) {
+    if (any(!valid_hmms)) {
+      bad_files <- basename(hmm_files[!valid_hmms])
 
-  warning(
-    "Ignoring ",
-    sum(!valid_hmms),
-    " invalid HMM file(s):\n",
-    paste(
-      basename(hmm_files[!valid_hmms]),
-      collapse = "\n"
-    )
-  )
-}
+      if (isTRUE(verbose)) {
+        warning(
+          "Ignoring ",
+          length(bad_files),
+          " invalid HMM file(s):\n",
+          paste(bad_files, collapse = "\n"),
+          call. = FALSE
+        )
+      }
 
-hmm_files <- hmm_files[valid_hmms]
+      hmm_files <- hmm_files[valid_hmms]
+    }
 
 if (length(hmm_files) == 0) {
   stop(
@@ -1131,7 +1139,7 @@ if (length(hmm_files) == 0) {
 
     if (!all(file.exists(pressed_files))) {
 
-      message(
+      if(verbose) message(
         "Running hmmpress for ",
         db_name
       )
@@ -1243,7 +1251,7 @@ if (length(hmm_files) == 0) {
 
   for (db_name in names(databases)) {
 
-    message(
+    if(verbose) message(
       "Running ",
       db_name
     )
@@ -1258,7 +1266,7 @@ if (length(hmm_files) == 0) {
         ".tbl"
       )
     )
-    
+
     output <- system2(
       "docker",
       args = c(
@@ -1325,7 +1333,7 @@ by = "query_name")
 
   combined_tbl <- dplyr::bind_rows(
     all_hits
-  ) 
+  )
 
   parquet_file <- file.path(
     output_path,
