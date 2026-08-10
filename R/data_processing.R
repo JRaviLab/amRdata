@@ -1853,6 +1853,10 @@ exportProcessedData <- function(duckdb_path,
                                 export_tables = TRUE,
                                 verbose = TRUE) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+
+  if (length(amr_phenotype_mode) > 1L) {
+    message("`amr_phenotype_mode` not specified; defaulting to 'separate'.")
+  }
   amr_phenotype_mode <- match.arg(amr_phenotype_mode)
 
   export_formats <- unique(tolower(export_formats))
