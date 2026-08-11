@@ -25,7 +25,7 @@ test_that(".apply_metadata_qc() keeps a genome that passes the default CheckM ga
 test_that(".apply_metadata_qc() drops a genome with contamination above the threshold", {
   tbl <- .mock_genome_tbl("511145.12", checkm_completeness = "99", checkm_contamination = "12")
 
-  out <- .apply_metadata_qc(tbl, checkm_contam = 5, checkm_complete = 95)
+  out <- .apply_metadata_qc(tbl, max_checkm_contam = 5, min_checkm_complete = 95)
 
   expect_length(out$keep_ids, 0L)
   expect_identical(out$rejections$failed_rule, "checkm_contamination")
@@ -35,7 +35,7 @@ test_that(".apply_metadata_qc() drops a genome with contamination above the thre
 test_that(".apply_metadata_qc() drops a genome with completeness below the threshold", {
   tbl <- .mock_genome_tbl("511145.12", checkm_completeness = "80", checkm_contamination = "1")
 
-  out <- .apply_metadata_qc(tbl, checkm_contam = 5, checkm_complete = 95)
+  out <- .apply_metadata_qc(tbl, max_checkm_contam = 5, min_checkm_complete = 95)
 
   expect_length(out$keep_ids, 0L)
   expect_identical(out$rejections$failed_rule, "checkm_completeness")

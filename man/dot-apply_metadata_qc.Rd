@@ -6,8 +6,8 @@
 \usage{
 .apply_metadata_qc(
   genome_tbl,
-  checkm_contam = 5,
-  checkm_complete = 95,
+  max_checkm_contam = 5,
+  min_checkm_complete = 95,
   gc_deviations = NULL,
   length_deviations = NULL,
   cds_deviations = NULL
@@ -16,9 +16,9 @@
 \arguments{
 \item{genome_tbl}{A tibble of genome metadata containing BV-BRC genome columns.}
 
-\item{checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
+\item{max_checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
 
-\item{checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
+\item{min_checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
 
 \item{gc_deviations}{Optional numeric scalar. Maximum SDs from the median GC content.}
 

@@ -12,12 +12,14 @@ retrieveMetadata(
   abx = "All",
   overwrite = FALSE,
   image = "danylmb/bvbrc:5.3",
-  checkm_contam = 5,
-  checkm_complete = 95,
+  max_checkm_contam = 5,
+  min_checkm_complete = 95,
   gc_deviations = NULL,
   length_deviations = NULL,
   cds_deviations = NULL,
   debug = FALSE,
+  export_tables = FALSE,
+  load_tables = FALSE,
   verbose = TRUE
 )
 }
@@ -40,9 +42,9 @@ Default NULL.}
 
 \item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 
-\item{checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
+\item{max_checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
 
-\item{checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
+\item{min_checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
 
 \item{gc_deviations}{Optional numeric scalar. Maximum SDs from the median GC content.}
 

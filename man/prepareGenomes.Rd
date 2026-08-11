@@ -12,11 +12,13 @@ prepareGenomes(
   overwrite = FALSE,
   num_workers = 8L,
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
-  checkm_contam = 5,
-  checkm_complete = 95,
+  max_checkm_contam = 5,
+  min_checkm_complete = 95,
   gc_deviations = NULL,
   length_deviations = NULL,
   cds_deviations = NULL,
+  export_tables = FALSE,
+  load_tables = FALSE,
   debug = FALSE,
   verbose = TRUE
 )
@@ -45,9 +47,9 @@ Applied to both FTP and CLI download branches. Default: 8.}
 Default \code{lab_only}. \code{any} will not require AMR data for downloads. This will
 return very large download lists for many species!}
 
-\item{checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
+\item{max_checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
 
-\item{checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
+\item{min_checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
 
 \item{gc_deviations}{Optional numeric scalar. Maximum SDs from the median GC content.}
 
