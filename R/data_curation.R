@@ -288,8 +288,8 @@
 #' Deviation-based filters are optional and are best suited to single-taxon runs.
 #'
 #' @param genome_tbl A tibble of genome metadata containing BV-BRC genome columns.
-#' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
-#' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
+#' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
+#' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
 #' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
 #' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
@@ -302,8 +302,8 @@
 #' }
 #' @keywords internal
 .apply_metadata_qc <- function(genome_tbl,
-                               checkm_contam = 5,
-                               checkm_complete = 95,
+                               max_checkm_contam = 5,
+                               min_checkm_complete = 95,
                                gc_deviations = NULL,
                                length_deviations = NULL,
                                cds_deviations = NULL) {
@@ -362,8 +362,8 @@
   qc <- qc |>
     dplyr::mutate(
       flag_checkm_missing = is.na(.data$checkm_completeness_qc) | is.na(.data$checkm_contamination_qc),
-      flag_checkm_contam = !is.na(.data$checkm_contamination_qc) & .data$checkm_contamination_qc > checkm_contam,
-      flag_checkm_complete = !is.na(.data$checkm_completeness_qc) & .data$checkm_completeness_qc < checkm_complete,
+      flag_checkm_contam = !is.na(.data$checkm_contamination_qc) & .data$checkm_contamination_qc > max_checkm_contam,
+      flag_checkm_complete = !is.na(.data$checkm_completeness_qc) & .data$checkm_completeness_qc < min_checkm_complete,
       flag_checkm = .data$flag_checkm_missing | .data$flag_checkm_contam | .data$flag_checkm_complete,
       flag_length = if (!is.null(length_deviations) && is.finite(sd_len) && sd_len > 0) {
         !is.na(z_len) & z_len > length_deviations
@@ -383,7 +383,7 @@
       qc_keep = !(.data$flag_checkm | .data$flag_length | .data$flag_gc | .data$flag_cds)
     )
 
-  make_rej <- function(flag, rule, observed, threshold, comparator) {
+  make_rejects <- function(flag, rule, observed, threshold, comparator) {
     idx <- which(flag %in% TRUE)
     if (!length(idx)) {
       return(NULL)
@@ -400,32 +400,32 @@
     )
   }
 
-  rej_list <- list(
-    make_rej(
+  reject_list <- list(
+    make_rejects(
       qc$flag_checkm_missing,
       "checkm_missing",
       ifelse(qc$flag_checkm_missing, "missing", NA_character_),
       "present",
       "is present"
     ),
-    make_rej(
+    make_rejects(
       qc$flag_checkm_contam,
       "checkm_contamination",
       qc$checkm_contamination_qc,
-      checkm_contam,
+      max_checkm_contam,
       ">"
     ),
-    make_rej(
+    make_rejects(
       qc$flag_checkm_complete,
       "checkm_completeness",
       qc$checkm_completeness_qc,
-      checkm_complete,
+      min_checkm_complete,
       "<"
     )
   )
 
   if (!is.null(gc_deviations)) {
-    rej_list[[length(rej_list) + 1L]] <- make_rej(
+    reject_list[[length(reject_list) + 1L]] <- make_rejects(
       qc$flag_gc,
       "gc_deviation_sd",
       z_gc,
@@ -435,7 +435,7 @@
   }
 
   if (!is.null(length_deviations)) {
-    rej_list[[length(rej_list) + 1L]] <- make_rej(
+    reject_list[[length(reject_list) + 1L]] <- make_rejects(
       qc$flag_length,
       "length_deviation_sd",
       z_len,
@@ -445,7 +445,7 @@
   }
 
   if (!is.null(cds_deviations)) {
-    rej_list[[length(rej_list) + 1L]] <- make_rej(
+    reject_list[[length(reject_list) + 1L]] <- make_rejects(
       qc$flag_cds,
       "cds_deviation_sd",
       z_cds,
@@ -454,7 +454,7 @@
     )
   }
 
-  rejections <- dplyr::bind_rows(rej_list)
+  rejections <- dplyr::bind_rows(reject_list)
   if (nrow(rejections) == 0L) {
     rejections <- tibble::tibble(
       genome_id = character(),
@@ -516,35 +516,28 @@
   invisible(n_removed)
 }
 
-# Make sure the BV-BRC metadata live where they're supposed to
+# Make sure the BV-BRC metadata live where they're supposed to, and are fresh
 .ensure_bvbrc_cache <- function(base_dir = ".",
                                 verbose = TRUE,
+                                max_age_days = 30L,
                                 cache_rel = file.path("data", "bvbrc", "bvbrcData.duckdb"),
                                 cache_table = "bvbrc_bac_data") {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
   cache_db <- file.path(base_dir, cache_rel)
 
-  need_build <- !file.exists(cache_db)
-  con_cache <- NULL
+  # Always delegate to .updateBVBRCdata() so its max_age_days staleness check
+  # actually runs. Previously this only rebuilt when the cache file/table was
+  # entirely absent, so an existing-but-stale cache was silently reused
+  # forever, and results (e.g. genome counts) drifted across machines/sessions
+  # depending on whenever each cache happened to be built.
+  .updateBVBRCdata(base_dir = base_dir, max_age_days = max_age_days, verbose = verbose)
 
-  if (!need_build) {
-    con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db)
-    on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
-    need_build <- !(cache_table %in% DBI::dbListTables(con_cache))
-  }
+  if (!file.exists(cache_db)) stop("After .updateBVBRCdata(), cache DB still missing at: ", cache_db)
 
-  if (need_build) {
-    if (isTRUE(verbose)) message("BV-BRC cache missing or incomplete. Building via .updateBVBRCdata(). Please wait.")
-    .updateBVBRCdata(base_dir = base_dir, verbose = verbose)
-
-    if (!is.null(con_cache)) try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE)
-    if (!file.exists(cache_db)) stop("After .updateBVBRCdata(), cache DB still missing at: ", cache_db)
-
-    con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db)
-    on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
-    if (!(cache_table %in% DBI::dbListTables(con_cache))) {
-      stop("After .updateBVBRCdata(), table '", cache_table, "' still not found in ", cache_db)
-    }
+  con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
+  on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
+  if (!(cache_table %in% DBI::dbListTables(con_cache))) {
+    stop("After .updateBVBRCdata(), table '", cache_table, "' still not found in ", cache_db)
   }
 
   invisible(cache_db)
@@ -1191,8 +1184,8 @@
 #' @param abx Character or vector. Antibiotic filter. "All" for all antibiotics, else names.
 #' @param overwrite Logical. If FALSE and DuckDB exists already, abort. Default FALSE.
 #' @param image Character. Docker image. Default "danylmb/bvbrc:5.3".
-#' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
-#' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
+#' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
+#' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
 #' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
 #' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
@@ -1210,12 +1203,14 @@ retrieveMetadata <- function(user_bacs,
                              abx = "All",
                              overwrite = FALSE,
                              image = "danylmb/bvbrc:5.3",
-                             checkm_contam = 5,
-                             checkm_complete = 95,
+                             max_checkm_contam = 5,
+                             min_checkm_complete = 95,
                              gc_deviations = NULL,
                              length_deviations = NULL,
                              cds_deviations = NULL,
                              debug = FALSE,
+                             export_tables = FALSE,
+                             load_tables = FALSE,
                              verbose = TRUE) {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
@@ -1390,8 +1385,8 @@ retrieveMetadata <- function(user_bacs,
 
   qc_out <- .apply_metadata_qc(
     genome_tbl = combined_genome_data_tbl,
-    checkm_contam = checkm_contam,
-    checkm_complete = checkm_complete,
+    max_checkm_contam = max_checkm_contam,
+    min_checkm_complete = min_checkm_complete,
     gc_deviations = gc_deviations,
     length_deviations = length_deviations,
     cds_deviations = cds_deviations
@@ -1517,6 +1512,24 @@ retrieveMetadata <- function(user_bacs,
     if (length(ids_zero_amr)) {
       message("  e.g.: ", paste(utils::head(ids_zero_amr, 10), collapse = ", "))
     }
+  }
+
+  export_res <- NULL
+  if (isTRUE(export_tables) || isTRUE(load_tables)) {
+    export_res <- exportTables(
+      paths$db_path,
+      export_tables = export_tables,
+      load_tables = load_tables,
+      verbose = verbose
+    )
+  }
+
+  if (isTRUE(load_tables)) {
+    return(list(
+      duckdbConnection = con,
+      table_name = "metadata",
+      data = if (!is.null(export_res)) export_res$data else NULL
+    ))
   }
 
   list(duckdbConnection = con, table_name = "metadata")
@@ -1943,7 +1956,6 @@ retrieveGenomes <- function(base_dir = ".",
                             cli_gff_workers = 8L,
                             chunk_size = 50L,
                             evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
-                            # NEW
                             verbose = TRUE) {
   method <- match.arg(method)
   evidence_mode <- match.arg(evidence_mode)
@@ -1959,7 +1971,7 @@ retrieveGenomes <- function(base_dir = ".",
 
   if (has_filtered) {
     if (isTRUE(verbose))
-      message("Using existing 'filtered' table (skipping re-filter).")
+      message("Found existing 'filtered' table.")
     con <- con0
     tbl <- "filtered"
     on.exit(try(DBI::dbDisconnect(con0, shutdown = TRUE), silent = TRUE), add = TRUE)
@@ -1979,6 +1991,7 @@ retrieveGenomes <- function(base_dir = ".",
     on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
   }
 
+  # What genomes need to be downloaded? Build set as `ids`
   ids <- tibble::as_tibble(DBI::dbReadTable(con, tbl)) |>
     dplyr::distinct(`genome.genome_id`) |>
     dplyr::pull(`genome.genome_id`)
@@ -1989,6 +2002,7 @@ retrieveGenomes <- function(base_dir = ".",
   dir.create(genome_path, recursive = TRUE, showWarnings = FALSE)
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
 
+  # Checks what is already  downloaded vs. the full list needed; takes diff
   if (isTRUE(skip_existing)) {
     already <- .list_complete(genome_path, ids)
     if (isTRUE(verbose))
@@ -1996,6 +2010,7 @@ retrieveGenomes <- function(base_dir = ".",
     ids <- setdiff(ids, already)
   }
 
+  # Is diff length 0? If so, all genomes ready to go!
   if (length(ids) == 0L) {
     if (isTRUE(verbose))
       message("All genomes already complete.")
@@ -2207,8 +2222,8 @@ genomeList <- function(base_dir = ".",
 #'    return very large download lists for many species!
 #' @param num_workers Integer. Parallel workers used for genome download.
 #'    Applied to both FTP and CLI download branches. Default: 8.
-#' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
-#' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
+#' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
+#' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
 #' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
 #' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
@@ -2227,11 +2242,13 @@ prepareGenomes <- function(user_bacs,
                            overwrite = FALSE,
                            num_workers = 8L,
                            evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
-                           checkm_contam = 5,
-                           checkm_complete = 95,
+                           max_checkm_contam = 5,
+                           min_checkm_complete = 95,
                            gc_deviations = NULL,
                            length_deviations = NULL,
                            cds_deviations = NULL,
+                           export_tables = FALSE,
+                           load_tables = FALSE,
                            debug = FALSE,
                            verbose = TRUE) {
   method <- match.arg(method)
@@ -2248,8 +2265,8 @@ prepareGenomes <- function(user_bacs,
     base_dir = base_dir,
     abx = "All",
     overwrite = overwrite,
-    checkm_contam = checkm_contam,
-    checkm_complete = checkm_complete,
+    max_checkm_contam = max_checkm_contam,
+    min_checkm_complete = min_checkm_complete,
     gc_deviations = gc_deviations,
     length_deviations = length_deviations,
     cds_deviations = cds_deviations,
@@ -2315,5 +2332,185 @@ prepareGenomes <- function(user_bacs,
     message("Continue with downstream processing using:")
     message('runDataProcessing("', normalizePath(paths$db_path), '")')
   }
+
+  export_res <- NULL
+  if (isTRUE(export_tables) || isTRUE(load_tables)) {
+    export_res <- exportTables(
+      paths$db_path,
+      export_tables = export_tables,
+      load_tables = load_tables,
+      verbose = verbose
+    )
+  }
+
+  if (isTRUE(load_tables)) {
+    return(list(
+      duckdb_path = paths$db_path,
+      table_name = "files",
+      data = if (!is.null(export_res)) export_res$data else NULL
+    ))
+  }
+
   invisible(out)
+}
+
+#' Export DuckDB tables and optionally load them into R
+#'
+#' Writes selected DuckDB tables to CSV files and optionally returns them as
+#' in-memory R data frames.
+#'
+#' @param duckdb_path Character. Path to the DuckDB file.
+#' @param output_dir Character or NULL. Directory for exports. Defaults to
+#'   file.path(dirname(duckdb_path), "exports").
+#' @param tables Character vector or NULL. Tables to export. If NULL, exports
+#'   all tables in the database.
+#' @param skip_tables Character vector of table names to exclude.
+#' @param include_summary Logical. If TRUE, writes summary.csv and summary.txt.
+#' @param export_tables Logical. If TRUE, writes tables to CSV files in `output_dir`.
+#' @param load_tables Logical. If TRUE, also return the exported tables as
+#'   in-memory R data frames.
+#' @param verbose Logical. If TRUE, prints progress messages.
+#'
+#' @return Invisibly returns a list with exported file paths and, if requested,
+#'   in-memory tables.
+#' @export
+exportTables <- function(duckdb_path,
+                         output_dir = NULL,
+                         tables = NULL,
+                         skip_tables = NULL,
+                         include_summary = TRUE,
+                         export_tables = TRUE,
+                         load_tables = FALSE,
+                         verbose = TRUE) {
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+
+  if (is.null(output_dir)) {
+    output_dir <- file.path(dirname(duckdb_path), "exports")
+  }
+  output_dir <- normalizePath(output_dir, mustWork = FALSE)
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  available_tables <- DBI::dbListTables(con)
+  if (!length(available_tables)) {
+    stop("No tables found in DuckDB: ", duckdb_path)
+  }
+
+  # More tables will exist in a full DuckDB output after data processing, but
+  # limiting this to the basic genome stats and metadata you'd get from only
+  # running data_curation.R
+  basic_tables <- c(
+    "bac_data",
+    "filtered",
+    "metadata",
+    "genome_data",
+    "amr_phenotype",
+    "metadata_qc",
+    "metadata_qc_rejections"
+  )
+
+  if (is.null(tables)) {
+    tables <- intersect(basic_tables, available_tables)
+  } else {
+    tables <- intersect(as.character(tables), available_tables)
+    if (!length(tables)) {
+      stop("None of the requested tables were found in the DuckDB.")
+    }
+  }
+
+  if (length(skip_tables)) {
+    tables <- setdiff(tables, skip_tables)
+  }
+  if (!length(tables)) {
+    stop("No tables left to export after applying skip_tables.")
+  }
+
+  exported_files <- list()
+  loaded_tables <- list()
+
+  for (tbl in tables) {
+    out_file <- file.path(output_dir, paste0(tbl, ".csv"))
+    df <- DBI::dbReadTable(con, tbl)
+
+    if (isTRUE(export_tables)) {
+      readr::write_csv(df, out_file, na = "")
+      exported_files[[tbl]] <- out_file
+      if (isTRUE(verbose)) {
+        message("Exported table: ", tbl, " -> ", out_file)
+      }
+    }
+
+    if (isTRUE(load_tables)) {
+      loaded_tables[[tbl]] <- df
+    }
+  }
+
+  count_if_present <- function(tbl) {
+    if (tbl %in% available_tables) {
+      as.character(DBI::dbGetQuery(
+        con,
+        paste0("SELECT COUNT(*) AS n FROM ", DBI::dbQuoteIdentifier(con, tbl))
+      )$n[[1]])
+    } else {
+      NA_character_
+    }
+  }
+
+  summary_tbl <- tibble::tibble(
+    metric = c(
+      "duckdb_path",
+      "export_dir",
+      "tables_exported",
+      "table_names",
+      "metadata_rows",
+      "genome_data_rows",
+      "amr_phenotype_rows",
+      "metadata_qc_rows",
+      "metadata_qc_rejections_rows",
+      "filtered_rows",
+      "files_rows",
+      "bac_data_rows"
+    ),
+    value = c(
+      duckdb_path,
+      output_dir,
+      as.character(length(tables)),
+      paste(tables, collapse = ", "),
+      count_if_present("metadata"),
+      count_if_present("genome_data"),
+      count_if_present("amr_phenotype"),
+      count_if_present("metadata_qc"),
+      count_if_present("metadata_qc_rejections"),
+      count_if_present("filtered"),
+      count_if_present("files"),
+      count_if_present("bac_data")
+    )
+  )
+
+  if (isTRUE(export_tables) && isTRUE(include_summary)) {
+    readr::write_csv(summary_tbl, file.path(output_dir, "summary.csv"), na = "")
+    writeLines(
+      c(
+        paste0("DuckDB: ", duckdb_path),
+        paste0("Export directory: ", output_dir),
+        paste0("Tables exported: ", length(tables)),
+        paste0("Table names: ", paste(tables, collapse = ", "))
+      ),
+      file.path(output_dir, "summary.txt"),
+      useBytes = TRUE
+    )
+    if (isTRUE(verbose)) {
+      message("Exported summary files.")
+    }
+  }
+
+  invisible(list(
+    export_dir = output_dir,
+    tables = tables,
+    files = exported_files,
+    data = if (isTRUE(load_tables)) loaded_tables else NULL,
+    summary = summary_tbl
+  ))
 }

@@ -11,8 +11,12 @@ runPanaroo2Duckdb(
   len_dif_percent = 0.95,
   cluster_threshold = 0.95,
   family_seq_identity = 0.5,
-  threads = 16,
+  threads = 8,
   split_jobs = FALSE,
+  refind_mode = c("off", "default", "strict"),
+  strip_pseudogenes = FALSE,
+  pseudogene_clean_dir = "gff_clean",
+  write_pseudogene_audit = TRUE,
   verbose = TRUE
 )
 }
@@ -38,12 +42,16 @@ Default: \code{0.5}.}
 
 \item{threads}{Integer. Total CPU budget to allocate for Panaroo.
 If \code{split_jobs = TRUE}, threads are divided across batches.
-Default: \code{16}.}
+Default: \code{8}.}
 
 \item{split_jobs}{Logical. If \code{TRUE}, Panaroo is run in multiple parallel
 batches (up to 5, depending on dataset size), and batch outputs are merged
 using \code{.mergePanaroo()}. If \code{FALSE}, only one Panaroo invocation is run.
 Default: \code{FALSE}.}
+
+\item{refind_mode}{Character. Panaroo's \code{--refind-mode} (\code{"off"}, \code{"default"}, or
+\code{"strict"}). See \code{\link[=.processPanaroo]{.processPanaroo()}} for what refinding does and the runtime
+caveat behind the current default. Default \code{"off"}.}
 
 \item{verbose}{Logical. Print status messages during Panaroo execution,
 merging, and DuckDB import. Default: \code{TRUE}.}
@@ -104,7 +112,7 @@ and modeling steps in \code{amRdata} and \code{amRml}.
 runPanaroo2Duckdb(
   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
   output_path = "data/Shigella_flexneri",
-  threads     = 12,
+  threads     = 8,
   split_jobs  = FALSE
 )
 

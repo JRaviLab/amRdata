@@ -4,7 +4,7 @@
 \alias{genomeList}
 \title{Build a table of local genome file paths and write to DuckDB}
 \usage{
-genomeList(base_dir = ".", user_bacs, verbose = TRUE)
+genomeList(base_dir = ".", user_bacs, expected_ids = NULL, verbose = TRUE)
 }
 \arguments{
 \item{base_dir}{Character. Project root.}

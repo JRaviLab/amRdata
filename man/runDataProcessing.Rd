@@ -7,12 +7,16 @@
 runDataProcessing(
   duckdb_path,
   output_path = NULL,
-  threads = 16,
+  threads = 8,
   panaroo_split_jobs = FALSE,
   panaroo_core_threshold = 0.9,
   panaroo_len_dif_percent = 0.95,
   panaroo_cluster_threshold = 0.95,
   panaroo_family_seq_identity = 0.5,
+  panaroo_refind_mode = c("off", "default", "strict"),
+  panaroo_strip_pseudogenes = FALSE,
+  panaroo_pseudogene_clean_dir = "gff_clean",
+  panaroo_write_pseudogene_audit = TRUE,
   cdhit_identity = 0.9,
   cdhit_word_length = 5,
   cdhit_memory = 0,
@@ -38,7 +42,7 @@ download steps (e.g., \code{files}, \code{filtered}, and metadata tables).}
 outputs and final Parquet files. If \code{NULL}, defaults to \code{dirname(duckdb_path)}.}
 
 \item{threads}{Integer. Shared concurrency budget used across tools (Panaroo, CD-HIT,
-InterProScan). Passed through to each stage as appropriate. Defaults to \code{16}.}
+InterProScan). Passed through to each stage as appropriate. Defaults to \code{8}.}
 
 \item{panaroo_split_jobs}{Logical. If \code{TRUE}, Panaroo runs in multiple batches that can be
 merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaroo runs once on all isolates. Default: \code{FALSE}.}
@@ -50,6 +54,10 @@ merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaro
 \item{panaroo_cluster_threshold}{Numeric. Panaroo \code{--threshold}. Default: \code{0.95}.}
 
 \item{panaroo_family_seq_identity}{Numeric. Panaroo \code{-f} (gene family identity). Default: \code{0.5}.}
+
+\item{panaroo_refind_mode}{Character. Panaroo's \code{--refind-mode} (\code{"off"}, \code{"default"},
+or \code{"strict"}). See \code{\link[=.processPanaroo]{.processPanaroo()}} for what refinding does and the runtime
+caveat behind the current default. Default \code{"off"}.}
 
 \item{cdhit_identity}{Numeric. CD-HIT \code{-c} identity threshold. Default: \code{0.9}.}
 
@@ -181,7 +189,7 @@ files to \code{output_path}, and builds a \strong{Parquet-backed DuckDB}
 runDataProcessing(
   duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
   output_path   = "data/Shigella_flexneri",
-  threads       = 16,
+  threads       = 8,
   ref_file_path = "data_raw/"
 )
 

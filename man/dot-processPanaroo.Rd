@@ -11,7 +11,8 @@
   len_dif_percent,
   cluster_threshold,
   family_seq_identity,
-  panaroo_threads_per_job
+  panaroo_threads_per_job,
+  refind_mode = c("off", "default", "strict")
 )
 }
 \arguments{
@@ -28,6 +29,16 @@
 \item{family_seq_identity}{Numeric. Gene family clustering identity (\code{-f}). Default \code{0.5}.}
 
 \item{panaroo_threads_per_job}{Integer. Number of threads for Panaroo and parallel execution.}
+
+\item{refind_mode}{Character. Panaroo's \code{--refind-mode} (\code{"off"}, \code{"default"}, or
+\code{"strict"}). Refinding searches for and recovers gene calls that annotation
+tools missed, comparing each candidate against the rest of the pangenome.
+Caveat: this search can take substantially longer (and in rare cases fail to
+complete within hours) when a genome carries a cluster of CDS with internal
+stop codons, which existing upstream genome-quality fields do not flag.
+Default \code{"off"} for now, to avoid that runtime risk; plan to move this back to
+\code{"default"} once a QC step upstream (e.g. in \code{.apply_metadata_qc()}) can screen
+out affected genomes before they reach Panaroo.}
 }
 \value{
 A list of results for each Panaroo batch in its output directory.
