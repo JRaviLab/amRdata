@@ -16,8 +16,16 @@ Invisibly returns the path to the written PDF (all plots as
 separate pages of one multi-page file).
 }
 \description{
-Expects \code{metadata_parquet} to be the output of \code{runDataProcessing()}'s
-\code{cleanData()} step (or an export of the resulting \code{metadata} table), since
+Expects \code{metadata_parquet} to be the output of
+\code{cleanMetaData()} step (or an export of the resulting \code{metadata} table), since
 \code{drug_abbr}, \code{drug_class}, and \code{num_resistant_classes} are only populated
 after that step joins in the reference drug tables.
+}
+\examples{
+\dontrun{
+generatePlots(
+  metadata_parquet = "data/metadata.parquet",
+  out_path = "data/"
+)
+}
 }

@@ -3,7 +3,7 @@
 
 # AMR phenotype palette (R/S/I plus full-word + lowercase variants so it works
 # regardless of how the column is encoded). Susceptible is intentionally
-# neutral grey so Resistant amber stands out as the signal of interest.
+# a muted blue so Resistant amber stands out as the signal of interest.
 PHENOTYPE_COLORS <- c(
   R = "#d4872a", Resistant = "#d4872a", resistant = "#d4872a",
   S = "#5b8db8", Susceptible = "#5b8db8", susceptible = "#5b8db8",

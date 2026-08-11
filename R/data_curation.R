@@ -540,35 +540,28 @@
   invisible(n_removed)
 }
 
-# Make sure the BV-BRC metadata live where they're supposed to
+# Make sure the BV-BRC metadata live where they're supposed to, and are fresh
 .ensure_bvbrc_cache <- function(base_dir = ".",
                                 verbose = TRUE,
+                                max_age_days = 30L,
                                 cache_rel = file.path("data", "bvbrc", "bvbrcData.duckdb"),
                                 cache_table = "bvbrc_bac_data") {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
   cache_db <- file.path(base_dir, cache_rel)
 
-  need_build <- !file.exists(cache_db)
-  con_cache <- NULL
+  # Always delegate to .updateBVBRCdata() so its max_age_days staleness check
+  # actually runs. Previously this only rebuilt when the cache file/table was
+  # entirely absent, so an existing-but-stale cache was silently reused
+  # forever, and results (e.g. genome counts) drifted across machines/sessions
+  # depending on whenever each cache happened to be built.
+  .updateBVBRCdata(base_dir = base_dir, max_age_days = max_age_days, verbose = verbose)
 
-  if (!need_build) {
-    con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db)
-    on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
-    need_build <- !(cache_table %in% DBI::dbListTables(con_cache))
-  }
+  if (!file.exists(cache_db)) stop("After .updateBVBRCdata(), cache DB still missing at: ", cache_db)
 
-  if (need_build) {
-    if (isTRUE(verbose)) message("BV-BRC cache missing or incomplete. Building via .updateBVBRCdata(). Please wait.")
-    .updateBVBRCdata(base_dir = base_dir, verbose = verbose)
-
-    if (!is.null(con_cache)) try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE)
-    if (!file.exists(cache_db)) stop("After .updateBVBRCdata(), cache DB still missing at: ", cache_db)
-
-    con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db)
-    on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
-    if (!(cache_table %in% DBI::dbListTables(con_cache))) {
-      stop("After .updateBVBRCdata(), table '", cache_table, "' still not found in ", cache_db)
-    }
+  con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
+  on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
+  if (!(cache_table %in% DBI::dbListTables(con_cache))) {
+    stop("After .updateBVBRCdata(), table '", cache_table, "' still not found in ", cache_db)
   }
 
   invisible(cache_db)

@@ -12,7 +12,11 @@
   cluster_threshold = 0.95,
   family_seq_identity = 0.5,
   threads = 8,
-  split_jobs = FALSE
+  split_jobs = FALSE,
+  refind_mode = c("off", "default", "strict"),
+  strip_pseudogenes = FALSE,
+  pseudogene_clean_dir = "gff_clean",
+  write_pseudogene_audit = TRUE
 )
 }
 \arguments{
@@ -32,6 +36,10 @@
 
 \item{split_jobs}{Logical. If TRUE, split into multiple smaller pangenome
 generation jobs that can be merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If FALSE, all isolates in one run.}
+
+\item{refind_mode}{Character. Panaroo's \code{--refind-mode} (\code{"off"}, \code{"default"}, or
+\code{"strict"}). See \code{\link[=.processPanaroo]{.processPanaroo()}} for what refinding does and the runtime
+caveat behind the current default. Default \code{"off"}.}
 }
 \value{
 A list of results for each Panaroo batch in its output directory.
