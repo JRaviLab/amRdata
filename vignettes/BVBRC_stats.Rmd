@@ -37,27 +37,43 @@ fetchCompleteBVBRCMetadata <- function(
   }
 
   # Step 1: get cleaned attribute list
-  attr_cmd <- glue::glue(
-    "docker run --rm {image} p3-all-genomes -f | ",
-    "tail -n +2 | ",
-    "sed -E 's/ \\((multi|related|derived)\\)//g' | ",
-    "tr '\\n' ',' | sed 's/,$//'"
-  )
+ docker_path <- Sys.which("docker")
 
-  ATTRS <- tryCatch(
-    system(attr_cmd, intern = TRUE),
+  attr_raw <- tryCatch(
+    system2(
+      docker_path,
+      args = c(
+        "run", "--rm", image,
+        "p3-all-genomes", "-f"
+      ),
+      stdout = TRUE,
+      stderr = TRUE
+    ),
     error = function(e) {
       stop("Failed to retrieve attribute list.\n", conditionMessage(e))
     }
   )
 
-  if (length(ATTRS) == 0L) {
+  if (length(attr_raw) < 2L) {
     stop("Attribute list is empty.")
   }
 
-  if (isTRUE(verbose)) {
-    message("Fetching BV-BRC bacterial genome metadata (this may take time)...")
-  }
+  ATTRS <- attr_raw[-1]
+  
+  ATTRS <- gsub(
+    " \\((multi|related|derived)\\)$",
+    "",
+    ATTRS
+  )
+  ATTRS <- paste(ATTRS, collapse = ",")
+
+    if (length(ATTRS) == 0L) {
+      stop("Attribute list is empty.")
+    }
+
+    if (isTRUE(verbose)) {
+      message("Fetching BV-BRC bacterial genome metadata (this may take time)...")
+    }
 
   # Step 2: use ATTRS in main query
   cmd <- glue::glue(

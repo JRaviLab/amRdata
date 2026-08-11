@@ -793,14 +793,6 @@ invisible(final_parquets)
 #'
 #' @seealso [CDHIT2duckdb()], [runDataProcessing()]
 #'
-#' @examples
-#' \dontrun{
-#' proteinAnnotations2Duckdb(
-#'   annotated_parquet = "results/Ecoli/protein_COG.parquet",
-#'   duckdb_path       = "data/Ecoli/Eco.duckdb"
-#' )
-#' }
-#'
 #' @keywords internal
 .proteinAnnotations2Duckdb <- function(
     duckdb_path,
