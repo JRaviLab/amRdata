@@ -5,6 +5,30 @@
   grepl("^[0-9]+$", x)
 }
 
+#' A helper used in data_curation.R and data_processing.R to ensure exported tables
+#' don't lose trailing zeroes. Should be relocated into a common helpers/utilities
+#' script later.
+#' @keywords internal
+.preserve_export_id_text <- function(df) {
+  df <- tibble::as_tibble(df)
+
+  id_pattern <- paste0(
+    "(^|[._])(",
+    "genome(_drug)?_id|taxon_id|",
+    "assembly_accession|bioproject_accession|biosample_accession|",
+    "refseq_accessions?|genbank_accessions?|sra_accession|pmid|",
+    "gene_id|protein_id|domain_id|cluster_id|AccNum|id",
+    ")$"
+  )
+
+  id_cols <- names(df)[grepl(id_pattern, names(df), ignore.case = TRUE)]
+  if (length(id_cols)) {
+    df[id_cols] <- lapply(df[id_cols], as.character)
+  }
+
+  df
+}
+
 #' Helps tag genomes with their AMR evidence for parsing
 #' @keywords internal
 .create_amr_tagged_view <- function(con) {
@@ -1963,7 +1987,7 @@ retrieveGenomes <- function(base_dir = ".",
 
   # Use 'filtered' if already prepared, or start filtering
   if (isTRUE(verbose))
-    message("Preparing download set (checking for existing 'filtered').")
+    message("Preparing download set (checking for existing 'filtered' table).")
   paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
   db_path <- paths$db_path
   con0 <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
@@ -2013,7 +2037,7 @@ retrieveGenomes <- function(base_dir = ".",
   # Is diff length 0? If so, all genomes ready to go!
   if (length(ids) == 0L) {
     if (isTRUE(verbose))
-      message("All genomes already complete.")
+      message("Download of all genomes already complete.")
     all_ids <- tibble::as_tibble(DBI::dbReadTable(con, tbl)) |>
       dplyr::distinct(`genome.genome_id`) |>
       dplyr::pull(`genome.genome_id`)
@@ -2366,7 +2390,6 @@ prepareGenomes <- function(user_bacs,
 #'   all tables in the database.
 #' @param skip_tables Character vector of table names to exclude.
 #' @param include_summary Logical. If TRUE, writes summary.csv and summary.txt.
-#' @param export_tables Logical. If TRUE, writes tables to CSV files in `output_dir`.
 #' @param load_tables Logical. If TRUE, also return the exported tables as
 #'   in-memory R data frames.
 #' @param verbose Logical. If TRUE, prints progress messages.
@@ -2379,6 +2402,7 @@ exportTables <- function(duckdb_path,
                          tables = NULL,
                          skip_tables = NULL,
                          include_summary = TRUE,
+                         export_formats = c("csv"),
                          export_tables = TRUE,
                          load_tables = FALSE,
                          verbose = TRUE) {
@@ -2390,6 +2414,36 @@ exportTables <- function(duckdb_path,
   output_dir <- normalizePath(output_dir, mustWork = FALSE)
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
+  export_formats <- unique(tolower(export_formats))
+  export_formats[export_formats == "excel"] <- "xlsx"
+
+  allowed_formats <- c("csv", "tsv", "xlsx", "parquet")
+  unknown_formats <- setdiff(export_formats, allowed_formats)
+  if (length(unknown_formats)) {
+    stop("Unsupported export format(s): ", paste(unknown_formats, collapse = ", "))
+  }
+
+  if (isTRUE(export_tables) && !length(export_formats)) {
+    stop("At least one export format must be supplied when export_tables = TRUE.")
+  }
+
+  warn_text_exports <- any(export_formats %in% c("csv", "tsv", "xlsx"))
+  if (isTRUE(export_tables) && warn_text_exports) {
+    message(
+      "\nNote: CSV, TSV, and Excel exports are intended primarily for human readability.\n",
+      "However, BV-BRC genome accession are differentiated by trailing zero values.\n",
+      "Example: 1282.2280 is a different genome than 1282.228\n",
+      "If reading these files into software like Excel, or even re-reading them into R,\n",
+      "accession IDs can be read as 'numeric' and trailing zeroes dropped!\n",
+      "For programmatic reuse, we suggest using Parquet format, or \n",
+      "explicitly import accession ID columns as 'character', not 'numeric'.\n"
+    )
+  }
+
+  if ("xlsx" %in% export_formats && !requireNamespace("writexl", quietly = TRUE)) {
+    stop("Format 'xlsx' was requested but package 'writexl' is not available.")
+  }
+
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
 
@@ -2398,52 +2452,90 @@ exportTables <- function(duckdb_path,
     stop("No tables found in DuckDB: ", duckdb_path)
   }
 
-  # More tables will exist in a full DuckDB output after data processing, but
-  # limiting this to the basic genome stats and metadata you'd get from only
-  # running data_curation.R
-  basic_tables <- c(
+  default_tables <- c(
     "bac_data",
     "filtered",
     "metadata",
     "genome_data",
     "amr_phenotype",
     "metadata_qc",
-    "metadata_qc_rejections"
+    "metadata_qc_rejections",
+    "files"
   )
 
-  if (is.null(tables)) {
-    tables <- intersect(basic_tables, available_tables)
+  selected_tables <- if (is.null(tables)) {
+    intersect(default_tables, available_tables)
   } else {
-    tables <- intersect(as.character(tables), available_tables)
-    if (!length(tables)) {
-      stop("None of the requested tables were found in the DuckDB.")
-    }
+    intersect(unique(as.character(tables)), available_tables)
   }
 
-  if (length(skip_tables)) {
-    tables <- setdiff(tables, skip_tables)
+  if (!is.null(skip_tables) && length(skip_tables)) {
+    selected_tables <- setdiff(selected_tables, skip_tables)
   }
-  if (!length(tables)) {
+
+  if (!length(selected_tables)) {
     stop("No tables left to export after applying skip_tables.")
+  }
+
+  preserve_id_text <- .preserve_export_id_text
+
+  write_one <- function(df, stem, fmt) {
+    df <- preserve_id_text(df)
+    out_file <- file.path(output_dir, paste0(stem, ".", fmt))
+
+    if (fmt == "csv") {
+      utils::write.table(
+        df,
+        file = out_file,
+        sep = ",",
+        row.names = FALSE,
+        col.names = TRUE,
+        quote = TRUE,
+        na = "",
+        qmethod = "double",
+        fileEncoding = "UTF-8"
+      )
+    } else if (fmt == "tsv") {
+      utils::write.table(
+        df,
+        file = out_file,
+        sep = "\t",
+        row.names = FALSE,
+        col.names = TRUE,
+        quote = TRUE,
+        na = "",
+        qmethod = "double",
+        fileEncoding = "UTF-8"
+      )
+    } else if (fmt == "xlsx") {
+      writexl::write_xlsx(list(data = df), out_file)
+    } else if (fmt == "parquet") {
+      arrow::write_parquet(df, out_file)
+    } else {
+      stop("Unhandled format: ", fmt)
+    }
+
+    out_file
   }
 
   exported_files <- list()
   loaded_tables <- list()
 
-  for (tbl in tables) {
-    out_file <- file.path(output_dir, paste0(tbl, ".csv"))
-    df <- DBI::dbReadTable(con, tbl)
+  for (tbl in selected_tables) {
+    df <- tibble::as_tibble(DBI::dbReadTable(con, tbl))
 
     if (isTRUE(export_tables)) {
-      readr::write_csv(df, out_file, na = "")
-      exported_files[[tbl]] <- out_file
+      for (fmt in export_formats) {
+        out_file <- write_one(df, tbl, fmt)
+        exported_files[[paste(tbl, fmt, sep = ".")]] <- out_file
+      }
       if (isTRUE(verbose)) {
-        message("Exported table: ", tbl, " -> ", out_file)
+        message("Exported table: ", tbl, " -> ", paste(export_formats, collapse = ", "))
       }
     }
 
     if (isTRUE(load_tables)) {
-      loaded_tables[[tbl]] <- df
+      loaded_tables[[tbl]] <- preserve_id_text(df)
     }
   }
 
@@ -2458,45 +2550,49 @@ exportTables <- function(duckdb_path,
     }
   }
 
+  summary_tables <- available_tables
   summary_tbl <- tibble::tibble(
     metric = c(
       "duckdb_path",
       "export_dir",
+      "export_formats",
+      "tables_requested",
       "tables_exported",
       "table_names",
-      "metadata_rows",
-      "genome_data_rows",
-      "amr_phenotype_rows",
-      "metadata_qc_rows",
-      "metadata_qc_rejections_rows",
-      "filtered_rows",
-      "files_rows",
-      "bac_data_rows"
+      paste0(summary_tables, "_rows")
     ),
     value = c(
       duckdb_path,
       output_dir,
-      as.character(length(tables)),
-      paste(tables, collapse = ", "),
-      count_if_present("metadata"),
-      count_if_present("genome_data"),
-      count_if_present("amr_phenotype"),
-      count_if_present("metadata_qc"),
-      count_if_present("metadata_qc_rejections"),
-      count_if_present("filtered"),
-      count_if_present("files"),
-      count_if_present("bac_data")
+      paste(export_formats, collapse = ", "),
+      if (is.null(tables)) "default" else paste(unique(as.character(tables)), collapse = ", "),
+      as.character(length(exported_files)),
+      paste(summary_tables, collapse = ", "),
+      vapply(summary_tables, count_if_present, character(1))
     )
   )
 
   if (isTRUE(export_tables) && isTRUE(include_summary)) {
-    readr::write_csv(summary_tbl, file.path(output_dir, "summary.csv"), na = "")
+    utils::write.table(
+      summary_tbl,
+      file = file.path(output_dir, "summary.csv"),
+      sep = ",",
+      row.names = FALSE,
+      col.names = TRUE,
+      quote = TRUE,
+      na = "",
+      qmethod = "double",
+      fileEncoding = "UTF-8"
+    )
     writeLines(
       c(
         paste0("DuckDB: ", duckdb_path),
         paste0("Export directory: ", output_dir),
-        paste0("Tables exported: ", length(tables)),
-        paste0("Table names: ", paste(tables, collapse = ", "))
+        paste0("Export formats: ", paste(export_formats, collapse = ", ")),
+        paste0("Tables exported: ", length(exported_files)),
+        paste0("Table names: ", paste(summary_tables, collapse = ", ")),
+        "",
+        "Caution: CSV/TSV/XLSX exports may be re-read as numeric by default. Force accession/ID columns to character on import. Parquet is safer for programmatic reuse."
       ),
       file.path(output_dir, "summary.txt"),
       useBytes = TRUE
@@ -2508,7 +2604,7 @@ exportTables <- function(duckdb_path,
 
   invisible(list(
     export_dir = output_dir,
-    tables = tables,
+    tables = selected_tables,
     files = exported_files,
     data = if (isTRUE(load_tables)) loaded_tables else NULL,
     summary = summary_tbl

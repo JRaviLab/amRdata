@@ -2048,24 +2048,43 @@ exportProcessedData <- function(duckdb_path,
                                 export_formats = c("csv"),
                                 export_sequences = FALSE,
                                 tables = NULL,
+                                export_tables = TRUE,
                                 verbose = TRUE) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+
+  if (length(amr_phenotype_mode) > 1L) {
+    message("`amr_phenotype_mode` not specified; defaulting to 'separate'.")
+  }
   amr_phenotype_mode <- match.arg(amr_phenotype_mode)
 
   export_formats <- unique(tolower(export_formats))
-  allowed_formats <- c("csv", "tsv", "parquet", "xlsx")
+  export_formats[export_formats == "excel"] <- "xlsx"
+
+  allowed_formats <- c("csv", "tsv", "xlsx", "parquet")
   unknown_formats <- setdiff(export_formats, allowed_formats)
   if (length(unknown_formats)) {
     stop("Unsupported export format(s): ", paste(unknown_formats, collapse = ", "))
   }
 
-  if ("xlsx" %in% export_formats) {
+  if (isTRUE(export_tables) && !length(export_formats)) {
+    stop("At least one export format must be supplied when export_tables = TRUE.")
+  }
+
+  warn_text_exports <- any(export_formats %in% c("csv", "tsv", "xlsx"))
+  if (isTRUE(export_tables) && warn_text_exports) {
     message(
-      "Excel spreadsheets of these features can be extremely large and may not open properly even on powerful hardware."
+      "\nNote: CSV, TSV, and Excel exports are intended primarily for human readability.\n",
+      "However, BV-BRC genome accession are differentiated by trailing zero values.\n",
+      "Example: 1282.2280 is a different genome than 1282.228\n",
+      "If reading these files into software like Excel, or even re-reading them into R,\n",
+      "accession IDs can be read as 'numeric' and trailing zeroes dropped!\n",
+      "For programmatic reuse, we suggest using Parquet format, or \n",
+      "explicitly import accession ID columns as 'character', not 'numeric'.\n"
     )
-    if (!requireNamespace("writexl", quietly = TRUE)) {
-      stop("Format 'xlsx' was requested but package 'writexl' is not available.")
-    }
+  }
+
+  if ("xlsx" %in% export_formats && !requireNamespace("writexl", quietly = TRUE)) {
+    stop("Format 'xlsx' was requested but package 'writexl' is not available.")
   }
 
   if (is.null(output_path)) {
@@ -2094,11 +2113,21 @@ exportProcessedData <- function(duckdb_path,
   }
 
   write_one <- function(df, stem) {
+    df <- .preserve_export_id_text(df)
+
     if ("csv" %in% export_formats) {
-      readr::write_csv(df, file.path(output_path, paste0(stem, ".csv")), na = "")
+      utils::write.table(
+        df, file = file.path(output_path, paste0(stem, ".csv")),
+        sep = ",", row.names = FALSE, col.names = TRUE,
+        quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
+      )
     }
     if ("tsv" %in% export_formats) {
-      readr::write_tsv(df, file.path(output_path, paste0(stem, ".tsv")), na = "")
+      utils::write.table(
+        df, file = file.path(output_path, paste0(stem, ".tsv")),
+        sep = "\t", row.names = FALSE, col.names = TRUE,
+        quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
+      )
     }
     if ("parquet" %in% export_formats) {
       arrow::write_parquet(df, file.path(output_path, paste0(stem, ".parquet")))
@@ -2130,9 +2159,9 @@ exportProcessedData <- function(duckdb_path,
 
     md |>
       dplyr::transmute(
-        genome_id = `genome.genome_id`,
-        antibiotic = `genome_drug.antibiotic`,
-        phenotype = `genome_drug.resistant_phenotype`
+        genome_id = as.character(`genome.genome_id`),
+        antibiotic = as.character(`genome_drug.antibiotic`),
+        phenotype = as.character(`genome_drug.resistant_phenotype`)
       ) |>
       dplyr::filter(!is.na(genome_id), !is.na(antibiotic), !is.na(phenotype)) |>
       dplyr::distinct() |>
@@ -2149,12 +2178,11 @@ exportProcessedData <- function(duckdb_path,
       dplyr::arrange(genome_id)
   }
 
-  # Appendable here means whether we glue AST phenotypes on the end or not
   table_specs <- list(
     gene_count = list(source = "gene_count", stem = "gene_count", appendable = TRUE),
     protein_count = list(source = "protein_count", stem = "protein_count", appendable = TRUE),
     domain_count = list(source = "domain_count", stem = "domain_count", appendable = TRUE),
-    struct = list(source = "struct", stem = "struct", appendable = TRUE),
+    struct = list(source = "gene_struct", stem = "struct", appendable = TRUE),
     gene_names = list(source = "gene_names", stem = "gene_names", appendable = FALSE),
     protein_names = list(source = "protein_names", stem = "protein_names", appendable = FALSE),
     domain_names = list(source = "domain_names", stem = "domain_names", appendable = FALSE),
@@ -2193,7 +2221,11 @@ exportProcessedData <- function(duckdb_path,
     stop("No requested tables were found in the DuckDB.")
   }
 
+  # Ensuring we don't accidentally pass a NULL through silently
   phenotype_wide <- build_amr_wide()
+  if (!is.null(phenotype_wide)) {
+    phenotype_wide <- .preserve_export_id_text(phenotype_wide)
+  }
   exported <- character(0)
 
   for (key in selected_keys) {
@@ -2215,7 +2247,7 @@ exportProcessedData <- function(duckdb_path,
       next
     }
 
-    df <- read_tbl(spec$source)
+    df <- .preserve_export_id_text(read_tbl(spec$source))
     out_stem <- spec$stem
 
     if (identical(amr_phenotype_mode, "append") &&
@@ -2223,6 +2255,7 @@ exportProcessedData <- function(duckdb_path,
         !is.null(phenotype_wide) &&
         "genome_id" %in% names(df)) {
       df <- dplyr::left_join(df, phenotype_wide, by = "genome_id")
+      df <- .preserve_export_id_text(df)
       out_stem <- paste0(spec$stem, "_with_phenotypes")
     }
 

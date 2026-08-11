@@ -8,7 +8,7 @@ exportTables(
   duckdb_path,
   output_dir = NULL,
   tables = NULL,
-  skip_tables = NULL,
+  skip_tables = c(NULL),
   include_summary = TRUE,
   export_tables = TRUE,
   load_tables = FALSE,
@@ -27,8 +27,6 @@ all tables in the database.}
 \item{skip_tables}{Character vector of table names to exclude.}
 
 \item{include_summary}{Logical. If TRUE, writes summary.csv and summary.txt.}
-
-\item{export_tables}{Logical. If TRUE, writes tables to CSV files in \code{output_dir}.}
 
 \item{load_tables}{Logical. If TRUE, also return the exported tables as
 in-memory R data frames.}
