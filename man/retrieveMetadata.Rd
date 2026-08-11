@@ -12,6 +12,12 @@ retrieveMetadata(
   abx = "All",
   overwrite = FALSE,
   image = "danylmb/bvbrc:5.3",
+  checkm_contam = 5,
+  checkm_complete = 95,
+  gc_deviations = NULL,
+  length_deviations = NULL,
+  cds_deviations = NULL,
+  debug = FALSE,
   verbose = TRUE
 )
 }
@@ -34,7 +40,19 @@ Default NULL.}
 
 \item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 
-\item{verbose}{Logical. If TRUE, prints concise messages.}
+\item{checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
+
+\item{checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
+
+\item{gc_deviations}{Optional numeric scalar. Maximum SDs from the median GC content.}
+
+\item{length_deviations}{Optional numeric scalar. Maximum SDs from the median genome length.}
+
+\item{cds_deviations}{Optional numeric scalar. Maximum SDs from the median CDS count.}
+
+\item{debug}{Logical. If TRUE, retain \code{metadata_full} and QC columns for inspection.}
+
+\item{verbose}{Logical. If TRUE, print progress messages.}
 }
 \value{
 A list with:

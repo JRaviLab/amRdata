@@ -7,17 +7,13 @@
 .parseHMMEROutput(file)
 }
 \arguments{
-\item{file}{Path to a HMMER \code{.tbl} output file produced with \code{--tblout}.}
+\item{file}{Path to a HMMER \code{.tbl} output file produced with \code{--domtblout}.}
 }
 \value{
-A tibble with 19 columns matching the HMMER per-sequence hit table:
-\code{name}, \code{accession}, \code{query_name}, \code{query_accession}, \code{sequence_evalue},
-\code{sequence_score}, \code{sequence_bias}, \code{best_evalue}, \code{best_score},
-\code{best_bias}, \code{number_exp}, \code{number_reg}, \code{number_clu}, \code{number_ov},
-\code{number_env}, \code{number_dom}, \code{number_rep}, \code{number_inc}, \code{description}.
+A tibble with 19 columns matching the HMMER per-sequence hit table
 }
 \description{
-Reads a HMMER \code{--tblout} file and returns a tidy tibble with one row per
+Reads a HMMER \code{--domtblout} file and returns a tidy tibble with one row per
 target-query hit. Comment lines are stripped and the free-text description
 field is reunited from the remaining whitespace-delimited columns.
 }
