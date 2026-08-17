@@ -1234,6 +1234,14 @@ retrieveMetadata <- function(user_bacs,
     genome_ids <- readLines(genome_id_file, warn = FALSE)
     genome_ids <- trimws(genome_ids)
     genome_ids <- genome_ids[genome_ids != ""]
+  } else if (identical(method, "api")) {
+    if (isTRUE(verbose)) message("Resolving genome IDs via BV-BRC API.")
+    genome_ids <- .resolveGenomeIDs_api(
+      base_dir = base_dir,
+      user_bacs = user_bacs,
+      overwrite = overwrite,
+      verbose = verbose
+    )
   } else {
     if (isTRUE(verbose)) message("Resolving genome IDs for user inputs.")
     genome_ids <- .retrieveQueryIDs(

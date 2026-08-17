@@ -128,6 +128,57 @@
   .bvbrc_prefix_fill(df, expected, "genome_drug")
 }
 
+# --- genome-ID resolution (genome) --------------------------------------------
+# API replacement for .retrieveQueryIDs(): resolve species names and/or taxon IDs
+# to Good-quality WGS/Complete genome IDs, and write the `bac_data` table (used by
+# retrieveMetadata()'s summary). Uses the Data API instead of the Docker-built
+# cache, so retrieveMetadata(method = "api") needs no Docker.
+.resolveGenomeIDs_api <- function(base_dir = ".", user_bacs,
+                                  overwrite = FALSE, verbose = TRUE) {
+  sel <- "genome_name,taxon_id,species,strain"
+  parts <- lapply(user_bacs, function(ub) {
+    ub <- trimws(as.character(ub))
+    key_filter <- if (grepl("^[0-9]+$", ub)) {
+      sprintf("eq(taxon_lineage_ids,%s)", ub) # taxon ID (any rank)
+    } else {
+      sprintf("eq(species,%s)", .bvbrc_enc(ub)) # species name
+    }
+    filt <- sprintf(
+      "and(%s,eq(genome_quality,Good),in(genome_status,(WGS,Complete)))",
+      key_filter
+    )
+    if (isTRUE(verbose)) message("  [api] resolving genome IDs for '", ub, "'")
+    .bvbrc_api_fetch("genome", filt, sel, key = "genome_id")
+  })
+  df <- as.data.frame(
+    data.table::rbindlist(parts, fill = TRUE, use.names = TRUE),
+    stringsAsFactors = FALSE
+  )
+  if (nrow(df) == 0L) {
+    return(character(0))
+  }
+  df <- df[grepl("^[0-9]+[.][0-9]+$", df$genome_id), , drop = FALSE]
+  df <- df[!duplicated(df$genome_id), , drop = FALSE]
+
+  # write bac_data (genome.* columns), mirroring .retrieveQueryIDs()
+  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+  bac <- data.frame(
+    `genome.genome_id` = df$genome_id,
+    `genome.genome_name` = df$genome_name,
+    `genome.taxon_id` = df$taxon_id,
+    `genome.species` = df$species,
+    `genome.strain` = df$strain,
+    check.names = FALSE, stringsAsFactors = FALSE
+  )
+  DBI::dbWriteTable(con, "bac_data", bac, overwrite = TRUE)
+  if (isTRUE(verbose)) {
+    message("  [api] resolved ", nrow(df), " genome IDs; wrote bac_data")
+  }
+  unique(df$genome_id)
+}
+
 # --- genome metadata (genome) -> genome.* -------------------------------------
 .extractGenomeData_api <- function(genome_ids, fields,
                                    chunk_size = 150L, verbose = TRUE) {

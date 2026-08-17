@@ -34,6 +34,24 @@ test_that(".extractAMRtable_api returns genome_drug.* columns keyed by genome_id
   expect_true(all(amr[["genome_drug.genome_id"]] == "1280.15865"))
 })
 
+test_that(".resolveGenomeIDs_api resolves a species to valid genome IDs (live)", {
+  skip_on_cran()
+  skip_if_offline("www.bv-brc.org")
+
+  td <- file.path(tempdir(), paste0("res_", as.integer(runif(1, 1, 1e6))))
+  dir.create(td, showWarnings = FALSE, recursive = TRUE)
+  on.exit(unlink(td, recursive = TRUE), add = TRUE)
+
+  ids <- .resolveGenomeIDs_api(
+    base_dir = td, user_bacs = "Morganella morganii",
+    overwrite = TRUE, verbose = FALSE
+  )
+  expect_type(ids, "character")
+  expect_gt(length(ids), 0L)
+  expect_true(all(grepl("^[0-9]+[.][0-9]+$", ids)))
+  expect_false(any(duplicated(ids)))
+})
+
 test_that(".extractGenomeData_api returns genome.* columns incl. QC fields (live)", {
   skip_on_cran()
   skip_if_offline("www.bv-brc.org")
