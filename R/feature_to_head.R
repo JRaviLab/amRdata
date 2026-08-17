@@ -35,7 +35,7 @@
 #' @export
 buildFeatureHeadMap <- function(
   parquet_dir,
-  feature_scales = c("gene", "struct", "protein", "Pfam", "COG", "AMRFinder"),
+  addtnl_feature_scales = c("struct", "Pfam", "COG", "AMRFinder"),
   output_path = NULL
 ) {
   # con <- DBI::dbConnect(
@@ -57,7 +57,7 @@ buildFeatureHeadMap <- function(
 
 .parquet_dataset_sql <- function(parquet_dir, dataset_name) {
   parquet_dir <- normalizePath(parquet_dir, winslash = "/", mustWork = TRUE)
-  path <- file.path(parquet_dir, paste0(dataset_name, "*.parquet"))
+  path <- file.path(parquet_dir, paste0(dataset_name, ".parquet"))
   .sql_escape(path)
 }
   
@@ -67,15 +67,13 @@ con <- DBI::dbConnect(duckdb::duckdb(), dbdir = ":memory:")
   # Gene → protein features
   # =========================
 
-  if("gene" %in% feature_scales) {
-
-    sql_path <- .parquet_dataset_sql(parquet_dir, "genome_gene_protein")
+sql_path <- .parquet_dataset_sql(parquet_dir, "genome_gene_protein")
 
 DBI::dbExecute(
   con,
   sprintf(
     "
-    CREATE OR REPLACE VIEW v_gene AS
+    CREATE OR REPLACE VIEW protein_gene AS
     SELECT DISTINCT
       protein_ids AS protein,
       REPLACE(Gene, '~', '.') AS gene
@@ -86,7 +84,43 @@ DBI::dbExecute(
     sql_path
   )
 )    
-  }
+
+  # =========================
+# protein-gene --> dyad
+# =========================
+
+DBI::dbExecute(con, "
+CREATE OR REPLACE VIEW protein_gene_dyad AS
+SELECT DISTINCT
+    protein,
+    gene,
+    CONCAT(protein, '|', gene) AS dyad
+FROM protein_gene
+")
+
+# =========================
+  # Structural gene features
+  # =========================
+ 
+if("struct" %in% addtnl_feature_scales) {
+  sql_path <- .parquet_dataset_sql(parquet_dir, "struct")
+
+DBI::dbExecute(
+  con,
+  sprintf(
+    "
+    CREATE OR REPLACE VIEW v_struct_genes AS
+    SELECT DISTINCT
+      struct,
+      gene
+    FROM read_parquet('%s') s
+    CROSS JOIN UNNEST(string_split(s.struct, '.')) AS t(gene)
+    WHERE s.value = 1
+    ",
+    sql_path
+  )
+)
+}
 
   # helper to create the view 
   create_feature_view <- function(con, view_name, parquet_dir,
@@ -116,7 +150,7 @@ DBI::dbExecute(
   # Domain features
   # =========================
   
-  if ("Pfam" %in% feature_scales) {
+  if ("Pfam" %in% addtnl_feature_scales) {
   create_feature_view(
     con = con,
     view_name = "v_pfam",
@@ -130,7 +164,7 @@ DBI::dbExecute(
   # COG features
   # =========================
 
- if ("COG" %in% feature_scales) {
+ if ("COG" %in% addtnl_feature_scales) {
   create_feature_view(
     con = con,
     view_name = "v_cog",
@@ -143,7 +177,7 @@ DBI::dbExecute(
   # ARG features
   # =========================
 
-  if ("AMRFinder" %in% feature_scales) {
+  if ("AMRFinder" %in% addtnl_feature_scales) {
   create_feature_view(
     con = con,
     view_name = "v_amrfinder",
@@ -152,83 +186,137 @@ DBI::dbExecute(
     feature_expr = "REPLACE(REPLACE(query_name, '-NCBIFAM', ''), '-', '.')"
   )
 }
-  
-  # =========================
-  # Structural gene features
-  # (equivalent to separate_rows + inner_join(gp))
-  # =========================
-  #  DBI::dbExecute(con, "
-  #   CREATE OR REPLACE VIEW v_struct AS
-  #    SELECT DISTINCT
-  #      gp.protein_ids AS protein_id,
-  #     s_gene AS feature
-  #   FROM struct s
-  #   JOIN genome_gene_protein gp
-  #      ON gp.genome_ids = s.genome_id
-  #   CROSS JOIN UNNEST(string_split(s.struct, '.')) AS t(s_gene)
-  #   WHERE s.value = 1
-  #  ")
-if("struct" %in% feature_scales) {
-  sql_path <- .parquet_dataset_sql(parquet_dir, "struct")
+# ==================================================
+# Build network edge queries
+# ==================================================
+
+  edge_queries <- c(
+
+"
+SELECT DISTINCT
+    dyad AS source,
+    CONCAT('protein:', protein) AS target
+FROM protein_gene_dyad
+",
+
+"
+SELECT DISTINCT
+    dyad AS source,
+    CONCAT('gene:', gene) AS target
+FROM protein_gene_dyad
+"
+
+)
+
+# ==================================================
+# Structure edges
+# ==================================================
+
+if ("struct" %in% addtnl_feature_scales) {
+
+  edge_queries <- c(
+    edge_queries,
+    "
+    SELECT DISTINCT
+        pgd.dyad AS source,
+        CONCAT('struct:', sg.struct) AS target
+    FROM protein_gene_dyad pgd
+    JOIN v_struct_genes sg
+        ON pgd.gene = sg.gene
+    "
+  )
+}
+
+# ==================================================
+# Pfam edges
+# ==================================================
+
+if ("Pfam" %in% addtnl_feature_scales) {
+
+  edge_queries <- c(
+    edge_queries,
+    "
+    SELECT DISTINCT
+        pgd.dyad AS source,
+        CONCAT('pfam:', pf.feature) AS target
+    FROM protein_gene_dyad pgd
+    JOIN v_pfam pf
+        ON pgd.protein = pf.protein
+    "
+  )
+}
+
+# ==================================================
+# COG edges
+# ==================================================
+
+if ("COG" %in% addtnl_feature_scales) {
+
+  edge_queries <- c(
+    edge_queries,
+    "
+    SELECT DISTINCT
+        pgd.dyad AS source,
+        CONCAT('cog:', cf.feature) AS target
+    FROM protein_gene_dyad pgd
+    JOIN v_cog cf
+        ON pgd.protein = cf.protein
+    "
+  )
+}
+
+# ==================================================
+# AMRFinder edges
+# ==================================================
+
+if ("AMRFinder" %in% addtnl_feature_scales) {
+
+  edge_queries <- c(
+    edge_queries,
+    "
+    SELECT DISTINCT
+        pgd.dyad AS source,
+        CONCAT('amr:', af.feature) AS target
+    FROM protein_gene_dyad pgd
+    JOIN v_amrfinder af
+        ON pgd.protein = af.protein
+    "
+  )
+}
+
+# ==================================================
+# Final edge list
+# ==================================================
+
+DBI::dbExecute(
+  con,
+  paste0(
+    "
+    CREATE OR REPLACE VIEW network_edges AS
+    ",
+    paste(edge_queries, collapse = "\nUNION\n")
+  )
+)
+
+# ==================================================
+# Export parquet
+# ==================================================
+
+parquet_path <- file.path(out_dir, "dyad_feature.parquet")
 
 DBI::dbExecute(
   con,
   sprintf(
     "
-    CREATE OR REPLACE VIEW v_struct_genes AS
-    SELECT DISTINCT
-      genome_id,
-      s_gene
-    FROM read_parquet('%s') s
-    CROSS JOIN UNNEST(string_split(s.struct, '.')) AS t(s_gene)
-    WHERE s.value = 1
+    COPY network_edges
+    TO '%s'
+    (FORMAT PARQUET, COMPRESSION ZSTD)
     ",
-    sql_path
+    parquet_path
   )
 )
-}
-  
 
-  # =========================
-  # Union: protein → feature
-  # =========================
-  DBI::dbExecute(con, "
-    CREATE OR REPLACE VIEW v_protein_feature AS
-    SELECT protein_id, feature FROM v_gene
-    UNION
-    SELECT protein_id, feature FROM v_domain
-    UNION
-    SELECT protein_id, feature FROM v_cog
-    UNION
-    SELECT protein_id, feature FROM v_arg
-  ")
+DBI::dbDisconnect(con, shutdown = TRUE)
 
-  # =========================
-  # Cluster → feature mapping
-  # =========================
-  DBI::dbExecute(con, "
-    CREATE OR REPLACE VIEW cluster_feature AS
-    SELECT DISTINCT
-      cm.cluster,
-      pf.feature
-    FROM protein_members cm
-    JOIN v_protein_feature pf
-      ON pf.protein_id = cm.member
-    WHERE cm.cluster IS NOT NULL
-      AND pf.feature IS NOT NULL
-  ")
-
-  # =========================
-  # Write Parquet from DuckDB
-  # =========================
-  DBI::dbExecute(
-    con,
-    sprintf(
-      "COPY cluster_feature TO '%s'
-       (FORMAT PARQUET, COMPRESSION ZSTD)",
-      parquet_path
-    )
-  )
-
-  invisible(parquet_path)
+invisible(parquet_path)
 }
