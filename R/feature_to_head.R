@@ -1,39 +1,76 @@
-#' Build a protein cluster-to-feature mapping using DuckDB
+#' Build a protein-gene dyad feature network using DuckDB
 #'
-#' This function constructs a mapping between protein clusters and functional
-#' features (e.g., gene families, domains, COGs, and ARGs) using a DuckDB-backed
-#' workflow. The implementation is SQL-first and memory-efficient, leveraging
-#' DuckDB views and Parquet output.
+#' Constructs a bipartite network linking protein-gene dyads to biological
+#' features such as proteins, genes, structural gene arrangements, protein
+#' domains (Pfam), COG annotations, and antimicrobial resistance annotations.
 #'
-#' @param parquet_dir Character. Path to the DuckDB database file with parquet file views
-#'   containing the input tables.
+#' The workflow is implemented entirely within DuckDB using SQL views over
+#' Parquet datasets, minimizing memory usage and enabling scalable processing
+#' of large genomic datasets.
+#'
+#' @param parquet_dir Character. Directory containing input Parquet datasets.
+#'   At minimum, the directory must contain
+#'   \code{genome_gene_protein.parquet}.
+#' @param addtnl_feature_scales Character vector of optional feature types to
+#'   include. Supported values are:
+#'   \describe{
+#'     \item{\code{"struct"}}{Structural gene arrangements.}
+#'     \item{\code{"Pfam"}}{Pfam protein domain annotations.}
+#'     \item{\code{"COG"}}{Clusters of Orthologous Groups annotations.}
+#'     \item{\code{"AMRFinder"}}{AMRFinder antimicrobial resistance annotations.}
+#'   }
 #' @param output_path Character or NULL. Directory where the output Parquet file
-#'   (\code{cluster_feature.parquet}) will be written. If NULL, the output is written
-#'   alongside the DuckDB database.
+#'   will be written. If NULL, the output is written to the parent directory of
+#'   \code{parquet_dir}.
 #'
 #' @details
 #' The function performs the following steps:
-#' \itemize{
-#'   \item Creates views for each feature type:
-#'     \itemize{
-#'       \item Gene → protein features
-#'       \item Domain annotations
-#'       \item COG annotations
-#'       \item Antibiotic resistance gene (ARG) annotations
-#'     }
-#'   \item Combines all feature mappings into a unified protein–feature view
-#'   \item Joins protein–feature mappings to cluster membership
-#'   \item Writes the resulting cluster–feature mapping to a compressed Parquet file
+#' \enumerate{
+#'   \item Creates a protein-gene mapping from
+#'     \code{genome_gene_protein.parquet}.
+#'   \item Constructs a unique protein-gene dyad identifier of the form
+#'     \code{"protein|gene"}.
+#'   \item Optionally loads structural, Pfam, COG, and AMRFinder annotations.
+#'   \item Generates a network edge list linking each dyad to its associated
+#'     features.
+#'   \item Writes the resulting edge list to a compressed Parquet file.
 #' }
 #'
-#' All joins and transformations are executed inside DuckDB, ensuring scalability
-#' for large datasets without loading data into R memory.
+#' The resulting network is bipartite:
 #'
-#' @return Invisibly returns the file path to the generated Parquet file.
+#' \preformatted{
+#' protein|gene --> protein:PROTEIN_ID
+#' protein|gene --> gene:GENE_ID
+#' protein|gene --> pfam:PFXXXXX
+#' protein|gene --> cog:COGXXXX
+#' protein|gene --> amr:GENE_NAME
+#' protein|gene --> struct:STRUCTURE
+#' }
 #'
+#' The output edge list contains two columns:
+#' \describe{
+#'   \item{source}{Protein-gene dyad identifier.}
+#'   \item{target}{Feature node identifier prefixed by feature type.}
+#' }
+#'
+#' @return Invisibly returns the path to the generated
+#'   \code{dyad_feature.parquet} file.
+#'
+#' @examples
+#' \dontrun{
+#' buildDyadFeatureMap(
+#'   parquet_dir = "data/parquet",
+#'   addtnl_feature_scales = c(
+#'     "struct",
+#'     "Pfam",
+#'     "COG",
+#'     "AMRFinder"
+#'   )
+#' )
+#' }
 #'
 #' @export
-buildFeatureHeadMap <- function(
+buildDyadFeatureMap <- function(
   parquet_dir,
   addtnl_feature_scales = c("struct", "Pfam", "COG", "AMRFinder"),
   output_path = NULL
