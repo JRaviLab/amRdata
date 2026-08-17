@@ -81,11 +81,11 @@ buildDyadFeatureMap <- function(
   # )
   # on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
-  out_dir <- if (is.null(output_path)) {
-    dirname(parquet_dir)
-  } else {
-    normalizePath(output_path)
-  }
+  # out_dir <- if (is.null(output_path)) {
+  #   dirname(parquet_dir)
+  # } else {
+  #   normalizePath(output_path)
+  # }
   # parquet_path <- file.path(out_dir, "cluster_feature.parquet")
 
   .sql_escape <- function(x) {
@@ -139,31 +139,74 @@ FROM protein_gene
   # Structural gene features
   # =========================
  
-if("struct" %in% addtnl_feature_scales) {
-  sql_path <- .parquet_dataset_sql(parquet_dir, "struct")
+if ("struct" %in% addtnl_feature_scales) {
 
-DBI::dbExecute(
-  con,
-  sprintf(
-    "
-    CREATE OR REPLACE VIEW v_struct_genes AS
-    SELECT DISTINCT
-      struct,
-      gene
-    FROM read_parquet('%s') s
-    CROSS JOIN UNNEST(string_split(s.struct, '.')) AS t(gene)
-    WHERE s.value = 1
-    ",
-    sql_path
+  struct_files <- Sys.glob(
+    file.path(parquet_dir, "struct*.parquet")
   )
-)
+
+  if (length(struct_files) == 0) {
+
+    message(
+      "Skipping struct: no parquet found. Generate struct parquet first."
+    )
+
+  } else {
+
+    sql_path <- .parquet_dataset_sql(parquet_dir, "struct")
+
+    DBI::dbExecute(
+      con,
+      sprintf(
+        "
+        CREATE OR REPLACE VIEW v_struct_genes AS
+        SELECT DISTINCT
+          struct,
+          gene
+        FROM read_parquet('%s') s
+        CROSS JOIN UNNEST(
+          string_split(s.struct, '.')
+        ) AS t(gene)
+        WHERE s.value = 1
+        ",
+        sql_path
+      )
+    )
+
+    has_struct <- TRUE
+  }
 }
 
   # helper to create the view 
-  create_feature_view <- function(con, view_name, parquet_dir,
-                                dataset_name, feature_expr) {
+  create_feature_view <- function(
+    con,
+    view_name,
+    parquet_dir,
+    dataset_name,
+    feature_expr
+) {
 
-  sql_path <- .parquet_dataset_sql(parquet_dir, dataset_name)
+  parquet_files <- Sys.glob(
+    file.path(parquet_dir, paste0(dataset_name, "*.parquet"))
+  )
+
+  if (length(parquet_files) == 0) {
+
+    message(
+      sprintf(
+        "# Skipping %s: no parquet found. Generate %s parquet first.",
+        view_name,
+        dataset_name
+      )
+    )
+
+    return(FALSE)
+  }
+
+  sql_path <- .parquet_dataset_sql(
+    parquet_dir,
+    dataset_name
+  )
 
   DBI::dbExecute(
     con,
@@ -181,6 +224,8 @@ DBI::dbExecute(
       sql_path
     )
   )
+
+  TRUE
 }
 
   # =========================
@@ -188,7 +233,7 @@ DBI::dbExecute(
   # =========================
   
   if ("Pfam" %in% addtnl_feature_scales) {
-  create_feature_view(
+  has_pfam <- create_feature_view(
     con = con,
     view_name = "v_pfam",
     parquet_dir = parquet_dir,
@@ -202,7 +247,7 @@ DBI::dbExecute(
   # =========================
 
  if ("COG" %in% addtnl_feature_scales) {
-  create_feature_view(
+  has_cog <- create_feature_view(
     con = con,
     view_name = "v_cog",
     parquet_dir = parquet_dir,
@@ -215,7 +260,7 @@ DBI::dbExecute(
   # =========================
 
   if ("AMRFinder" %in% addtnl_feature_scales) {
-  create_feature_view(
+  has_amr <- create_feature_view(
     con = con,
     view_name = "v_amrfinder",
     parquet_dir = parquet_dir,
@@ -249,7 +294,7 @@ FROM protein_gene_dyad
 # Structure edges
 # ==================================================
 
-if ("struct" %in% addtnl_feature_scales) {
+if (has_struct) {
 
   edge_queries <- c(
     edge_queries,
@@ -268,7 +313,7 @@ if ("struct" %in% addtnl_feature_scales) {
 # Pfam edges
 # ==================================================
 
-if ("Pfam" %in% addtnl_feature_scales) {
+if (has_pfam) {
 
   edge_queries <- c(
     edge_queries,
@@ -287,7 +332,7 @@ if ("Pfam" %in% addtnl_feature_scales) {
 # COG edges
 # ==================================================
 
-if ("COG" %in% addtnl_feature_scales) {
+if (has_cog) {
 
   edge_queries <- c(
     edge_queries,
@@ -306,7 +351,7 @@ if ("COG" %in% addtnl_feature_scales) {
 # AMRFinder edges
 # ==================================================
 
-if ("AMRFinder" %in% addtnl_feature_scales) {
+if (has_amr) {
 
   edge_queries <- c(
     edge_queries,
@@ -339,7 +384,7 @@ DBI::dbExecute(
 # Export parquet
 # ==================================================
 
-parquet_path <- file.path(out_dir, "dyad_feature.parquet")
+parquet_path <- file.path(parquet_dir, "dyad_feature.parquet")
 
 DBI::dbExecute(
   con,
