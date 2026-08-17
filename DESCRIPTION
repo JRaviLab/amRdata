@@ -42,6 +42,8 @@ Imports:
     glue,
     grid,
     gridExtra,
+    httr2,
+    jsonlite,
     knitr,
     purrr,
     readr,

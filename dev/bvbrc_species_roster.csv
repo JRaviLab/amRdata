@@ -1,0 +1,26 @@
+"species","total_genomes","clean_genomes","clean_with_amr","amr_rows","genomes_over_cap","amr_rows_over_cap"
+"Escherichia coli",118185,97915,8623,7388629,TRUE,TRUE
+"Mycobacterium tuberculosis",46979,42536,39253,2257046,TRUE,TRUE
+"Klebsiella pneumoniae",42836,33618,32134,2006673,TRUE,TRUE
+"Salmonella enterica",43005,36716,7285,1969740,TRUE,TRUE
+"Streptococcus pneumoniae",32218,29630,25855,1060510,TRUE,TRUE
+"Staphylococcus aureus",29360,25585,19069,590284,TRUE,TRUE
+"Acinetobacter baumannii",17684,15112,13777,515917,FALSE,TRUE
+"Campylobacter jejuni",39644,28123,96,478916,TRUE,TRUE
+"Pseudomonas aeruginosa",16370,13282,11585,328979,FALSE,TRUE
+"Neisseria gonorrhoeae",15004,13962,5527,264833,FALSE,TRUE
+"Shigella sonnei",6381,6135,1965,128515,FALSE,TRUE
+"Enterococcus faecium",9645,7742,2920,69474,FALSE,TRUE
+"Campylobacter coli",6457,5142,140,55414,FALSE,TRUE
+"Enterobacter cloacae",2822,2474,273,31616,FALSE,TRUE
+"Clostridioides difficile",4622,4008,827,16580,FALSE,FALSE
+"Shigella flexneri",5988,5487,379,14933,FALSE,FALSE
+"Serratia marcescens",2219,1869,25,4205,FALSE,FALSE
+"Enterococcus faecalis",6117,5043,137,3499,FALSE,FALSE
+"Neisseria meningitidis",2988,2778,337,1867,FALSE,FALSE
+"Proteus mirabilis",1782,1532,22,1783,FALSE,FALSE
+"Morganella morganii",668,469,4,1432,FALSE,FALSE
+"Streptococcus agalactiae",2864,2456,160,1039,FALSE,FALSE
+"Haemophilus influenzae",1104,953,87,705,FALSE,FALSE
+"Streptococcus pyogenes",2868,2624,1,294,FALSE,FALSE
+"Helicobacter pylori",3367,3142,54,271,FALSE,FALSE

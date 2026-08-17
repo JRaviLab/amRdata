@@ -1191,6 +1191,9 @@
 #' @param abx Character or vector. Antibiotic filter. "All" for all antibiotics, else names.
 #' @param overwrite Logical. If FALSE and DuckDB exists already, abort. Default FALSE.
 #' @param image Character. Docker image. Default "danylmb/bvbrc:5.3".
+#' @param method Character. Download backend: `"docker"` (default; p3-* CLI) or
+#'   `"api"` (direct BV-BRC Data API — Docker-free and resilient to transient
+#'   server errors; see `R/bvbrc_api.R`).
 #' @param checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
 #' @param checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
@@ -1210,6 +1213,7 @@ retrieveMetadata <- function(user_bacs,
                              abx = "All",
                              overwrite = FALSE,
                              image = "danylmb/bvbrc:5.3",
+                             method = c("docker", "api"),
                              checkm_contam = 5,
                              checkm_complete = 95,
                              gc_deviations = NULL,
@@ -1218,6 +1222,7 @@ retrieveMetadata <- function(user_bacs,
                              debug = FALSE,
                              verbose = TRUE) {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
+  method <- match.arg(method)
 
   if (!is.null(genome_id_file)) {
     if (!file.exists(genome_id_file)) {
@@ -1326,52 +1331,71 @@ retrieveMetadata <- function(user_bacs,
   on.exit(future::plan(old_plan), add = TRUE)
   future::plan(future::multisession, workers = n_cores)
 
-  if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
-  batch_drug_data <- furrr::future_map(
-    genome_batches,
-    function(batch) {
-      raw <- .extractAMRtable(
-        base_dir = base_dir,
-        batch_genome_IDs = batch,
-        abx_filter = abx_filter,
-        drug_fields = drug_fields,
-        image = image,
-        verbose = FALSE
-      )
-      .parse_bvbrc_tsv(raw)
-    },
-    .options = furrr::furrr_options(seed = TRUE)
-  )
+  if (identical(method, "api")) {
+    # BV-BRC Data API path (Docker-free, resilient; see R/bvbrc_api.R, issue #30)
+    if (isTRUE(verbose)) message("Retrieving AMR phenotype data via BV-BRC API.")
+    combined_drug_data_tbl <- .extractAMRtable_api(
+      genome_ids = genome_ids, abx = abx, verbose = verbose
+    )
 
-  combined_drug_data_tbl <- dplyr::bind_rows(batch_drug_data) |>
+    if (isTRUE(verbose)) message("Retrieving genome metadata via BV-BRC API.")
+    gfields <- if (identical(filter_type, "microTraits")) {
+      microtrait_fields
+    } else {
+      amr_fields
+    }
+    combined_genome_data_tbl <- .extractGenomeData_api(
+      genome_ids = genome_ids, fields = gfields, verbose = verbose
+    )
+  } else {
+    if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
+    batch_drug_data <- furrr::future_map(
+      genome_batches,
+      function(batch) {
+        raw <- .extractAMRtable(
+          base_dir = base_dir,
+          batch_genome_IDs = batch,
+          abx_filter = abx_filter,
+          drug_fields = drug_fields,
+          image = image,
+          verbose = FALSE
+        )
+        .parse_bvbrc_tsv(raw)
+      },
+      .options = furrr::furrr_options(seed = TRUE)
+    )
+    combined_drug_data_tbl <- dplyr::bind_rows(batch_drug_data)
+
+    if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
+    batch_genome_data <- furrr::future_map(
+      genome_batches,
+      function(batch) {
+        raw <- .extractGenomeData(
+          base_dir = base_dir,
+          batch_genome_IDs = batch,
+          filter_type = filter_type,
+          amr_fields = amr_fields,
+          microtrait_fields = microtrait_fields,
+          image = image,
+          verbose = FALSE
+        )
+        .parse_bvbrc_tsv(raw)
+      },
+      .options = furrr::furrr_options(seed = TRUE)
+    )
+    combined_genome_data_tbl <- dplyr::bind_rows(batch_genome_data)
+  }
+
+  # Normalize to UTF-8 for both methods (parity with the Docker parser).
+  combined_drug_data_tbl <- combined_drug_data_tbl |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
-
   if (nrow(combined_drug_data_tbl) == 0L) {
     message("No drug data returned.")
     return(NULL)
   }
 
-  if (isTRUE(verbose)) message("Retrieving genome metadata in batches.")
-  batch_genome_data <- furrr::future_map(
-    genome_batches,
-    function(batch) {
-      raw <- .extractGenomeData(
-        base_dir = base_dir,
-        batch_genome_IDs = batch,
-        filter_type = filter_type,
-        amr_fields = amr_fields,
-        microtrait_fields = microtrait_fields,
-        image = image,
-        verbose = FALSE
-      )
-      .parse_bvbrc_tsv(raw)
-    },
-    .options = furrr::furrr_options(seed = TRUE)
-  )
-
-  combined_genome_data_tbl <- dplyr::bind_rows(batch_genome_data) |>
+  combined_genome_data_tbl <- combined_genome_data_tbl |>
     dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
-
   if (nrow(combined_genome_data_tbl) == 0L) {
     message("No genome data returned.")
     return(NULL)
