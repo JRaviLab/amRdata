@@ -83,7 +83,13 @@
     if (!f %in% names(df)) df[[f]] <- rep(NA_character_, n)
   }
   df <- df[, expected, drop = FALSE]
-  df[] <- lapply(df, as.character)
+  # coerce to character and use "" for missing, matching the Docker/TSV parser
+  # (.parse_bvbrc_tsv yields "" for blank fields, not NA) so the two paths agree.
+  df[] <- lapply(df, function(x) {
+    x <- as.character(x)
+    x[is.na(x)] <- ""
+    x
+  })
   names(df) <- paste0(prefix, ".", expected)
   tibble::as_tibble(df)
 }

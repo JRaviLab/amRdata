@@ -18,7 +18,7 @@ test_that(".bvbrc_prefix_fill fills missing fields, prefixes, coerces to charact
     names(out),
     c("genome_drug.genome_id", "genome_drug.antibiotic", "genome_drug.source")
   )
-  expect_true(is.na(out[["genome_drug.source"]])) # missing field -> NA
+  expect_identical(out[["genome_drug.source"]], "") # missing field -> "" (Docker convention)
   expect_type(out[["genome_drug.genome_id"]], "character")
 })
 
