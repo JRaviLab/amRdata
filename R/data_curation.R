@@ -1,34 +1,3 @@
-#' Helps ensure trailing 0s are retained in genome IDs for proper downloading
-#' @keywords internal
-.id_checker <- function(x) {
-  # Taxon IDs are just numbers, genome IDs have decimals, this tells them apart
-  grepl("^[0-9]+$", x)
-}
-
-#' A helper used in data_curation.R and data_processing.R to ensure exported tables
-#' don't lose trailing zeroes. Should be relocated into a common helpers/utilities
-#' script later.
-#' @keywords internal
-.preserve_export_id_text <- function(df) {
-  df <- tibble::as_tibble(df)
-
-  id_pattern <- paste0(
-    "(^|[._])(",
-    "genome(_drug)?_id|taxon_id|",
-    "assembly_accession|bioproject_accession|biosample_accession|",
-    "refseq_accessions?|genbank_accessions?|sra_accession|pmid|",
-    "gene_id|protein_id|domain_id|cluster_id|AccNum|id",
-    ")$"
-  )
-
-  id_cols <- names(df)[grepl(id_pattern, names(df), ignore.case = TRUE)]
-  if (length(id_cols)) {
-    df[id_cols] <- lapply(df[id_cols], as.character)
-  }
-
-  df
-}
-
 #' Helps tag genomes with their AMR evidence for parsing
 #' @keywords internal
 .create_amr_tagged_view <- function(con) {
@@ -1559,53 +1528,6 @@ retrieveMetadata <- function(user_bacs,
   list(duckdbConnection = con, table_name = "metadata")
 }
 
-# FASTA sanitizer to ensure Panaroo compatibility with BV-BRC CLI downloads
-.strip_fasta_preamble <- function(fna_path) {
-  if (!file.exists(fna_path)) {
-    return(invisible(FALSE))
-  }
-  txt <- readLines(fna_path, warn = FALSE)
-  first <- which(grepl("^\\s*>", txt))[1]
-  if (is.na(first)) {
-    return(invisible(FALSE))
-  }
-  if (first > 1L) {
-    txt <- txt[first:length(txt)]
-    txt[1] <- sub("^\\ufeff", "", txt[1])
-    writeLines(txt, fna_path, sep = "\n", useBytes = TRUE)
-    return(invisible(TRUE))
-  }
-  invisible(FALSE)
-}
-
-# GFF sanitizer to ensure Panaroo compatibility with BV-BRC CLI downloads
-.sanitize_gff <- function(gff_path) {
-  if (!file.exists(gff_path)) {
-    return(invisible(FALSE))
-  }
-  lines <- readLines(gff_path, warn = FALSE)
-  if (length(lines) == 0L) {
-    return(invisible(FALSE))
-  }
-  if (!grepl("^##gff-version\\s*3", lines[1])) {
-    lines <- c("##gff-version 3", lines)
-  }
-  out <- purrr::map_chr(lines, function(line) {
-    if (grepl("^#", line)) {
-      return(line)
-    }
-    parts <- strsplit(line, "[\t ]", perl = TRUE)[[1]]
-    if (length(parts) >= 9) {
-      paste(c(parts[1:8], paste(parts[9:length(parts)], collapse = " ")), collapse = "\t")
-    } else {
-      line
-    }
-  })
-  writeLines(out, gff_path, sep = "\n", useBytes = TRUE)
-  invisible(TRUE)
-}
-
-
 #' Filter genomes by AMR phenotype and metadata, and store results in DuckDB
 #'
 #' Preferred path: use per-selection DB "metadata" table (from retrieveMetadata()) and
@@ -1819,24 +1741,6 @@ retrieveMetadata <- function(user_bacs,
 }
 
 ### BV-BRC CLI downloader [slower by comparison, but does not need FTP server]
-
-#' Helps normalize Docker paths
-#' @keywords internal
-.docker_path <- function(p) gsub("\\\\", "/", normalizePath(p, mustWork = FALSE))
-
-#' Helps run a shell inside a container, and prefers bash (don't we all?)
-#' @keywords internal
-.pick_shell <- function(image) {
-  chk <- suppressWarnings(system2("docker",
-    c(
-      "run", "--rm", image, "sh", "-lc",
-      "command -v bash >/dev/null || echo NOBASH"
-    ),
-    stdout = TRUE, stderr = TRUE
-  ))
-  if (length(chk) && any(grepl("NOBASH", chk))) "sh" else "bash"
-}
-
 #' Using p3-dump-genomes in CLI to fetch FASTA and .gto files
 #' @keywords internal
 .cli_dump_fastas_gto_chunk <- function(image, out_dir, genome_ids, tag, tries = 3L) {
@@ -2279,9 +2183,99 @@ prepareGenomes <- function(user_bacs,
   evidence_mode <- match.arg(evidence_mode)
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
-  .ensure_bvbrc_cache(base_dir = base_dir, verbose = verbose)
+  paths <- .buildDBpath(
+    base_dir = base_dir,
+    user_bacs = user_bacs
+  )
 
-  if (isTRUE(verbose)) message("Step 0: Building AMR metadata (retrieveMetadata)")
+  manifest_path <- file.path(
+    dirname(paths$db_path),
+    paste0("manifest_", .manifest_run_id(), ".json")
+  )
+
+  manifest <- .manifest_start(
+    manifest_path = manifest_path,
+    dataset_id = .generateDBname(user_bacs),
+    duckdb_path = normalizePath(paths$db_path, mustWork = FALSE),
+    base_dir = base_dir,
+    selection = list(
+      user_bacs = as.character(user_bacs),
+      genome_id_file = if (is.null(genome_id_file)) {
+        NULL
+      } else {
+        normalizePath(genome_id_file, mustWork = FALSE)
+      }
+    ),
+    hash_files = FALSE
+  )
+
+  manifest <- .manifest_event(
+    manifest,
+    message = "Started genome curation run.",
+    details = list(
+      method = method,
+      evidence_mode = evidence_mode,
+      overwrite = overwrite
+    )
+  )
+
+  run_failed <- TRUE
+  on.exit(
+    if (run_failed) {
+      .manifest_finish(
+        manifest,
+        status = "failed",
+        error = "prepareGenomes() exited before successful completion."
+      )
+    },
+    add = TRUE
+  )
+
+  manifest <- .manifest_stage(
+    manifest,
+    name = "prepare_bvbrc_cache",
+    status = "success",
+    parameters = list(
+      max_age_days = 30L
+    ),
+    outputs = file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb"),
+    tool = list(
+      name = "BV-BRC",
+      interface = "p3-all-genomes"
+    )
+  )
+
+  .ensure_bvbrc_cache(
+    base_dir = base_dir,
+    verbose = verbose
+  )
+
+  if (isTRUE(verbose)) {
+    message("Step 0: Building AMR metadata (retrieveMetadata)")
+  }
+
+  manifest <- .manifest_stage(
+    manifest,
+    name = "retrieve_metadata",
+    status = "running",
+    parameters = list(
+      filter_type = "AMR",
+      abx = "All",
+      max_checkm_contam = max_checkm_contam,
+      min_checkm_complete = min_checkm_complete,
+      gc_deviations = gc_deviations,
+      length_deviations = length_deviations,
+      cds_deviations = cds_deviations,
+      debug = debug,
+      overwrite = overwrite
+    ),
+    inputs = if (!is.null(genome_id_file)) genome_id_file else character(),
+    tool = list(
+      name = "BV-BRC",
+      docker_image = "danylmb/bvbrc:5.3"
+    )
+  )
+
   invisible(retrieveMetadata(
     user_bacs = user_bacs,
     genome_id_file = genome_id_file,
@@ -2297,6 +2291,28 @@ prepareGenomes <- function(user_bacs,
     debug = debug,
     verbose = verbose
   ))
+
+  manifest <- .manifest_stage(
+    manifest,
+    name = "retrieve_metadata",
+    status = "success",
+    parameters = list(
+      filter_type = "AMR",
+      abx = "All",
+      max_checkm_contam = max_checkm_contam,
+      min_checkm_complete = min_checkm_complete,
+      gc_deviations = gc_deviations,
+      length_deviations = length_deviations,
+      cds_deviations = cds_deviations,
+      debug = debug,
+      overwrite = overwrite
+    ),
+    outputs = normalizePath(paths$db_path, mustWork = FALSE),
+    tool = list(
+      name = "BV-BRC",
+      docker_image = "danylmb/bvbrc:5.3"
+    )
+  )
 
   if (isTRUE(verbose)) message("Step 1: Filtering genomes for download by evidence: ", evidence_mode)
   f_out <- .filterGenomes(
@@ -2342,6 +2358,22 @@ prepareGenomes <- function(user_bacs,
     return(NULL)
   }
 
+  manifest <- .manifest_stage(
+    manifest,
+    name = "download_genomes",
+    status = "success",
+    parameters = list(
+      method = method,
+      workers = num_workers,
+      evidence_mode = evidence_mode,
+      overwrite = overwrite
+    ),
+    outputs = file.path(paths$db_dir, "genomes"),
+    metrics = list(
+      genomes_downloaded = length(ids)
+    )
+  )
+
   if (isTRUE(verbose)) message("Step 3: Formatting data into a database for further processing")
   out <- genomeList(
     base_dir = base_dir,
@@ -2355,7 +2387,26 @@ prepareGenomes <- function(user_bacs,
     message("")
     message("Continue with downstream processing using:")
     message('runDataProcessing("', normalizePath(paths$db_path), '")')
+    message("")
+    message("Provenance manifest saved to:")
+    message("  ", normalizePath(manifest$path))
   }
+
+  manifest <- .manifest_stage(
+    manifest,
+    name = "build_genome_file_table",
+    status = "success",
+    outputs = c(
+      paths$db_path,
+      file.path(
+        paths$db_dir,
+        paste0(.generateDBname(user_bacs), ".txt")
+      )
+    ),
+    metrics = list(
+      genomes = length(ids)
+    )
+  )
 
   export_res <- NULL
   if (isTRUE(export_tables) || isTRUE(load_tables)) {
@@ -2374,6 +2425,13 @@ prepareGenomes <- function(user_bacs,
       data = if (!is.null(export_res)) export_res$data else NULL
     ))
   }
+
+  run_failed <- FALSE
+
+  .manifest_finish(
+    manifest,
+    status = "success"
+  )
 
   invisible(out)
 }
