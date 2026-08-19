@@ -1472,12 +1472,14 @@ CDHIT2duckdb <- function(duckdb_path,
       chunk_path <- file.path(output_path, sprintf("%s_chunk_%02d.fasta", prefix, i))
       readr::write_lines(chunk, chunk_path)
     })
+
+    length(chunks)
   }
 
-  split_fasta(prot_seqs, "protein")
+  actual_chunk_count <- split_fasta(prot_seqs, "protein")
 
   job_list <- expand.grid(
-    chunk = sprintf("%02d", seq_len(chunk_count)),
+    chunk = sprintf("%02d", seq_len(actual_chunk_count)),
     db = databases,
     stringsAsFactors = FALSE
   ) |>
