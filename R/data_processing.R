@@ -2984,6 +2984,9 @@ runDataProcessing <- function(
     c("Pfam", "COG", "AMRFinder")
   )
 
+  hmmer_result <- NULL
+  defense_result <- NULL
+
   if (length(generic_databases)) {
     hmmer_result <- .runHMMER(
                               duckdb_path = duckdb_path,
