@@ -2727,6 +2727,7 @@ cleanData <- function(duckdb_path, path) {
 #' # will contain views over the Parquet files for downstream ML.
 #' }
 #'
+#' @export
 runDataProcessing <- function(
     duckdb_path,
     output_path = NULL,
