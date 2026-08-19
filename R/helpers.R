@@ -723,7 +723,8 @@
 #########################
 #     HMMER helpers     #
 #########################
-
+#' Validate if a HMM file has old HMMER3 format
+#'
 #' @param hmm_file Path to a `.hmm` file.
 #'
 #' @returns `TRUE` if the file has valid HMMER3 formatting (starts with
