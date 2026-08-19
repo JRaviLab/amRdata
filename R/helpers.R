@@ -724,14 +724,12 @@
 #     HMMER helpers     #
 #########################
 
-#' Validate if a HMM file has old HMMER3 format
+#' @param hmm_file Path to a `.hmm` file.
 #'
-#' @param hmm_file
-#'
-#' @returns
+#' @returns `TRUE` if the file has valid HMMER3 formatting (starts with
+#'   `HMMER3/f` and ends with `//`), `FALSE` otherwise.
 #'
 #' @keywords internal
-#' @examples
 .isValidHmmFile <- function(hmm_file) {
 
   lines <- tryCatch(
