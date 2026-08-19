@@ -1460,8 +1460,14 @@ CDHIT2duckdb <- function(duckdb_path,
 
   db_paths <- db_paths[databases]
 
+  # validate split counts before propagating possible hogwash
+  num_of_splits <- as.integer(num_of_splits)
+  if (is.na(num_of_splits) || num_of_splits < 1L) {
+    stop("'num_of_splits' parameter must be a positive integer!")
+  }
+
   # clamp splits to the number of sequences available
-  chunk_count <- min(as.integer(num_of_splits), nrow(prot_seqs))
+  chunk_count <- min(num_of_splits, nrow(prot_seqs))
 
   split_fasta <- function(seqs, prefix) {
     records <- paste0(">", seqs$name, "\n", seqs$sequence)

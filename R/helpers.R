@@ -103,7 +103,7 @@
 #' Returns the basics about a file for manifest logging
 #'
 #' @param path Character vector of file paths.
-#' @param hash Logical. If TRUE, calculate SHA-256 checksums.
+#' @param hash Logical. If TRUE, calculate MD5 checksums.
 #'
 #' @return A list of file records.
 #' @keywords internal
@@ -468,6 +468,28 @@
   manifest_state$manifest$runs[[manifest_state$run_index]]$status <- status
   manifest_state$manifest$runs[[manifest_state$run_index]]$finished_at <-
     as.character(Sys.time())
+
+  # Patching to resolve an indefinite `running` failure state in the manifest
+  if (identical(status, "failed")) {
+    stages <- manifest_state$manifest$runs[[manifest_state$run_index]]$stages
+    running_stage <- which(purrr::map_lgl(stages, ~ identical(.x$status, "running")))
+
+    if (length(running_stage)) {
+      stage_error <- if (!is.null(error)) {
+        as.character(error)
+      } else {
+        "Parent run failed before this stage completed."
+      }
+
+      for (i in running_stage) {
+        stages[[i]]$status <- "failed"
+        stages[[i]]$finished_at <- as.character(Sys.time())
+        stages[[i]]$error <- stage_error
+      }
+
+      manifest_state$manifest$runs[[manifest_state$run_index]]$stages <- stages
+    }
+  }
 
   if (!is.null(error)) {
     manifest_state$manifest$runs[[manifest_state$run_index]]$error <- as.character(error)
