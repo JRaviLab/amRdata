@@ -34,6 +34,12 @@ test_that(".extractAMRtable_api returns genome_drug.* columns keyed by genome_id
   expect_true(all(amr[["genome_drug.genome_id"]] == "1280.15865"))
 })
 
+test_that(".bvbrc_prefix_fill handles a zero-row frame (empty query result)", {
+  out <- .bvbrc_prefix_fill(data.frame(), c("genome_id", "antibiotic"), "genome_drug")
+  expect_identical(names(out), c("genome_drug.genome_id", "genome_drug.antibiotic"))
+  expect_equal(nrow(out), 0L)
+})
+
 test_that(".resolveGenomeIDs_api resolves a species to valid genome IDs (live)", {
   skip_on_cran()
   skip_if_offline("www.bv-brc.org")

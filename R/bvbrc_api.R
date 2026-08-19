@@ -78,8 +78,9 @@
 # Docker/p3 parser produces.
 .bvbrc_prefix_fill <- function(df, expected, prefix) {
   df <- as.data.frame(df, stringsAsFactors = FALSE)
+  n <- nrow(df) # rep() keeps length right when the query returned 0 rows
   for (f in expected) {
-    if (!f %in% names(df)) df[[f]] <- NA_character_
+    if (!f %in% names(df)) df[[f]] <- rep(NA_character_, n)
   }
   df <- df[, expected, drop = FALSE]
   df[] <- lapply(df, as.character)
