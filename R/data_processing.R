@@ -1539,7 +1539,7 @@ CDHIT2duckdb <- function(duckdb_path,
     ) |>
       dplyr::bind_rows() |>
       dplyr::left_join(.parse_hmmer_profiles(db_paths[[database_name]]$hmm) |>
-                         dplyr::select(query_name = profile_name, query_accession = profile_accession, description = profile_description),
+                         dplyr::select(query_name = profile_name, description = profile_description),
                        by = "query_name")
 
     final_parquet <- file.path(
