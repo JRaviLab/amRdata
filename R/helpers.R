@@ -862,6 +862,11 @@
   # split: whitespace-separated fields
   split_fields <- strsplit(data_lines, "\\s+", perl = TRUE)
 
+  if (length(split_fields) == 0L) {
+    return(readr::read_tsv(I(""), col_names = names(col_types$cols),
+                            col_types = col_types, lazy = FALSE, progress = FALSE))
+  }
+
   # count space separated fields
   N <- max(sapply(split_fields, length))
 
