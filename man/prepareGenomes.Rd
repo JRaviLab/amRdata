@@ -10,13 +10,22 @@ prepareGenomes(
   base_dir = ".",
   method = c("ftp", "cli"),
   overwrite = FALSE,
+  num_workers = 8L,
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
+  max_checkm_contam = 5,
+  min_checkm_complete = 95,
+  gc_deviations = NULL,
+  length_deviations = NULL,
+  cds_deviations = NULL,
+  export_tables = FALSE,
+  load_tables = FALSE,
+  debug = FALSE,
   verbose = TRUE
 )
 }
 \arguments{
 \item{user_bacs}{Character vector. Species and/or taxon IDs (e.g.
-\code{c("Shigella flexneri", "623")}).}
+\code{c("Shigella sonnei", "624")}).}
 
 \item{genome_id_file}{Character or NULL. Optional path to a file listing genome
 IDs (one per line), passed through to \code{retrieveMetadata()}. If provided, the
@@ -31,9 +40,24 @@ metadata step is restricted to these genome IDs instead of resolving them from
 \item{overwrite}{Logical. Passed to metadata filtering and DuckDB creation.
 Default FALSE.}
 
+\item{num_workers}{Integer. Parallel workers used for genome download.
+Applied to both FTP and CLI download branches. Default: 8.}
+
 \item{evidence_mode}{Character. Sets what types of AMR evidence is acceptable.
 Default \code{lab_only}. \code{any} will not require AMR data for downloads. This will
 return very large download lists for many species!}
+
+\item{max_checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
+
+\item{min_checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
+
+\item{gc_deviations}{Optional numeric scalar. Maximum SDs from the median GC content.}
+
+\item{length_deviations}{Optional numeric scalar. Maximum SDs from the median genome length.}
+
+\item{cds_deviations}{Optional numeric scalar. Maximum SDs from the median CDS count.}
+
+\item{debug}{Logical. If TRUE, keep QC columns in metadata tables.}
 
 \item{verbose}{Logical. Print progress messages. Default TRUE.}
 }

@@ -113,6 +113,7 @@ runDataProcessing(
   panaroo_len_dif_percent = 0.95,
   panaroo_cluster_threshold = 0.95,
   panaroo_family_seq_identity = 0.5,
+  panaroo_refind_mode = "off",
   # CD-HIT
   cdhit_identity = 0.9,
   cdhit_word_length = 5,

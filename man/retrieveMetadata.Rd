@@ -13,12 +13,14 @@ retrieveMetadata(
   overwrite = FALSE,
   image = "danylmb/bvbrc:5.3",
   method = c("docker", "api"),
-  checkm_contam = 5,
-  checkm_complete = 95,
+  max_checkm_contam = 5,
+  min_checkm_complete = 95,
   gc_deviations = NULL,
   length_deviations = NULL,
   cds_deviations = NULL,
   debug = FALSE,
+  export_tables = FALSE,
+  load_tables = FALSE,
   verbose = TRUE
 )
 }
@@ -45,9 +47,9 @@ Default NULL.}
 \code{"api"} (direct BV-BRC Data API — Docker-free and resilient to transient
 server errors; see \code{R/bvbrc_api.R}).}
 
-\item{checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
+\item{max_checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
 
-\item{checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
+\item{min_checkm_complete}{Numeric scalar. Minimum allowed CheckM completeness (\%).}
 
 \item{gc_deviations}{Optional numeric scalar. Maximum SDs from the median GC content.}
 
