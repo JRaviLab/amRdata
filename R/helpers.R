@@ -128,7 +128,7 @@
 
     # Hash what exists, if desired
     if (isTRUE(hash) && exists && !dir.exists(x)) {
-      out$sha256 <- unname(tools::sha256(x))
+      out$md5 <- unname(tools::md5sum(x))
     }
 
     out
