@@ -3192,6 +3192,7 @@ exportProcessedData <- function(duckdb_path,
                                 amr_phenotype_mode = c("separate", "append"),
                                 export_formats = c("csv"),
                                 export_sequences = FALSE,
+                                export_dyads = FALSE,
                                 tables = NULL,
                                 export_tables = TRUE,
                                 verbose = TRUE) {
@@ -3265,14 +3266,14 @@ exportProcessedData <- function(duckdb_path,
         df, file = file.path(output_path, paste0(stem, ".csv")),
         sep = ",", row.names = FALSE, col.names = TRUE,
         quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
-      )
+        )
     }
     if ("tsv" %in% export_formats) {
       utils::write.table(
         df, file = file.path(output_path, paste0(stem, ".tsv")),
         sep = "\t", row.names = FALSE, col.names = TRUE,
         quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
-      )
+        )
     }
     if ("parquet" %in% export_formats) {
       arrow::write_parquet(df, file.path(output_path, paste0(stem, ".parquet")))
@@ -3280,6 +3281,56 @@ exportProcessedData <- function(duckdb_path,
     if ("xlsx" %in% export_formats) {
       writexl::write_xlsx(list(data = df), file.path(output_path, paste0(stem, ".xlsx")))
     }
+  }
+
+  # Determine which HMMER databases were actually run from the latest
+  # successful `runDataProcessing()` manifest
+  manifest_path <- .manifest_find_latest(duckdb_path)
+
+  hmmer_databases <- character()
+
+  if (!is.null(manifest_path)) {
+    manifest <- jsonlite::read_json(
+      manifest_path,
+      simplifyVector = FALSE
+    )
+
+    successful_hmmer <- list()
+
+    for (run in rev(manifest$runs %||% list())) {
+      stages <- run$stages %||% list()
+
+      matches <- purrr::keep(
+        stages,
+        ~ identical(.x$name, "hmmer") &&
+          identical(.x$status, "success")
+      )
+
+      if (length(matches)) {
+        successful_hmmer <- matches[[1]]
+        break
+      }
+    }
+
+    if (length(successful_hmmer)) {
+      hmmer_databases <- unlist(
+        successful_hmmer$parameters$databases %||% character(),
+        use.names = FALSE
+      )
+      hmmer_databases <- unique(as.character(hmmer_databases))
+    }
+  }
+
+  if (!length(hmmer_databases) && isTRUE(verbose)) {
+    message(
+      "No successful HMMER runs were found in the manifest. ",
+      "HMMER tables will not be selected automatically."
+    )
+  } else if (isTRUE(verbose)) {
+    message(
+      "Successful HMMER runs were identified in the manifest: ",
+      paste(hmmer_databases, collapse = ", ")
+    )
   }
 
   build_amr_wide <- function() {
@@ -3326,35 +3377,75 @@ exportProcessedData <- function(duckdb_path,
   table_specs <- list(
     gene_count = list(source = "gene_count", stem = "gene_count", appendable = TRUE),
     protein_count = list(source = "protein_count", stem = "protein_count", appendable = TRUE),
-    domain_count = list(source = "domain_count", stem = "domain_count", appendable = TRUE),
     struct = list(source = "gene_struct", stem = "struct", appendable = TRUE),
     gene_names = list(source = "gene_names", stem = "gene_names", appendable = FALSE),
     protein_names = list(source = "protein_names", stem = "protein_names", appendable = FALSE),
-    domain_names = list(source = "domain_names", stem = "domain_names", appendable = FALSE),
     metadata = list(source = "metadata", stem = "metadata", appendable = FALSE),
     genome_data = list(source = "genome_data", stem = "genome_data", appendable = FALSE),
     amr_phenotype_wide = list(source = NULL, stem = "amr_phenotype_wide", appendable = FALSE)
   )
 
+  # Add only the HMMER databases recorded in the manifest.
+  for (database in hmmer_databases) {
+    annotation_key <- paste0("protein_", database)
+    count_key <- paste0(annotation_key, "_count")
+
+    table_specs[[annotation_key]] <- list(
+      source = annotation_key,
+      stem = annotation_key,
+      appendable = FALSE
+    )
+
+    table_specs[[count_key]] <- list(
+      source = count_key,
+      stem = count_key,
+      appendable = TRUE
+    )
+  }
+
   if (isTRUE(export_sequences)) {
-    table_specs$gene_seqs <- list(source = "gene_ref_seq", stem = "gene_seqs", appendable = FALSE)
-    table_specs$protein_seqs <- list(source = "protein_cluster_seq", stem = "protein_seqs", appendable = FALSE)
-    table_specs$genome_gene_protein <- list(source = "genome_gene_protein", stem = "genome_gene_protein", appendable = FALSE)
+    table_specs$gene_seqs <- list(
+      source = "gene_ref_seq",
+      stem = "gene_seqs",
+      appendable = FALSE
+    )
+
+    table_specs$protein_seqs <- list(
+      source = "protein_cluster_seq",
+      stem = "protein_seqs",
+      appendable = FALSE
+    )
+
+    table_specs$genome_gene_protein <- list(
+      source = "genome_gene_protein",
+      stem = "genome_gene_protein",
+      appendable = FALSE
+    )
   }
 
   if (is.null(tables)) {
     selected_keys <- c(
       "gene_count",
       "protein_count",
-      "domain_count",
       "struct",
       "gene_names",
       "protein_names",
-      "domain_names",
       "metadata",
       "genome_data",
-      "amr_phenotype_wide"
+      "amr_phenotype_wide",
+      paste0(
+        "protein_",
+        hmmer_databases,
+        "_count"
+      ),
+      paste0(
+        "protein_",
+        hmmer_databases
+      )
     )
+
+    selected_keys <- selected_keys[selected_keys %in% names(table_specs)]
+
     if (isTRUE(export_sequences)) {
       selected_keys <- c(selected_keys, "gene_seqs", "protein_seqs", "genome_gene_protein")
     }
@@ -3372,6 +3463,28 @@ exportProcessedData <- function(duckdb_path,
     phenotype_wide <- .preserve_export_id_text(phenotype_wide)
   }
   exported <- character(0)
+
+  # Optionally export a mapping table rooted on the protein-gene dyads
+  if (isTRUE(export_dyads)) {
+    dyad_tbl <- .exportDyadAnnotations(
+      duckdb_path = duckdb_path,
+      verbose = verbose
+    )
+
+    write_one(
+      dyad_tbl,
+      "dyad_annotations"
+    )
+
+    exported <- c(
+      exported,
+      "dyad_annotations"
+    )
+
+    if (isTRUE(verbose)) {
+      message("Exported: dyad_annotations")
+    }
+  }
 
   for (key in selected_keys) {
     spec <- table_specs[[key]]
@@ -3416,6 +3529,10 @@ exportProcessedData <- function(duckdb_path,
     tables = exported,
     amr_phenotype_mode = amr_phenotype_mode,
     export_formats = export_formats,
-    export_sequences = isTRUE(export_sequences)
+    export_sequences = isTRUE(export_sequences),
+    hmmer_databases = hmmer_databases,
+    manifest_path = manifest_path
   ))
 }
+
+
