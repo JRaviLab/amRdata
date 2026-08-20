@@ -2505,6 +2505,7 @@ cleanData <- function(duckdb_path, path) {
         names_to = "annotation",
         values_to = "value"
       ) |>
+      dplyr::rename(!!database := annotation) |>
       dplyr::filter(!is.na(value) & value != "") |>
       dplyr::mutate(value = as.integer(value)) |>
       writeCompressedParquet(count_parquet)
