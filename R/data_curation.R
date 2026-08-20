@@ -1177,9 +1177,8 @@
 #' @param abx Character or vector. Antibiotic filter. "All" for all antibiotics, else names.
 #' @param overwrite Logical. If FALSE and DuckDB exists already, abort. Default FALSE.
 #' @param image Character. Docker image. Default "danylmb/bvbrc:5.3".
-#' @param method Character. Download backend: `"docker"` (default; p3-* CLI) or
-#'   `"api"` (direct BV-BRC Data API — Docker-free and resilient to transient
-#'   server errors; see `R/bvbrc_api.R`).
+#' @param metadata_method Character. Download backend: `"api"` (default) or
+#'   `"cli"` (Dockerized `BV-BRC p3-* CLI`).
 #' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
 #' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
@@ -1199,7 +1198,7 @@ retrieveMetadata <- function(user_bacs,
                              abx = "All",
                              overwrite = FALSE,
                              image = "danylmb/bvbrc:5.3",
-                             method = c("docker", "api"),
+                             metadata_method = c("api", "cli"),
                              max_checkm_contam = 5,
                              min_checkm_complete = 95,
                              gc_deviations = NULL,
@@ -1210,7 +1209,7 @@ retrieveMetadata <- function(user_bacs,
                              load_tables = FALSE,
                              verbose = TRUE) {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  method <- match.arg(method)
+  metadata_method <- match.arg(metadata_method)
 
   if (!is.null(genome_id_file)) {
     if (!file.exists(genome_id_file)) {
@@ -1222,7 +1221,7 @@ retrieveMetadata <- function(user_bacs,
     genome_ids <- readLines(genome_id_file, warn = FALSE)
     genome_ids <- trimws(genome_ids)
     genome_ids <- genome_ids[genome_ids != ""]
-  } else if (identical(method, "api")) {
+  } else if (identical(metadata_method, "api")) {
     if (isTRUE(verbose)) message("Resolving genome IDs via BV-BRC API.")
     genome_ids <- .resolveGenomeIDs_api(
       base_dir = base_dir,
@@ -1321,13 +1320,7 @@ retrieveMetadata <- function(user_bacs,
   batch_size <- 500L
   genome_batches <- split(genome_ids, ceiling(seq_along(genome_ids) / batch_size))
 
-  n_cores <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
-
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-  future::plan(future::multisession, workers = n_cores)
-
-  if (identical(method, "api")) {
+  if (identical(metadata_method, "api")) {
     # BV-BRC Data API path (Docker-free, resilient; see R/bvbrc_api.R, issue #30)
     if (isTRUE(verbose)) message("Retrieving AMR phenotype data via BV-BRC API.")
     combined_drug_data_tbl <- .extractAMRtable_api(
@@ -1344,6 +1337,11 @@ retrieveMetadata <- function(user_bacs,
       genome_ids = genome_ids, fields = gfields, verbose = verbose
     )
   } else {
+    # Setting the future plan if we need to distribute CPUs for Docker purposes
+    n_cores <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
+    old_plan <- future::plan()
+    on.exit(future::plan(old_plan), add = TRUE)
+    future::plan(future::multisession, workers = n_cores)
     if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
     batch_drug_data <- furrr::future_map(
       genome_batches,
@@ -2173,8 +2171,10 @@ genomeList <- function(base_dir = ".",
 #'   metadata step is restricted to these genome IDs instead of resolving them from
 #'   `user_bacs`. Default NULL.
 #' @param base_dir Character. Project root directory. Default `"."`.
-#' @param method Character. Download method passed to `retrieveGenomes()`.
+#' @param method Character. Genome download method passed to `retrieveGenomes()`.
 #'   `"ftp"` (default) or `"cli"`.
+#' @param metadata_method Character. Metadata download method passed to `retrieveMetadata()`.
+#'   `"api"` (default) or `"cli"`.
 #' @param overwrite Logical. Passed to metadata filtering and DuckDB creation.
 #'   Default FALSE.
 #' @param evidence_mode Character. Sets what types of AMR evidence is acceptable.
@@ -2199,6 +2199,7 @@ prepareGenomes <- function(user_bacs,
                            genome_id_file = NULL,
                            base_dir = ".",
                            method = c("ftp", "cli"),
+                           metadata_method = c("api", "cli"),
                            overwrite = FALSE,
                            num_workers = 8L,
                            evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
@@ -2212,6 +2213,7 @@ prepareGenomes <- function(user_bacs,
                            debug = FALSE,
                            verbose = TRUE) {
   method <- match.arg(method)
+  metadata_method <- match.arg(metadata_method)
   evidence_mode <- match.arg(evidence_mode)
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
@@ -2246,6 +2248,7 @@ prepareGenomes <- function(user_bacs,
     message = "Started genome curation run.",
     details = list(
       method = method,
+      metadata_method = metadata_method,
       evidence_mode = evidence_mode,
       overwrite = overwrite
     )
@@ -2263,24 +2266,27 @@ prepareGenomes <- function(user_bacs,
     add = TRUE
   )
 
-  manifest <- .manifest_stage(
-    manifest,
-    name = "prepare_bvbrc_cache",
-    status = "success",
-    parameters = list(
-      max_age_days = 30L
-    ),
-    outputs = file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb"),
-    tool = list(
-      name = "BV-BRC",
-      interface = "p3-all-genomes"
+  # If we're querying through API, we don't need to worry about cache age
+  if (identical(metadata_method, "cli")) {
+    manifest <- .manifest_stage(
+      manifest,
+      name = "prepare_bvbrc_cache",
+      status = "success",
+      parameters = list(
+        max_age_days = 30L
+      ),
+      outputs = file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb"),
+      tool = list(
+        name = "BV-BRC",
+        interface = "p3-all-genomes"
+      )
     )
-  )
 
-  .ensure_bvbrc_cache(
-    base_dir = base_dir,
-    verbose = verbose
-  )
+    .ensure_bvbrc_cache(
+      base_dir = base_dir,
+      verbose = verbose
+    )
+  }
 
   if (isTRUE(verbose)) {
     message("Step 0: Building AMR metadata (retrieveMetadata)")
@@ -2293,6 +2299,7 @@ prepareGenomes <- function(user_bacs,
     parameters = list(
       filter_type = "AMR",
       abx = "All",
+      metadata_method = metadata_method,
       max_checkm_contam = max_checkm_contam,
       min_checkm_complete = min_checkm_complete,
       gc_deviations = gc_deviations,
@@ -2315,6 +2322,7 @@ prepareGenomes <- function(user_bacs,
     base_dir = base_dir,
     abx = "All",
     overwrite = overwrite,
+    metadata_method = metadata_method,
     max_checkm_contam = max_checkm_contam,
     min_checkm_complete = min_checkm_complete,
     gc_deviations = gc_deviations,
@@ -2340,10 +2348,11 @@ prepareGenomes <- function(user_bacs,
       overwrite = overwrite
     ),
     outputs = normalizePath(paths$db_path, mustWork = FALSE),
-    tool = list(
-      name = "BV-BRC",
-      docker_image = "danylmb/bvbrc:5.3"
-    )
+    tool = if (identical(metadata_method, "api")) {
+      list(name = "BV-BRC", interface = "Data API")
+      } else {
+        list(name = "BV-BRC", interface = "BV-BRC CLI", docker_image = "danylmb/bvbrc:5.3")
+      }
   )
 
   if (isTRUE(verbose)) message("Step 1: Filtering genomes for download by evidence: ", evidence_mode)

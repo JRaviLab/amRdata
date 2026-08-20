@@ -96,7 +96,7 @@
 
 # --- AMR phenotype (genome_amr) -> genome_drug.* ------------------------------
 .extractAMRtable_api <- function(genome_ids, abx = "All",
-                                 chunk_size = 150L, verbose = TRUE) {
+                                 chunk_size = 500L, verbose = TRUE) {
   # genome_amr collection has these; measurement_unit/computational_method/source
   # are absent and get filled NA to match the Docker column set.
   expected <- c(
@@ -188,7 +188,7 @@
 
 # --- genome metadata (genome) -> genome.* -------------------------------------
 .extractGenomeData_api <- function(genome_ids, fields,
-                                   chunk_size = 150L, verbose = TRUE) {
+                                   chunk_size = 500L, verbose = TRUE) {
   expected <- strsplit(fields, ",", fixed = TRUE)[[1]]
   expected <- unique(c("genome_id", expected))
   sel <- paste(setdiff(expected, "genome_id"), collapse = ",")
