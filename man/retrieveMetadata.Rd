@@ -12,7 +12,7 @@ retrieveMetadata(
   abx = "All",
   overwrite = FALSE,
   image = "danylmb/bvbrc:5.3",
-  method = c("docker", "api"),
+  metadata_method = c("api", "cli"),
   max_checkm_contam = 5,
   min_checkm_complete = 95,
   gc_deviations = NULL,
@@ -43,9 +43,8 @@ Default NULL.}
 
 \item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 
-\item{method}{Character. Download backend: \code{"docker"} (default; p3-* CLI) or
-\code{"api"} (direct BV-BRC Data API — Docker-free and resilient to transient
-server errors; see \code{R/bvbrc_api.R}).}
+\item{metadata_method}{Character. Download backend: \code{"api"} (default) or
+\code{"cli"} (Dockerized \verb{BV-BRC p3-* CLI}).}
 
 \item{max_checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
 

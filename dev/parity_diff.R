@@ -1,22 +1,22 @@
-# Diagnose the AMR tuple mismatch between docker and api.
+# Diagnose the AMR tuple mismatch between cli and api.
 # Prereqs: same as dev/parity_check.R (Docker running + package installed).
 # Run:  Rscript dev/parity_diff.R
 suppressPackageStartupMessages(library(amRdata))
 
 species <- "Morganella morganii"
-ids <- amRdata:::.resolveGenomeIDs_api(
+ids <- amRdata:::.resolveGenomeIDsApi(
   base_dir = tempfile(), user_bacs = species, overwrite = TRUE, verbose = FALSE
 )
 ids <- utils::head(ids, 30)
 gf <- tempfile(fileext = ".txt")
 writeLines(ids, gf)
 
-amr <- function(method) {
-  td <- file.path(tempdir(), paste0("pd_", method))
+amr <- function(metadata_method) {
+  td <- file.path(tempdir(), paste0("pd_", metadata_method))
   unlink(td, recursive = TRUE)
   dir.create(td, recursive = TRUE)
   invisible(retrieveMetadata(
-    user_bacs = species, genome_id_file = gf, method = method,
+    user_bacs = species, genome_id_file = gf, metadata_method = metadata_method,
     base_dir = td, overwrite = TRUE, verbose = FALSE
   ))
   db <- list.files(td, pattern = "[.]duckdb$", recursive = TRUE, full.names = TRUE)[1]
@@ -25,7 +25,7 @@ amr <- function(method) {
   DBI::dbReadTable(con, "amr_phenotype")
 }
 
-d <- amr("docker")
+d <- amr("cli")
 a <- amr("api")
 
 tup <- function(x) {

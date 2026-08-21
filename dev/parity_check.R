@@ -1,4 +1,4 @@
-# Parity check: docker vs api on the SAME genomes.
+# Parity check: cli vs api on the SAME genomes.
 # Prereqs:
 #   1. Docker running + `docker pull danylmb/bvbrc:5.3`
 #   2. Install the package first (the Docker path uses furrr workers that need
@@ -10,19 +10,19 @@ species <- "Morganella morganii"
 
 # Fix the genome set so BOTH methods pull the same genomes (isolates the
 # download comparison from any ID-resolution differences).
-ids <- amRdata:::.resolveGenomeIDs_api(
+ids <- amRdata:::.resolveGenomeIDsApi(
   base_dir = tempfile(), user_bacs = species, overwrite = TRUE, verbose = FALSE
 )
 ids <- utils::head(ids, 30)
 gf <- tempfile(fileext = ".txt")
 writeLines(ids, gf)
 
-run <- function(method) {
-  td <- file.path(tempdir(), paste0("parity_", method))
+run <- function(metadata_method) {
+  td <- file.path(tempdir(), paste0("parity_", metadata_method))
   unlink(td, recursive = TRUE)
   dir.create(td, recursive = TRUE)
   invisible(retrieveMetadata(
-    user_bacs = species, genome_id_file = gf, method = method,
+    user_bacs = species, genome_id_file = gf, metadata_method = metadata_method,
     base_dir = td, overwrite = TRUE, verbose = FALSE
   ))
   db <- list.files(td, pattern = "[.]duckdb$", recursive = TRUE, full.names = TRUE)[1]
@@ -34,12 +34,12 @@ run <- function(method) {
   )
 }
 
-d <- run("docker")
+d <- run("cli")
 a <- run("api")
 
-cat("\n================ PARITY: docker vs api ================\n")
-cat(sprintf("genome_data rows   docker=%d  api=%d\n", nrow(d$genome), nrow(a$genome)))
-cat(sprintf("amr_phenotype rows docker=%d  api=%d\n", nrow(d$amr), nrow(a$amr)))
+cat("\n================ PARITY: cli vs api ================\n")
+cat(sprintf("genome_data rows   cli=%d  api=%d\n", nrow(d$genome), nrow(a$genome)))
+cat(sprintf("amr_phenotype rows cli=%d  api=%d\n", nrow(d$amr), nrow(a$amr)))
 cat("same genome set:",
     setequal(d$genome[["genome.genome_id"]], a$genome[["genome.genome_id"]]), "\n")
 
@@ -70,5 +70,5 @@ cat("\ncolumns only in DOCKER genome_data:",
     paste(setdiff(names(d$genome), names(a$genome)), collapse = ", "), "\n")
 cat("columns only in API genome_data:",
     paste(setdiff(names(a$genome), names(d$genome)), collapse = ", "), "\n")
-cat("\nExpected known diffs: api fills measurement_unit / computational_method /",
-    "source as NA in AMR (absent from genome_amr). Focus on the 'identical' lines.\n")
+cat("\nExpected known diffs: api fills source as \"\" in AMR (consistently absent",
+    "from genome_amr). Focus on the 'identical' lines.\n")

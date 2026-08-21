@@ -1223,7 +1223,7 @@ retrieveMetadata <- function(user_bacs,
     genome_ids <- genome_ids[genome_ids != ""]
   } else if (identical(metadata_method, "api")) {
     if (isTRUE(verbose)) message("Resolving genome IDs via BV-BRC API.")
-    genome_ids <- .resolveGenomeIDs_api(
+    genome_ids <- .resolveGenomeIDsApi(
       base_dir = base_dir,
       user_bacs = user_bacs,
       overwrite = overwrite,
@@ -1320,28 +1320,26 @@ retrieveMetadata <- function(user_bacs,
   batch_size <- 500L
   genome_batches <- split(genome_ids, ceiling(seq_along(genome_ids) / batch_size))
 
+  # Set the future plan once, up front, so both the API path (chunk-level
+  # furrr::future_map in R/bvbrc_api.R) and the CLI path below run in parallel.
+  n_cores <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  future::plan(future::multisession, workers = n_cores)
+
   if (identical(metadata_method, "api")) {
     # BV-BRC Data API path (Docker-free, resilient; see R/bvbrc_api.R, issue #30)
     if (isTRUE(verbose)) message("Retrieving AMR phenotype data via BV-BRC API.")
-    combined_drug_data_tbl <- .extractAMRtable_api(
+    combined_drug_data_tbl <- .extractAMRtableApi(
       genome_ids = genome_ids, abx = abx, verbose = verbose
     )
 
     if (isTRUE(verbose)) message("Retrieving genome metadata via BV-BRC API.")
-    gfields <- if (identical(filter_type, "microTraits")) {
-      microtrait_fields
-    } else {
-      amr_fields
-    }
-    combined_genome_data_tbl <- .extractGenomeData_api(
+    gfields <- if (identical(filter_type, "AMR")) amr_fields else microtrait_fields
+    combined_genome_data_tbl <- .extractGenomeDataApi(
       genome_ids = genome_ids, fields = gfields, verbose = verbose
     )
   } else {
-    # Setting the future plan if we need to distribute CPUs for Docker purposes
-    n_cores <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
-    old_plan <- future::plan()
-    on.exit(future::plan(old_plan), add = TRUE)
-    future::plan(future::multisession, workers = n_cores)
     if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
     batch_drug_data <- furrr::future_map(
       genome_batches,
@@ -2266,7 +2264,9 @@ prepareGenomes <- function(user_bacs,
     add = TRUE
   )
 
-  # If we're querying through API, we don't need to worry about cache age
+  # The Docker/p3-all-genomes cache only backs the "cli" method; the "api"
+  # method queries BV-BRC directly and has no cache-age concept. Record the
+  # stage either way so the manifest never has a silent gap here.
   if (identical(metadata_method, "cli")) {
     manifest <- .manifest_stage(
       manifest,
@@ -2285,6 +2285,17 @@ prepareGenomes <- function(user_bacs,
     .ensure_bvbrc_cache(
       base_dir = base_dir,
       verbose = verbose
+    )
+  } else {
+    manifest <- .manifest_stage(
+      manifest,
+      name = "prepare_bvbrc_cache",
+      status = "skipped",
+      message = "metadata_method = \"api\" queries BV-BRC directly; no Docker cache to prepare.",
+      tool = list(
+        name = "BV-BRC",
+        interface = "Data API"
+      )
     )
   }
 

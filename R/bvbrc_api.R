@@ -1,4 +1,4 @@
-# BV-BRC Data API path (additive; opt-in via retrieveMetadata(method = "api"))
+# BV-BRC Data API path (additive; opt-in via retrieveMetadata(metadata_method = "api"))
 # -----------------------------------------------------------------------------
 # Replaces ONLY the Docker/p3-* download of AMR + genome metadata. It returns the
 # same two tibbles the Docker path produces -- columns prefixed `genome_drug.*`
@@ -15,7 +15,7 @@
 .BVBRC_PAGE_MAX <- 25000L
 
 # One HTTP request with retry on transient failures.
-.bvbrc_api_req <- function(collection, rql, accept = "application/json") {
+.bvbrcApiReq <- function(collection, rql, accept = "application/json") {
   url <- sprintf("%s/%s/?%s", .BVBRC_API_BASE, collection, rql)
   httr2::request(url) |>
     httr2::req_headers(Accept = accept) |>
@@ -27,17 +27,17 @@
     )
 }
 
-.bvbrc_enc <- function(x) utils::URLencode(as.character(x), reserved = TRUE)
+.bvbrcEnc <- function(x) utils::URLencode(as.character(x), reserved = TRUE)
 
 # Keyset-paginate a filtered query past the 25k cap. `key` is the unique
 # sort/seek field ("id" for genome_amr, "genome_id" for genome).
-.bvbrc_api_fetch <- function(collection, rql_filter, select, key = "id") {
+.bvbrcApiFetch <- function(collection, rql_filter, select, key = "id") {
   out <- list()
   last <- ""
   i <- 0L
   repeat {
     seek <- if (nzchar(last)) {
-      sprintf("and(%s,gt(%s,%s))", rql_filter, key, .bvbrc_enc(last))
+      sprintf("and(%s,gt(%s,%s))", rql_filter, key, .bvbrcEnc(last))
     } else {
       rql_filter
     }
@@ -45,7 +45,7 @@
       "%s&select(%s,%s)&sort(+%s)&limit(%d)",
       seek, key, select, key, .BVBRC_PAGE_MAX
     )
-    resp <- httr2::req_perform(.bvbrc_api_req(collection, rql))
+    resp <- httr2::req_perform(.bvbrcApiReq(collection, rql))
     pg <- jsonlite::fromJSON(httr2::resp_body_string(resp),
       simplifyDataFrame = TRUE
     )
@@ -66,7 +66,7 @@
 }
 
 # Split a vector into chunks of size n (keeps in(...) URLs within length limits).
-.bvbrc_chunk <- function(x, n) {
+.bvbrcChunk <- function(x, n) {
   if (length(x) == 0L) {
     return(list())
   }
@@ -76,7 +76,7 @@
 # Ensure every expected field is present (fill missing with NA), coerce to
 # character, order columns, and apply the `prefix.` naming convention that the
 # Docker/p3 parser produces.
-.bvbrc_prefix_fill <- function(df, expected, prefix) {
+.bvbrcPrefixFill <- function(df, expected, prefix) {
   df <- as.data.frame(df, stringsAsFactors = FALSE)
   n <- nrow(df) # rep() keeps length right when the query returned 0 rows
   for (f in expected) {
@@ -95,10 +95,11 @@
 }
 
 # --- AMR phenotype (genome_amr) -> genome_drug.* ------------------------------
-.extractAMRtable_api <- function(genome_ids, abx = "All",
-                                 chunk_size = 500L, verbose = TRUE) {
-  # genome_amr collection has these; measurement_unit/computational_method/source
-  # are absent and get filled NA to match the Docker column set.
+.extractAMRtableApi <- function(genome_ids, abx = "All",
+                                chunk_size = 500L, verbose = TRUE) {
+  # Full genome_amr field set; computational_method and measurement_unit are
+  # populated on live BV-BRC (confirmed against the real API), so both are
+  # fetched -- only `source` is consistently absent and gets filled "".
   expected <- c(
     "genome_id", "antibiotic", "computational_method", "evidence",
     "genome_name", "id", "laboratory_typing_method",
@@ -106,57 +107,70 @@
     "measurement_unit", "measurement_value", "pmid", "resistant_phenotype",
     "source", "taxon_id", "testing_standard"
   )
-  have <- intersect(expected, c(
-    "genome_id", "antibiotic", "evidence", "genome_name", "id",
-    "laboratory_typing_method", "laboratory_typing_platform", "measurement",
-    "measurement_sign", "measurement_value", "pmid", "resistant_phenotype",
-    "taxon_id", "testing_standard"
-  ))
+  have <- setdiff(expected, "source")
   # keyset key for genome_amr is "id"; keep genome_id as a data column.
   sel <- paste(setdiff(have, "id"), collapse = ",")
 
-  chunks <- .bvbrc_chunk(genome_ids, chunk_size)
+  chunks <- .bvbrcChunk(genome_ids, chunk_size)
   if (isTRUE(verbose)) {
     message("  [api] AMR: ", length(genome_ids), " genomes in ",
       length(chunks), " chunk(s)")
   }
-  parts <- lapply(chunks, function(ids) {
-    ab <- if (identical(abx, "All")) {
-      ""
-    } else {
-      sprintf(",in(antibiotic,(%s))",
-        paste(vapply(abx, .bvbrc_enc, ""), collapse = ","))
-    }
-    filt <- sprintf("and(in(genome_id,(%s))%s)",
-      paste(vapply(ids, .bvbrc_enc, ""), collapse = ","), ab)
-    .bvbrc_api_fetch("genome_amr", filt, sel, key = "id")
-  })
+  parts <- furrr::future_map(
+    chunks,
+    function(ids) {
+      ab <- if (identical(abx, "All")) {
+        ""
+      } else {
+        sprintf(",in(antibiotic,(%s))",
+          paste(vapply(abx, .bvbrcEnc, ""), collapse = ","))
+      }
+      filt <- sprintf("and(in(genome_id,(%s))%s)",
+        paste(vapply(ids, .bvbrcEnc, ""), collapse = ","), ab)
+      .bvbrcApiFetch("genome_amr", filt, sel, key = "id")
+    },
+    .options = furrr::furrr_options(seed = TRUE)
+  )
   df <- data.table::rbindlist(parts, fill = TRUE, use.names = TRUE)
-  .bvbrc_prefix_fill(df, expected, "genome_drug")
+  .bvbrcPrefixFill(df, expected, "genome_drug")
 }
 
 # --- genome-ID resolution (genome) --------------------------------------------
 # API replacement for .retrieveQueryIDs(): resolve species names and/or taxon IDs
 # to Good-quality WGS/Complete genome IDs, and write the `bac_data` table (used by
 # retrieveMetadata()'s summary). Uses the Data API instead of the Docker-built
-# cache, so retrieveMetadata(method = "api") needs no Docker.
-.resolveGenomeIDs_api <- function(base_dir = ".", user_bacs,
-                                  overwrite = FALSE, verbose = TRUE) {
+# cache, so retrieveMetadata(metadata_method = "api") needs no Docker.
+.resolveGenomeIDsApi <- function(base_dir = ".", user_bacs,
+                                 overwrite = FALSE, verbose = TRUE) {
   sel <- "genome_name,taxon_id,species,strain"
-  parts <- lapply(user_bacs, function(ub) {
-    ub <- trimws(as.character(ub))
-    key_filter <- if (grepl("^[0-9]+$", ub)) {
-      sprintf("eq(taxon_lineage_ids,%s)", ub) # taxon ID (any rank)
-    } else {
-      sprintf("eq(species,%s)", .bvbrc_enc(ub)) # species name
-    }
-    filt <- sprintf(
-      "and(%s,eq(genome_quality,Good),in(genome_status,(WGS,Complete)))",
-      key_filter
-    )
-    if (isTRUE(verbose)) message("  [api] resolving genome IDs for '", ub, "'")
-    .bvbrc_api_fetch("genome", filt, sel, key = "genome_id")
-  })
+  parts <- furrr::future_map(
+    user_bacs,
+    function(ub) {
+      ub <- trimws(as.character(ub))
+      key_filter <- if (grepl("^[0-9]+$", ub)) {
+        sprintf("eq(taxon_lineage_ids,%s)", ub) # taxon ID (any rank)
+      } else {
+        sprintf("eq(species,%s)", .bvbrcEnc(ub)) # species name
+      }
+      filt <- sprintf(
+        "and(%s,eq(genome_quality,Good),in(genome_status,(WGS,Complete)))",
+        key_filter
+      )
+      if (isTRUE(verbose)) message("  [api] resolving genome IDs for '", ub, "'")
+      res <- .bvbrcApiFetch("genome", filt, sel, key = "genome_id")
+      if (nrow(res) == 0L) {
+        warning(
+          "BV-BRC API resolved 0 genomes for user_bacs entry '", ub, "'. ",
+          "The API path matches species names exactly and taxon IDs against ",
+          "the full lineage -- if this input relied on substring matching or ",
+          "exact-rank taxon matching under the CLI path, results will differ.",
+          call. = FALSE
+        )
+      }
+      res
+    },
+    .options = furrr::furrr_options(seed = TRUE)
+  )
   df <- as.data.frame(
     data.table::rbindlist(parts, fill = TRUE, use.names = TRUE),
     stringsAsFactors = FALSE
@@ -171,15 +185,12 @@
   paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
-  bac <- data.frame(
-    `genome.genome_id` = df$genome_id,
-    `genome.genome_name` = df$genome_name,
-    `genome.taxon_id` = df$taxon_id,
-    `genome.species` = df$species,
-    `genome.strain` = df$strain,
-    check.names = FALSE, stringsAsFactors = FALSE
+  bac <- .bvbrcPrefixFill(
+    df,
+    c("genome_id", "genome_name", "taxon_id", "species", "strain"),
+    "genome"
   )
-  DBI::dbWriteTable(con, "bac_data", bac, overwrite = TRUE)
+  DBI::dbWriteTable(con, "bac_data", as.data.frame(bac), overwrite = TRUE)
   if (isTRUE(verbose)) {
     message("  [api] resolved ", nrow(df), " genome IDs; wrote bac_data")
   }
@@ -187,22 +198,26 @@
 }
 
 # --- genome metadata (genome) -> genome.* -------------------------------------
-.extractGenomeData_api <- function(genome_ids, fields,
-                                   chunk_size = 500L, verbose = TRUE) {
+.extractGenomeDataApi <- function(genome_ids, fields,
+                                  chunk_size = 500L, verbose = TRUE) {
   expected <- strsplit(fields, ",", fixed = TRUE)[[1]]
   expected <- unique(c("genome_id", expected))
   sel <- paste(setdiff(expected, "genome_id"), collapse = ",")
 
-  chunks <- .bvbrc_chunk(genome_ids, chunk_size)
+  chunks <- .bvbrcChunk(genome_ids, chunk_size)
   if (isTRUE(verbose)) {
     message("  [api] genome metadata: ", length(genome_ids), " genomes in ",
       length(chunks), " chunk(s)")
   }
-  parts <- lapply(chunks, function(ids) {
-    filt <- sprintf("in(genome_id,(%s))",
-      paste(vapply(ids, .bvbrc_enc, ""), collapse = ","))
-    .bvbrc_api_fetch("genome", filt, sel, key = "genome_id")
-  })
+  parts <- furrr::future_map(
+    chunks,
+    function(ids) {
+      filt <- sprintf("in(genome_id,(%s))",
+        paste(vapply(ids, .bvbrcEnc, ""), collapse = ","))
+      .bvbrcApiFetch("genome", filt, sel, key = "genome_id")
+    },
+    .options = furrr::furrr_options(seed = TRUE)
+  )
   df <- data.table::rbindlist(parts, fill = TRUE, use.names = TRUE)
-  .bvbrc_prefix_fill(df, expected, "genome")
+  .bvbrcPrefixFill(df, expected, "genome")
 }

@@ -9,6 +9,7 @@ prepareGenomes(
   genome_id_file = NULL,
   base_dir = ".",
   method = c("ftp", "cli"),
+  metadata_method = c("api", "cli"),
   overwrite = FALSE,
   num_workers = 8L,
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
@@ -34,8 +35,11 @@ metadata step is restricted to these genome IDs instead of resolving them from
 
 \item{base_dir}{Character. Project root directory. Default \code{"."}.}
 
-\item{method}{Character. Download method passed to \code{retrieveGenomes()}.
+\item{method}{Character. Genome download method passed to \code{retrieveGenomes()}.
 \code{"ftp"} (default) or \code{"cli"}.}
+
+\item{metadata_method}{Character. Metadata download method passed to \code{retrieveMetadata()}.
+\code{"api"} (default) or \code{"cli"}.}
 
 \item{overwrite}{Logical. Passed to metadata filtering and DuckDB creation.
 Default FALSE.}
