@@ -1,20 +1,24 @@
 #' Build a protein-gene dyad feature network using DuckDB
 #'
-#' Constructs a bipartite network linking protein-gene dyads to biological
-#' features such as proteins, genes, structural gene arrangements, and HMMER
-#' annotations for protein domains (Pfam), COGs, Defense including Cas and antimicrobial resistance genes.
+#' Constructs a two-mode (bipartite) network in which every node is either a
+#' protein-gene dyad or a biological feature, and every edge links a dyad to one
+#' of its features. Features include the dyad's own protein and gene, structural
+#' (pangenome graph) gene arrangements, and HMMER annotations: protein domains
+#' (Pfam), COGs, phage-defense systems (including Cas), and antimicrobial
+#' resistance genes.
 #'
-#' @param duckdb_path Character. Path to the source dataset DuckDB. The
+#' @param duckdb_path Character. Path to the source per-selection DuckDB. The
 #'   associated Parquet files and provenance manifest are expected to live
-#'   alongside it.
-#' @param addtnl_feature_scales Character vector of optional feature types to
+#'   alongside it. This is the same `duckdb_path` produced by
+#'   \code{\link{runDataProcessing}}.
+#' @param additional_feature_scales Character vector of optional feature types to
 #'   include. If `NULL`, all HMMER databases recorded in the manifest are used,
 #'   plus `struct` to include pangenome graph triplets. If a character vector is
 #'   supplied, individual feature scales can be selected.
 #' @param output_path Character or NULL. Directory where the output Parquet file
 #'   will be written. If NULL, the output is written alongside the source DuckDB.
 #'
-#'   #' @details
+#' @details
 #' The function performs the following steps:
 #' \enumerate{
 #'   \item Creates a protein-gene mapping from
@@ -27,7 +31,7 @@
 #'   \item Writes the resulting edge list to a compressed Parquet file.
 #' }
 #'
-#' The resulting network is bipartite:
+#' Every edge runs from a `protein|gene` dyad to a type-prefixed feature node:
 #'
 #' \preformatted{
 #' protein|gene --> protein:PROTEIN_ID
@@ -35,9 +39,12 @@
 #' protein|gene --> pfam:PFXXXXX
 #' protein|gene --> cog:COGXXXX
 #' protein|gene --> amr:GENE_NAME
-#' protein|gene --> defensecas:FEATURE
+#' protein|gene --> defensecas:DEFENSE_SYSTEM
 #' protein|gene --> struct:STRUCTURE
 #' }
+#'
+#' The type prefix on each target keeps feature namespaces separate, so a
+#' generic feature name cannot collide across scales downstream.
 #'
 #' The output edge list contains two columns:
 #' \describe{
@@ -55,10 +62,11 @@
 #' )
 #' }
 #'
+#' @import DBI duckdb
 #' @export
 buildDyadFeatureMap <- function(
     duckdb_path,
-    addtnl_feature_scales = NULL,
+    additional_feature_scales = NULL,
     output_path = NULL
 ) {
 
@@ -88,7 +96,8 @@ buildDyadFeatureMap <- function(
 
   hmmer_stage <- NULL
 
-  # Learn what databases were used, and used successfully (pretty important)
+  # Find the most recent run whose HMMER stage completed successfully; its
+  # recorded databases determine which feature scales are available.
   for (run in rev(manifest$runs)) {
 
     stages <- run$stages %||% list()
@@ -105,7 +114,8 @@ buildDyadFeatureMap <- function(
     }
   }
 
-  # Looks like stuff didn't work? Stop!
+  # Without a successful HMMER stage the annotation Parquets we join against
+  # are not guaranteed to exist, so there is nothing to build from.
   if (is.null(hmmer_stage)) {
     stop(
       "No successful HMMER stage found in manifest: ",
@@ -117,29 +127,30 @@ buildDyadFeatureMap <- function(
     hmmer_stage$parameters$databases
   )
 
-  # HMMER didn't run or something? Stop!
+  # A successful stage with no databases recorded should not happen; fail loudly.
   if (!length(hmmer_databases)) {
     stop(
       "HMMER stage in manifest does not contain any databases."
     )
   }
 
-  # Should probably list what's allowed to input as a feature
+  # Feature scales the caller is allowed to request: the structural view plus
+  # every HMMER database from the manifest (so new databases are picked up
+  # automatically).
   allowed_features <- c(
     "struct",
-    hmmer_databases # Should be flexible enough to allow for adding HMMER DBs
+    hmmer_databases
   )
 
-  # Setdiff to find what was provided vs. what's allowed
-  if (is.null(addtnl_feature_scales)) {
-    addtnl_feature_scales <- allowed_features
+  # Default to every allowed scale; otherwise reject anything unrecognised.
+  if (is.null(additional_feature_scales)) {
+    additional_feature_scales <- allowed_features
   } else {
     unknown_features <- setdiff(
-      addtnl_feature_scales,
+      additional_feature_scales,
       allowed_features
     )
 
-    # If nonsense exists? Shout about it
     if (length(unknown_features)) {
       stop(
         "Unsupported feature scale(s): ",
@@ -184,6 +195,9 @@ buildDyadFeatureMap <- function(
     add = TRUE
   )
 
+  # Local helpers -------------------------------------------------------------
+
+  # Escape single quotes so a path can be embedded in a SQL string literal.
   .sql_escape <- function(x) {
     gsub(
       "'",
@@ -193,6 +207,8 @@ buildDyadFeatureMap <- function(
     )
   }
 
+  # Resolve "<parquet_dir>/<dataset_name>.parquet" to an escaped absolute path,
+  # erroring if the expected Parquet file is missing.
   .parquet_dataset_sql <- function(
     parquet_dir,
     dataset_name
@@ -223,9 +239,12 @@ buildDyadFeatureMap <- function(
   }
 
   # =========================
-  # Gene -> protein features
+  # Gene -> protein mapping
   # =========================
 
+  # Base protein/gene pairs. Empty strings are excluded alongside NULLs to match
+  # the `value != ""` convention in data_processing.R and to avoid emitting
+  # bogus "protein|" or "|gene" dyads.
   sql_path <- .parquet_dataset_sql(
     parquet_dir,
     "genome_gene_protein"
@@ -241,7 +260,9 @@ buildDyadFeatureMap <- function(
         REPLACE(Gene, '~', '.') AS gene
       FROM read_parquet('%s')
       WHERE protein_ids IS NOT NULL
+        AND protein_ids <> ''
         AND Gene IS NOT NULL
+        AND Gene <> ''
       ",
       sql_path
     )
@@ -251,6 +272,8 @@ buildDyadFeatureMap <- function(
   # Protein-gene -> dyad
   # =========================
 
+  # Collapse each protein/gene pair into a single "protein|gene" dyad id; this
+  # is the source node for every edge in the output network.
   DBI::dbExecute(
     con,
     "
@@ -263,7 +286,8 @@ buildDyadFeatureMap <- function(
     "
   )
 
-  # Feature flags
+  # Track which optional feature views were successfully created, so the edge
+  # queries below only join against views that exist.
   has_struct <- FALSE
   has_pfam <- FALSE
   has_cog <- FALSE
@@ -274,7 +298,7 @@ buildDyadFeatureMap <- function(
   # Structural gene features
   # =========================
 
-  if ("struct" %in% addtnl_feature_scales) {
+  if ("struct" %in% additional_feature_scales) {
 
     struct_path <- file.path(
       parquet_dir,
@@ -283,6 +307,9 @@ buildDyadFeatureMap <- function(
 
     if (!file.exists(struct_path)) {
 
+      # Same skip-and-continue behaviour as .create_feature_view() uses for the
+      # HMMER datasets, kept inline here because the struct view is built with a
+      # different (UNNEST) query.
       message(
         "Skipping struct: no parquet found. Generate struct parquet first."
       )
@@ -320,7 +347,11 @@ buildDyadFeatureMap <- function(
   # Generic HMMER feature view
   # ==========================
 
-  create_feature_view <- function(
+  # Local helper: build a `protein -> feature` view from one HMMER annotation
+  # Parquet. `feature_expr` is the SQL expression that derives the feature label
+  # from `query_name` (identity for most databases, a REPLACE() for AMRFinder).
+  # Returns TRUE if the view was created, FALSE if the Parquet was missing.
+  .create_feature_view <- function(
     con,
     view_name,
     parquet_dir,
@@ -373,9 +404,9 @@ buildDyadFeatureMap <- function(
   # HMMER annotation features
   # =========================
 
-  if ("Pfam" %in% addtnl_feature_scales) {
+  if ("Pfam" %in% additional_feature_scales) {
 
-    has_pfam <- create_feature_view(
+    has_pfam <- .create_feature_view(
       con = con,
       view_name = "v_pfam",
       parquet_dir = parquet_dir,
@@ -384,9 +415,9 @@ buildDyadFeatureMap <- function(
     )
   }
 
-  if ("COG" %in% addtnl_feature_scales) {
+  if ("COG" %in% additional_feature_scales) {
 
-    has_cog <- create_feature_view(
+    has_cog <- .create_feature_view(
       con = con,
       view_name = "v_cog",
       parquet_dir = parquet_dir,
@@ -395,9 +426,9 @@ buildDyadFeatureMap <- function(
     )
   }
 
-  if ("AMRFinder" %in% addtnl_feature_scales) {
+  if ("AMRFinder" %in% additional_feature_scales) {
 
-    has_amr <- create_feature_view(
+    has_amr <- .create_feature_view(
       con = con,
       view_name = "v_amrfinder",
       parquet_dir = parquet_dir,
@@ -406,9 +437,9 @@ buildDyadFeatureMap <- function(
     )
   }
 
-  if ("DefenseCas" %in% addtnl_feature_scales) {
+  if ("DefenseCas" %in% additional_feature_scales) {
 
-    has_defensecas <- create_feature_view(
+    has_defensecas <- .create_feature_view(
       con = con,
       view_name = "v_defensecas",
       parquet_dir = parquet_dir,
@@ -421,6 +452,9 @@ buildDyadFeatureMap <- function(
   # Build network edge queries
   # =========================
 
+  # Each entry is a SELECT returning (source, target) rows that are UNIONed into
+  # the final edge list. In the joined queries below `pgd` aliases the
+  # `protein_gene_dyad` view, so `pgd.dyad` is the "protein|gene" dyad id.
   edge_queries <- c(
     "
     SELECT DISTINCT

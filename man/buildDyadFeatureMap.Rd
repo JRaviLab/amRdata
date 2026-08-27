@@ -6,24 +6,37 @@
 \usage{
 buildDyadFeatureMap(
   duckdb_path,
-  addtnl_feature_scales = NULL,
+  additional_feature_scales = NULL,
   output_path = NULL
 )
 }
 \arguments{
-\item{duckdb_path}{Character. Path to the source dataset DuckDB. The
+\item{duckdb_path}{Character. Path to the source per-selection DuckDB. The
 associated Parquet files and provenance manifest are expected to live
-alongside it.}
+alongside it. This is the same \code{duckdb_path} produced by
+\code{\link{runDataProcessing}}.}
 
-\item{addtnl_feature_scales}{Character vector of optional feature types to
+\item{additional_feature_scales}{Character vector of optional feature types to
 include. If \code{NULL}, all HMMER databases recorded in the manifest are used,
 plus \code{struct} to include pangenome graph triplets. If a character vector is
 supplied, individual feature scales can be selected.}
 
 \item{output_path}{Character or NULL. Directory where the output Parquet file
-will be written. If NULL, the output is written alongside the source DuckDB.
-
-#' @details
+will be written. If NULL, the output is written alongside the source DuckDB.}
+}
+\value{
+Invisibly returns the path to the generated
+\code{dyad_feature.parquet} file.
+}
+\description{
+Constructs a two-mode (bipartite) network in which every node is either a
+protein-gene dyad or a biological feature, and every edge links a dyad to one
+of its features. Features include the dyad's own protein and gene, structural
+(pangenome graph) gene arrangements, and HMMER annotations: protein domains
+(Pfam), COGs, phage-defense systems (including Cas), and antimicrobial
+resistance genes.
+}
+\details{
 The function performs the following steps:
 \enumerate{
 \item Creates a protein-gene mapping from
@@ -36,7 +49,7 @@ features.
 \item Writes the resulting edge list to a compressed Parquet file.
 }
 
-The resulting network is bipartite:
+Every edge runs from a \code{protein|gene} dyad to a type-prefixed feature node:
 
 \preformatted{
 protein|gene --> protein:PROTEIN_ID
@@ -44,24 +57,18 @@ protein|gene --> gene:GENE_ID
 protein|gene --> pfam:PFXXXXX
 protein|gene --> cog:COGXXXX
 protein|gene --> amr:GENE_NAME
-protein|gene --> defensecas:FEATURE
+protein|gene --> defensecas:DEFENSE_SYSTEM
 protein|gene --> struct:STRUCTURE
 }
+
+The type prefix on each target keeps feature namespaces separate, so a
+generic feature name cannot collide across scales downstream.
 
 The output edge list contains two columns:
 \describe{
 \item{source}{Protein-gene dyad identifier.}
 \item{target}{Feature node identifier prefixed by feature type.}
-}}
 }
-\value{
-Invisibly returns the path to the generated
-\code{dyad_feature.parquet} file.
-}
-\description{
-Constructs a bipartite network linking protein-gene dyads to biological
-features such as proteins, genes, structural gene arrangements, and HMMER
-annotations for protein domains (Pfam), COGs, Defense including Cas and antimicrobial resistance genes.
 }
 \examples{
 \dontrun{
