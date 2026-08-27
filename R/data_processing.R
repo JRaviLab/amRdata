@@ -2191,7 +2191,7 @@ CDHIT2duckdb <- function(duckdb_path,
 }
 
 
-# Clean BV-BRC metadata, then save as Parquet files
+#' Clean BV-BRC metadata, then save as Parquet files
 #'
 #' @param duckdb_path Path to the **per-selection DuckDB** produced by
 #'   [prepareGenomes()] (e.g., `"data/<Bug>/<Abbrev>.duckdb"`). This DB must
@@ -2203,7 +2203,6 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   Default: `"data_raw/"`.
 #' 
 #' @export
-#'
 cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when
@@ -2349,7 +2348,7 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   invisible(TRUE)
 }
 
-# Clean feature matrices, then save as Parquet files
+#' Clean feature matrices, then save as Parquet files
 #'
 #' @param duckdb_path Path to the **per-selection DuckDB** produced by
 #'   [prepareGenomes()] (e.g., `"data/<Bug>/<Abbrev>.duckdb"`). This DB must
@@ -2358,7 +2357,6 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
 #' @param path the path to working directory
 #'
 #' @export
-#'
 cleanData <- function(duckdb_path, path) {
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when

@@ -17,6 +17,28 @@
   verbose = TRUE
 )
 }
+\arguments{
+\item{JOB_NAME}{protein_chunk id}
+
+\item{FASTA}{fasta sequences}
+
+\item{DB}{HMM database}
+
+\item{Total_proteins}{protein sequence count}
+
+\item{output_path}{path for saving hmmer outputs}
+
+\item{db_paths}{path to HMM database}
+
+\item{docker_image}{hmmer docker image (ideally from dockerhub)}
+
+\item{threads}{number of threads}
+
+\item{n_workers}{number of parallel workers}
+}
+\value{
+the filename of the parquet file with hmmer output post parsing
+}
 \description{
 The function to run HMMER with docker
 }

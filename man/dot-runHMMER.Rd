@@ -16,6 +16,23 @@
   verbose = TRUE
 )
 }
+\arguments{
+\item{duckdb_path}{path to the duckdb with protein sequences and list}
+
+\item{output_path}{path where HMMER output will be saved}
+
+\item{threads}{number of threads}
+
+\item{hmmer_db_dir}{path to the directory where HMM databases are/will be downloaded}
+
+\item{databases}{list of HMM databases}
+
+\item{docker_image}{the docker image of HMMER}
+
+\item{num_of_splits}{The number of splits of the protein sequence file for parallel processing}
+
+\item{n_workers}{The number of parallel runs}
+}
 \description{
 Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.
 }
