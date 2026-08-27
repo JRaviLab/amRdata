@@ -195,10 +195,10 @@ want a work queue that load-balances across a fixed worker pool.
 
 ## 7. Prototype & benchmark
 
-A runnable prototype lives at [`dev/bvbrc_api_prototype.R`](../dev/bvbrc_api_prototype.R)
-(standalone; not wired into the package). It implements `bvbrc_count()`,
-`bvbrc_fetch_all()` (keyset + optional parallel id-partitioning), and
-`bvbrc_rank_genomes_by_drug_coverage()`. Run `bvbrc_demo()` after sourcing.
+The findings below came from a standalone prototype (`bvbrc_count()`,
+`bvbrc_fetch_all()` with keyset + optional parallel id-partitioning, and
+`bvbrc_rank_genomes_by_drug_coverage()`). That prototype has since been
+superseded by the package implementation in [`R/bvbrc_api.R`](../R/bvbrc_api.R).
 
 **Measured (all S. aureus AMR rows):**
 
@@ -265,9 +265,8 @@ returns all N instead of a silent first 25k. Expose it as e.g. `limit="all"` or 
 `max_rows` parameter that paginates under the hood. A bigger single `limit` value
 will be clamped to 25k server-side and change nothing.
 
-Roster produced by [`dev/bvbrc_species_roster.R`](../dev/bvbrc_species_roster.R)
-→ [`dev/bvbrc_species_roster.csv`](../dev/bvbrc_species_roster.csv). Counts are
-header-only (`Content-Range`); definitions:
+A one-off roster script produced the counts below (header-only, via
+`Content-Range`); definitions:
 `clean` = `genome_quality = Good`; `amr_rows` = `genome_amr` rows via
 `eq(genome_name, <species>)`.
 
@@ -276,7 +275,7 @@ header-only (`Content-Range`); definitions:
 the genome-metadata pull truncates). Worst case **E. coli: 7,388,629 AMR rows —
 a capped single pull returns 0.3% of the data.** Other 7-figure species:
 M. tuberculosis 2.26M, K. pneumoniae 2.01M, S. enterica 1.97M, S. pneumoniae
-1.06M. Full table in the CSV.
+1.06M.
 
 **Caveat on `clean_with_amr`:** it counts genomes whose `genome` record has the
 `antimicrobial_resistance` summary field populated — which is **sparsely filled**
