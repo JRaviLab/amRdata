@@ -1166,7 +1166,9 @@
 #'   - genome_data
 #'   - metadata (join on genome IDs returned by BV-BRC)
 #'
-#' @param user_bacs Character vector. Mixed taxon IDs and/or species strings (used for naming).
+#' @param user_bacs Character vector. Mixed taxon IDs and/or species strings.
+#'   Also used for naming the per-selection DuckDB. How entries are resolved to
+#'   genome IDs depends on `metadata_method` -- see Details.
 #' @param genome_id_file Character or NULL. Optional path to a file listing genome
 #'   IDs (one per line). If provided, genome IDs are read from this file instead of
 #'   being resolved from `user_bacs`; blank lines and surrounding whitespace are
@@ -1186,6 +1188,28 @@
 #' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
 #' @param debug Logical. If TRUE, retain `metadata_full` and QC columns for inspection.
 #' @param verbose Logical. If TRUE, print progress messages.
+#'
+#' @details
+#' `metadata_method` selects how `user_bacs` entries are resolved to genome IDs,
+#' and the two backends do not use identical matching rules. For the same input
+#' they can return different genome sets:
+#'
+#' \itemize{
+#'   \item \strong{Species strings.} `"cli"` does a case-insensitive substring
+#'     match against `genome.species` (so `"Escherichia"` matches
+#'     `"Escherichia coli"`). `"api"` does an exact match on the `species` field;
+#'     a string that does not match any species exactly resolves to zero genomes
+#'     and emits a warning.
+#'   \item \strong{Numeric taxon IDs.} `"cli"` matches only genomes whose own
+#'     `taxon_id` equals the input exactly. `"api"` matches the ID anywhere in
+#'     the genome's taxonomic lineage (`taxon_lineage_ids`), so a genus- or
+#'     family-rank ID pulls every genome beneath it, and a species-rank ID also
+#'     catches strain-level genomes that `"cli"` would miss.
+#' }
+#'
+#' The `"api"` rules are generally the more complete of the two. If you need the
+#' two backends to agree, pass an exact species name and a species- or
+#' strain-rank taxon ID, or supply `genome_id_file` directly.
 #'
 #' @return A list with:
 #'   - duckdbConnection: live DBI connection to the created DuckDB
