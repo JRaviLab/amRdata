@@ -316,9 +316,9 @@ buildDyadFeatureMap <- function(
     }
   }
 
-  # =========================
+  # ==========================
   # Generic HMMER feature view
-  # =========================
+  # ==========================
 
   create_feature_view <- function(
     con,
