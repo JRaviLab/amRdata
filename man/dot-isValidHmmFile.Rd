@@ -6,6 +6,13 @@
 \usage{
 .isValidHmmFile(hmm_file)
 }
+\arguments{
+\item{hmm_file}{Path to a \code{.hmm} file.}
+}
+\value{
+\code{TRUE} if the file has valid HMMER3 formatting (starts with
+\code{HMMER3/f} and ends with \verb{//}), \code{FALSE} otherwise.
+}
 \description{
 Validate if a HMM file has old HMMER3 format
 }

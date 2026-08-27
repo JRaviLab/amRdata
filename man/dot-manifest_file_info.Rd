@@ -9,7 +9,7 @@
 \arguments{
 \item{path}{Character vector of file paths.}
 
-\item{hash}{Logical. If TRUE, calculate SHA-256 checksums.}
+\item{hash}{Logical. If TRUE, calculate MD5 checksums.}
 }
 \value{
 A list of file records.

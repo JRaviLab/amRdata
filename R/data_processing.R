@@ -1456,8 +1456,14 @@ CDHIT2duckdb <- function(duckdb_path,
 
   db_paths <- db_paths[databases]
 
+  # validate split counts before propagating possible hogwash
+  num_of_splits <- as.integer(num_of_splits)
+  if (is.na(num_of_splits) || num_of_splits < 1L) {
+    stop("'num_of_splits' parameter must be a positive integer!")
+  }
+
   # clamp splits to the number of sequences available
-  chunk_count <- min(as.integer(num_of_splits), nrow(prot_seqs))
+  chunk_count <- min(num_of_splits, nrow(prot_seqs))
 
   split_fasta <- function(seqs, prefix) {
     records <- paste0(">", seqs$name, "\n", seqs$sequence)
@@ -1468,12 +1474,14 @@ CDHIT2duckdb <- function(duckdb_path,
       chunk_path <- file.path(output_path, sprintf("%s_chunk_%02d.fasta", prefix, i))
       readr::write_lines(chunk, chunk_path)
     })
+
+    length(chunks)
   }
 
-  split_fasta(prot_seqs, "protein")
+  actual_chunk_count <- split_fasta(prot_seqs, "protein")
 
   job_list <- expand.grid(
-    chunk = sprintf("%02d", seq_len(chunk_count)),
+    chunk = sprintf("%02d", seq_len(actual_chunk_count)),
     db = databases,
     stringsAsFactors = FALSE
   ) |>
@@ -1535,7 +1543,7 @@ CDHIT2duckdb <- function(duckdb_path,
     ) |>
       dplyr::bind_rows() |>
       dplyr::left_join(.parse_hmmer_profiles(db_paths[[database_name]]$hmm) |>
-                         dplyr::select(query_name = profile_name, query_accession = profile_accession, description = profile_description),
+                         dplyr::select(query_name = profile_name, description = profile_description),
                        by = "query_name")
 
     final_parquet <- file.path(
@@ -2726,6 +2734,7 @@ cleanData <- function(duckdb_path, path) {
 #' # will contain views over the Parquet files for downstream ML.
 #' }
 #'
+#' @export
 runDataProcessing <- function(
     duckdb_path,
     output_path = NULL,
@@ -2981,6 +2990,9 @@ runDataProcessing <- function(
     hmmer_databases,
     c("Pfam", "COG", "AMRFinder")
   )
+
+  hmmer_result <- NULL
+  defense_result <- NULL
 
   if (length(generic_databases)) {
     hmmer_result <- .runHMMER(

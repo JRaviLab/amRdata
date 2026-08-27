@@ -103,7 +103,7 @@
 #' Returns the basics about a file for manifest logging
 #'
 #' @param path Character vector of file paths.
-#' @param hash Logical. If TRUE, calculate SHA-256 checksums.
+#' @param hash Logical. If TRUE, calculate MD5 checksums.
 #'
 #' @return A list of file records.
 #' @keywords internal
@@ -128,7 +128,7 @@
 
     # Hash what exists, if desired
     if (isTRUE(hash) && exists && !dir.exists(x)) {
-      out$sha256 <- unname(tools::sha256(x))
+      out$md5 <- unname(tools::md5sum(x))
     }
 
     out
@@ -469,6 +469,28 @@
   manifest_state$manifest$runs[[manifest_state$run_index]]$finished_at <-
     as.character(Sys.time())
 
+  # Patching to resolve an indefinite `running` failure state in the manifest
+  if (identical(status, "failed")) {
+    stages <- manifest_state$manifest$runs[[manifest_state$run_index]]$stages
+    running_stage <- which(purrr::map_lgl(stages, ~ identical(.x$status, "running")))
+
+    if (length(running_stage)) {
+      stage_error <- if (!is.null(error)) {
+        as.character(error)
+      } else {
+        "Parent run failed before this stage completed."
+      }
+
+      for (i in running_stage) {
+        stages[[i]]$status <- "failed"
+        stages[[i]]$finished_at <- as.character(Sys.time())
+        stages[[i]]$error <- stage_error
+      }
+
+      manifest_state$manifest$runs[[manifest_state$run_index]]$stages <- stages
+    }
+  }
+
   if (!is.null(error)) {
     manifest_state$manifest$runs[[manifest_state$run_index]]$error <- as.character(error)
   }
@@ -723,10 +745,12 @@
 #########################
 #     HMMER helpers     #
 #########################
-
 #' Validate if a HMM file has old HMMER3 format
 #'
-#' @param hmm_file
+#' @param hmm_file Path to a `.hmm` file.
+#'
+#' @returns `TRUE` if the file has valid HMMER3 formatting (starts with
+#'   `HMMER3/f` and ends with `//`), `FALSE` otherwise.
 #'
 #' @keywords internal
 .isValidHmmFile <- function(hmm_file) {
@@ -858,6 +882,11 @@
 
   # split: whitespace-separated fields
   split_fields <- strsplit(data_lines, "\\s+", perl = TRUE)
+
+  if (length(split_fields) == 0L) {
+    return(readr::read_tsv(I(""), col_names = names(col_types$cols),
+                            col_types = col_types, lazy = FALSE, progress = FALSE))
+  }
 
   # count space separated fields
   N <- max(sapply(split_fields, length))
