@@ -11,6 +11,7 @@ exportProcessedData(
   export_formats = c("csv"),
   export_sequences = FALSE,
   tables = NULL,
+  export_tables = TRUE,
   verbose = TRUE
 )
 }

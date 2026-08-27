@@ -728,10 +728,7 @@
 #'
 #' @param hmm_file
 #'
-#' @returns
-#'
 #' @keywords internal
-#' @examples
 .isValidHmmFile <- function(hmm_file) {
 
   lines <- tryCatch(

@@ -970,7 +970,6 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @returns A list of paths to the database hmm files.
 #'
 #' @keywords internal
-#' @examples
 .prepareHmmerDatabases <- function(
     hmmer_db_dir,
     databases = c("Pfam", "COG", "AMRFinder"),
@@ -1281,17 +1280,17 @@ CDHIT2duckdb <- function(duckdb_path,
 
 #' The function to run HMMER with docker
 #'
-#' @param JOB_NAME
-#' @param FASTA
-#' @param DB
-#' @param Total_proteins
-#' @param output_path
-#' @param db_paths
-#' @param docker_image
-#' @param threads
-#' @param n_workers
+#' @param JOB_NAME protein_chunk id
+#' @param FASTA fasta sequences
+#' @param DB HMM database
+#' @param Total_proteins protein sequence count
+#' @param output_path path for saving hmmer outputs
+#' @param db_paths path to HMM database 
+#' @param docker_image hmmer docker image (ideally from dockerhub)
+#' @param threads number of threads
+#' @param n_workers number of parallel workers
 #'
-#' @returns
+#' @returns the filename of the parquet file with hmmer output post parsing
 #'
 #' @keywords internal
 .runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins,
@@ -1375,19 +1374,16 @@ CDHIT2duckdb <- function(duckdb_path,
 
 #' Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.
 #'
-#' @param duckdb_path
-#' @param output_path
-#' @param threads
-#' @param hmmer_db_dir
-#' @param databases
-#' @param docker_image
-#' @param num_of_splits
-#' @param n_workers
-#'
-#' @returns
+#' @param duckdb_path path to the duckdb with protein sequences and list
+#' @param output_path path where HMMER output will be saved
+#' @param threads number of threads
+#' @param hmmer_db_dir path to the directory where HMM databases are/will be downloaded
+#' @param databases list of HMM databases
+#' @param docker_image the docker image of HMMER
+#' @param num_of_splits The number of splits of the protein sequence file for parallel processing
+#' @param n_workers The number of parallel runs
 #'
 #' @keywords internal
-#' @examples
 .runHMMER <- function(duckdb_path,
                       output_path,
                       threads = 8L,
@@ -2197,14 +2193,17 @@ CDHIT2duckdb <- function(duckdb_path,
 
 # Clean BV-BRC metadata, then save as Parquet files
 #'
-#' @param duckdb_path
-#' @param path
-#' @param ref_file_path
-#'
-#' @returns
+#' @param duckdb_path Path to the **per-selection DuckDB** produced by
+#'   [prepareGenomes()] (e.g., `"data/<Bug>/<Abbrev>.duckdb"`). This DB must
+#'   already contain the tables written by [prepareGenomes()] and the upstream
+#'   genome-processing steps.
+#' @param path the path to working directory
+#' @param ref_file_path Directory containing reference TSVs used by
+#'   [cleanMetaData()] and [cleanData()] for metadata harmonization.
+#'   Default: `"data_raw/"`.
+#' 
 #' @export
 #'
-#' @examples
 cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when
@@ -2352,13 +2351,14 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
 
 # Clean feature matrices, then save as Parquet files
 #'
-#' @param duckdb_path
-#' @param path
+#' @param duckdb_path Path to the **per-selection DuckDB** produced by
+#'   [prepareGenomes()] (e.g., `"data/<Bug>/<Abbrev>.duckdb"`). This DB must
+#'   already contain the tables written by [prepareGenomes()] and the upstream
+#'   genome-processing steps.
+#' @param path the path to working directory
 #'
-#' @returns
 #' @export
 #'
-#' @examples
 cleanData <- function(duckdb_path, path) {
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when

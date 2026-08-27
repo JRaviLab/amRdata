@@ -2,7 +2,7 @@
 #'
 #' Constructs a bipartite network linking protein-gene dyads to biological
 #' features such as proteins, genes, structural gene arrangements, and HMMER
-#' annotations for protein domains (Pfam), COGs, and antimicrobial resistance genes.
+#' annotations for protein domains (Pfam), COGs, Defense including Cas and antimicrobial resistance genes.
 #'
 #' @param duckdb_path Character. Path to the source dataset DuckDB. The
 #'   associated Parquet files and provenance manifest are expected to live
