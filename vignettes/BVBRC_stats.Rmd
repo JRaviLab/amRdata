@@ -118,6 +118,147 @@ fetchCompleteBVBRCMetadata <- function(
   return(df)
 }
 
+# using API
+
+fetchCompleteBVBRCMetadataAPI <- function(
+    batch_size = 25000,
+    verbose = TRUE
+) {
+
+    base_url <- "https://www.bv-brc.org/api/genome/?superkingdom=Bacteria"
+
+    if (isTRUE(verbose)) {
+        message("Fetching field definitions...")
+    }
+
+    # ------------------------------------------------------------------
+    # Discover available fields
+    # ------------------------------------------------------------------
+
+    resp <- httr2::request(base_url) |>
+        httr2::req_headers(
+            Range = "items=0-1"
+        ) |>
+        httr2::req_perform()
+
+    sample_rec <- jsonlite::fromJSON(
+        httr2::resp_body_string(resp)
+    )
+
+    attrs <- names(sample_rec)
+
+    if (length(attrs) == 0) {
+        stop("Unable to determine genome attributes.")
+    }
+
+    if (isTRUE(verbose)) {
+        message(sprintf("Found %s attributes.", length(attrs)))
+    }
+
+    total_records <- as.numeric(
+        sub(
+            ".*/",
+            "",
+            httr2::resp_headers(resp)[["content-range"]]
+        )
+    )
+
+    if (isTRUE(verbose)) {
+        message(sprintf(
+            "Server reports %s total records.",
+            format(total_records, big.mark = ",")
+        ))
+    }
+
+    # ------------------------------------------------------------------
+    # Download in chunks
+    # ------------------------------------------------------------------
+
+    start <- 0
+    chunk_list <- list()
+    i <- 1
+
+    repeat {
+
+        end <- start + batch_size
+
+        if (isTRUE(verbose)) {
+            message(
+                sprintf(
+                    "Downloading records %s-%s",
+                    format(start, big.mark = ","),
+                    format(end, big.mark = ",")
+                )
+            )
+        }
+
+        resp <- httr2::request(base_url) |>
+            httr2::req_headers(
+                Range = sprintf(
+                    "items=%s-%s",
+                    start,
+                    end
+                )
+            ) |>
+            httr2::req_perform()
+
+        chunk <- jsonlite::fromJSON(
+            httr2::resp_body_string(resp),
+            simplifyDataFrame = TRUE
+        )
+
+        n_chunk <- nrow(chunk)
+
+        if (is.null(n_chunk) || n_chunk == 0) {
+            break
+        }
+
+        chunk_list[[i]] <- chunk
+
+        if (isTRUE(verbose)) {
+            message(
+                sprintf(
+                    "Retrieved %s rows.",
+                    format(n_chunk, big.mark = ",")
+                )
+            )
+        }
+
+        start <- start + n_chunk
+        i <- i + 1
+
+        if (start >= total_records) {
+            break
+        }
+    }
+
+    df <- dplyr::bind_rows(chunk_list) |>
+        tibble::as_tibble() |>
+        dplyr::mutate(
+            dplyr::across(
+                where(is.character),
+                ~ iconv(
+                    .x,
+                    from = "",
+                    to = "UTF-8",
+                    sub = ""
+                )
+            )
+        )
+
+    if (isTRUE(verbose)) {
+        message(
+            sprintf(
+                "Retrieved %s rows x %s columns.",
+                format(nrow(df), big.mark = ","),
+                ncol(df)
+            )
+        )
+    }
+
+    df
+}
+
 # Use your fix_utf8() if defined; otherwise a no-op fallback
 if (!exists("fix_utf8")) {
   fix_utf8 <- function(x) x
@@ -136,20 +277,20 @@ is_placeholder_na <- function(x) {
   if (!is.character(x)) {
     return(rep(FALSE, length(x)))
   }
-  str_trim(x) %in% missing_tokens
+  stringr::str_trim(x) %in% missing_tokens
 }
 
 # Clean ALL character/factor columns in the data frame
 clean_all_char_cols <- function(df) {
   df |>
-    mutate(across(
-      where(~ is.character(.x) || is.factor(.x)),
+    dplyr::mutate(dplyr::across(
+      tidyselect::where(~ is.character(.x) || is.factor(.x)),
       ~ {
         x <- .
         if (is.factor(x)) x <- as.character(x)
         if (is.character(x)) {
           x <- fix_utf8(x)
-          x <- str_squish(x) # trim + collapse internal spaces
+          x <- stringr::str_squish(x) # trim + collapse internal spaces
           x[is_placeholder_na(x)] <- NA # "", "N/A", "unknown", etc. -> NA
         }
         x
@@ -160,7 +301,7 @@ clean_all_char_cols <- function(df) {
 # --- Block-level summaries ---------------------------------------------------
 summarize_block <- function(df, cols, block_name) {
   if (length(cols) == 0) {
-    return(tibble(
+    return(tibble::tibble(
       block = block_name,
       n_total = nrow(df),
       n_rows_all_missing = nrow(df),
@@ -170,13 +311,13 @@ summarize_block <- function(df, cols, block_name) {
     ))
   }
   df |>
-    transmute(
-      .row_any_present = if_any(all_of(cols), ~ !is.na(.x)),
-      .row_all_missing = if_all(all_of(cols), is.na)
+    dplyr::transmute(
+      .row_any_present = dplyr::if_any(dplyr::all_of(cols), ~ !is.na(.x)),
+      .row_all_missing = dplyr::if_all(dplyr::all_of(cols), is.na)
     ) |>
-    summarise(
+    dplyr::summarise(
       block = block_name,
-      n_total = n(),
+      n_total = dplyr::n(),
       n_rows_all_missing = sum(.row_all_missing),
       pct_all_missing = 100 * n_rows_all_missing / n_total,
       n_rows_any_present = sum(.row_any_present),
@@ -192,20 +333,20 @@ Here we fetch the BV-BRC bacterial metadata table, clean it, and compute four ar
 
 ```{r stats}
 # download the bvbrc table
-bvbrc <- fetchCompleteBVBRCMetadata()
+bvbrc <- fetchCompleteBVBRCMetadataAPI()
 
 # Apply to your table
 bvbrc_clean <- clean_all_char_cols(bvbrc)
 # --- Per-column stats --------------------------------------------------------
-col_stats <- tibble(column = colnames(bvbrc_clean)) |>
-  mutate(
+col_stats <- tibble::tibble(column = colnames(bvbrc_clean)) |>
+  dplyr::mutate(
     n_total = nrow(bvbrc_clean),
-    n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
+    n_missing = purrr::map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
     n_present = n_total - n_missing,
     pct_missing = 100 * n_missing / n_total,
-    n_distinct_non_missing = map_int(column, ~ n_distinct(bvbrc_clean[[.x]], na.rm = TRUE))
+    n_distinct_non_missing = purrr::map_int(column, ~ dplyr::n_distinct(bvbrc_clean[[.x]], na.rm = TRUE))
   ) |>
-  arrange(desc(pct_missing), column)
+  dplyr::arrange(dplyr::desc(pct_missing), column)
 
 # --- Define blocks -----------------------------------------------------------
 host_cols <- c(
@@ -233,14 +374,14 @@ geo_block_stats <- summarize_block(bvbrc_clean, geo_cols, "geographic")
 
 # --- Quick diagnostics: check specific columns you care about ----------------
 diag_cols <- unique(c(host_cols, geo_cols))
-diag_table <- tibble(column = diag_cols) |>
-  mutate(
+diag_table <- tibble::tibble(column = diag_cols) |>
+  dplyr::mutate(
     n_total = nrow(bvbrc_clean),
-    n_missing = map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
+    n_missing = purrr::map_int(column, ~ sum(is.na(bvbrc_clean[[.x]]))),
     n_present = n_total - n_missing,
     pct_missing = 100 * n_missing / n_total
   ) |>
-  arrange(desc(pct_missing), column)
+  dplyr::arrange(dplyr::desc(pct_missing), column)
 ```
 
 ## Per-column completeness
