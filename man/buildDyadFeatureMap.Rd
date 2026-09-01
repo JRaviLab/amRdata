@@ -57,7 +57,7 @@ protein|gene --> gene:GENE_ID
 protein|gene --> pfam:PFXXXXX
 protein|gene --> cog:COGXXXX
 protein|gene --> amr:GENE_NAME
-protein|gene --> defensecas:DEFENSE_SYSTEM
+protein|gene --> defense:DEFENSE_SYSTEM
 protein|gene --> struct:STRUCTURE
 }
 

@@ -39,7 +39,7 @@
 #' protein|gene --> pfam:PFXXXXX
 #' protein|gene --> cog:COGXXXX
 #' protein|gene --> amr:GENE_NAME
-#' protein|gene --> defensecas:DEFENSE_SYSTEM
+#' protein|gene --> defense:DEFENSE_SYSTEM
 #' protein|gene --> struct:STRUCTURE
 #' }
 #'
@@ -557,7 +557,7 @@ buildDyadFeatureMap <- function(
       "
       SELECT DISTINCT
         pgd.dyad AS source,
-        CONCAT('defensecas:', df.feature) AS target
+        CONCAT('defense:', df.feature) AS target
       FROM protein_gene_dyad pgd
       JOIN v_defensecas df
         ON pgd.protein = df.protein
