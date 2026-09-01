@@ -8,8 +8,9 @@ exportTables(
   duckdb_path,
   output_dir = NULL,
   tables = NULL,
-  skip_tables = c(NULL),
+  skip_tables = NULL,
   include_summary = TRUE,
+  export_formats = c("csv"),
   export_tables = TRUE,
   load_tables = FALSE,
   verbose = TRUE

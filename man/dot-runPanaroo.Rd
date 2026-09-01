@@ -16,7 +16,8 @@
   refind_mode = c("off", "default", "strict"),
   strip_pseudogenes = FALSE,
   pseudogene_clean_dir = "gff_clean",
-  write_pseudogene_audit = TRUE
+  write_pseudogene_audit = TRUE,
+  verbose = TRUE
 )
 }
 \arguments{

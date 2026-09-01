@@ -131,6 +131,6 @@ runPanaroo2Duckdb(
 \item \code{.runPanaroo()} — core Panaroo execution
 \item \code{.mergePanaroo()} — merge multiple Panaroo batches
 \item \code{.panaroo2duckdb()} — import Panaroo results into DuckDB
-\item \code{\link[=runDataProcessing]{runDataProcessing()}} — full pipeline including CD-HIT & InterProScan
+\item \code{\link[=runDataProcessing]{runDataProcessing()}} — full pipeline including CD-HIT & HMMER
 }
 }

@@ -2,7 +2,7 @@
 % Please edit documentation in R/data_processing.R
 \name{runDataProcessing}
 \alias{runDataProcessing}
-\title{Run the full amRdata processing pipeline (Panaroo → CD-HIT → InterProScan → Parquet)}
+\title{Run the full amRdata processing pipeline (Panaroo -> CD-HIT -> HMMER -> Parquet)}
 \usage{
 runDataProcessing(
   duckdb_path,
@@ -22,12 +22,11 @@ runDataProcessing(
   cdhit_memory = 0,
   cdhit_extra_args = c("-g", "1"),
   cdhit_output_prefix = "cdhit_out",
-  ipr_appl = c("Pfam"),
-  ipr_threads_unused = NULL,
-  ipr_version = "5.76-107.0",
-  ipr_dest_dir = "inst/extdata/interpro",
-  ipr_platform = "linux/amd64",
-  auto_prepare_data = TRUE,
+  hmmer_databases = c("Pfam", "COG", "AMRFinder", "DefenseCas"),
+  hmmer_db_dir = NULL,
+  hmmer_docker_image = "staphb/hmmer",
+  hmmer_num_splits = 8L,
+  hmmer_workers = 8L,
   ref_file_path = "data_raw/",
   verbose = TRUE
 )
@@ -35,17 +34,19 @@ runDataProcessing(
 \arguments{
 \item{duckdb_path}{Character. Path to the \strong{per-selection DuckDB} produced by
 \code{\link[=prepareGenomes]{prepareGenomes()}} (e.g., \code{"data/<Bug>/<Abbrev>.duckdb"}). This DB must
-already contain at least the tables written by \code{prepareGenomes()} and subsequent
-download steps (e.g., \code{files}, \code{filtered}, and metadata tables).}
+already contain the tables written by \code{\link[=prepareGenomes]{prepareGenomes()}} and the upstream
+genome-processing steps.}
 
-\item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo/CD-HIT/InterProScan
-outputs and final Parquet files. If \code{NULL}, defaults to \code{dirname(duckdb_path)}.}
+\item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo,
+CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
+\code{dirname(duckdb_path)}.}
 
-\item{threads}{Integer. Shared concurrency budget used across tools (Panaroo, CD-HIT,
-InterProScan). Passed through to each stage as appropriate. Defaults to \code{8}.}
+\item{threads}{Integer. Shared concurrency budget used across Panaroo, CD-HIT,
+and HMMER. Defaults to \code{8}.}
 
-\item{panaroo_split_jobs}{Logical. If \code{TRUE}, Panaroo runs in multiple batches that can be
-merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaroo runs once on all isolates. Default: \code{FALSE}.}
+\item{panaroo_split_jobs}{Logical. If \code{TRUE}, Panaroo runs in multiple batches
+that can be merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaroo runs once on all
+isolates. Default: \code{FALSE}.}
 
 \item{panaroo_core_threshold}{Numeric. Panaroo \code{--core_threshold}. Default: \code{0.90}.}
 
@@ -53,139 +54,145 @@ merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaro
 
 \item{panaroo_cluster_threshold}{Numeric. Panaroo \code{--threshold}. Default: \code{0.95}.}
 
-\item{panaroo_family_seq_identity}{Numeric. Panaroo \code{-f} (gene family identity). Default: \code{0.5}.}
+\item{panaroo_family_seq_identity}{Numeric. Panaroo \code{-f} gene family identity.
+Default: \code{0.5}.}
 
-\item{panaroo_refind_mode}{Character. Panaroo's \code{--refind-mode} (\code{"off"}, \code{"default"},
-or \code{"strict"}). See \code{\link[=.processPanaroo]{.processPanaroo()}} for what refinding does and the runtime
-caveat behind the current default. Default \code{"off"}.}
+\item{panaroo_refind_mode}{Character. Panaroo's \code{--refind-mode} (\code{"off"},
+\code{"default"}, or \code{"strict"}). See \code{\link[=.processPanaroo]{.processPanaroo()}} for the runtime caveat
+behind refinding. Default: \code{"off"}.}
+
+\item{panaroo_strip_pseudogenes}{Logical. If \code{TRUE}, remove pseudogene feature
+records from Panaroo input GFF files before running Panaroo. Default: \code{FALSE}.}
+
+\item{panaroo_pseudogene_clean_dir}{Character. Directory name for cleaned GFF
+files. Default: \code{"gff_clean"}.}
+
+\item{panaroo_write_pseudogene_audit}{Logical. If \code{TRUE}, write a pseudogene
+cleaning audit file. Default: \code{TRUE}.}
 
 \item{cdhit_identity}{Numeric. CD-HIT \code{-c} identity threshold. Default: \code{0.9}.}
 
 \item{cdhit_word_length}{Integer. CD-HIT \code{-n} word length. Default: \code{5}.}
 
-\item{cdhit_memory}{Integer. CD-HIT \code{-M} memory limit (MB). Use \code{0} for unlimited. Default: \code{0}.}
+\item{cdhit_memory}{Integer. CD-HIT \code{-M} memory limit in MB. Use \code{0} for
+unlimited. Default: \code{0}.}
 
-\item{cdhit_extra_args}{Character vector. Extra arguments forwarded to \code{cd-hit}
-(e.g., \code{c("-g","1")}). Default: \code{c("-g","1")}.}
+\item{cdhit_extra_args}{Character vector. Extra arguments forwarded to
+\code{cd-hit}. Default: \code{c("-g", "1")}.}
 
-\item{cdhit_output_prefix}{Character. Prefix for CD-HIT output files. Default: \code{"cdhit_out"}.}
+\item{cdhit_output_prefix}{Character. Prefix for CD-HIT output files.
+Default: \code{"cdhit_out"}.}
 
-\item{ipr_appl}{Character vector. InterProScan applications to run; typically \code{c("Pfam")}.
-Default: \code{c("Pfam")}.}
+\item{hmmer_databases}{Character vector. HMMER annotation databases to run.
+Default: \code{c("Pfam", "COG", "AMRFinder", "DefenseCas")}.}
 
-\item{ipr_threads_unused}{Deprecated/unused. Kept for backward compatibility; ignored.}
+\item{hmmer_db_dir}{Character or \code{NULL}. Directory containing the shared HMMER
+database cache. If \code{NULL}, uses the amRdata user cache.}
 
-\item{ipr_version}{Character. InterProScan image tag (e.g., \code{"5.76-107.0"}). Default: \code{"5.76-107.0"}.}
+\item{hmmer_docker_image}{Character. Docker image containing HMMER.
+Default: \code{"staphb/hmmer"}.}
 
-\item{ipr_dest_dir}{Character. Local destination for InterProScan data bundle
-(used by \code{.checkInterProData()}). Default: \code{"inst/extdata/interpro"}.}
+\item{hmmer_num_splits}{Integer. Number of protein-sequence chunks for HMMER.
+Default: \code{8}.}
 
-\item{ipr_platform}{Character. Docker platform string for InterProScan containers,
-e.g., \code{"linux/amd64"}. Default: \code{"linux/amd64"}.}
+\item{hmmer_workers}{Integer. Number of parallel HMMER workers. Default: \code{8}.}
 
-\item{auto_prepare_data}{Logical. If \code{TRUE}, ensure InterProScan data are present
-(download/verify if missing). Default: \code{TRUE}.}
-
-\item{ref_file_path}{Character. Directory containing reference TSVs used by cleanData()
-for metadata harmonization (e.g., \code{"data_raw/"}). \strong{Required}; defaults to \code{"data_raw/"}.}
+\item{ref_file_path}{Character. Directory containing reference TSVs used by
+\code{\link[=cleanMetaData]{cleanMetaData()}} and \code{\link[=cleanData]{cleanData()}} for metadata harmonization.
+Default: \code{"data_raw/"}.}
 
 \item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.}
 }
 \value{
 Invisibly returns a list with:
 \itemize{
-\item \code{duckdb_path} – input DuckDB path
-\item \code{panaroo_output} – path to the selected Panaroo output directory used for import
-\item \code{parquet_duckdb_path} – absolute path to the created Parquet-backed DuckDB
+\item \code{duckdb_path} - input DuckDB path
+\item \code{panaroo_output} - path to the selected Panaroo output directory used for import
+\item \code{parquet_duckdb_path} - absolute path to the created Parquet-backed DuckDB
 }
 }
 \description{
 \code{runDataProcessing()} orchestrates the complete feature-extraction pipeline for a
-BV-BRC selection, starting from a \strong{per-selection DuckDB} (created by
-\code{\link[=prepareGenomes]{prepareGenomes()}} and populated by downstream steps). It:
+BV-BRC selection, starting from a \strong{per-selection DuckDB} created by
+\code{\link[=prepareGenomes]{prepareGenomes()}} and populated by downstream genome processing steps. It:
 \enumerate{
 \item Runs \strong{Panaroo} to build the pangenome and writes gene/struct outputs into DuckDB.
 \item Runs \strong{CD-HIT} to cluster proteins and writes protein outputs into DuckDB.
-\item Runs \strong{InterProScan} (Pfam) to annotate protein domains and writes domain outputs into DuckDB.
+\item Runs \strong{HMMER} against the requested protein databases and writes annotation
+tables into DuckDB.
 \item \strong{Cleans BV-BRC metadata} (drug names/classes, countries, years) and
-exports all feature/metadata tables as \strong{compressed Parquet} files, then creates
-a \strong{Parquet-backed DuckDB} with read-only views of those Parquets for downstream ML.
+exports feature and metadata tables as compressed Parquet files, then creates
+a \strong{Parquet-backed DuckDB} with read-only views for downstream ML.
 }
 
 The function is a thin controller that delegates each stage to the corresponding
-internal helpers (Dockerized tools where applicable) and ensures consistent
-output locations and table schemas across stages.
+internal helpers (Dockerized tools where applicable) and records processing
+parameters and provenance in the dataset manifest.
 }
 \details{
 \strong{Docker & Platform Notes}
 \itemize{
-\item All heavy tools (Panaroo, CD-HIT, InterProScan) run inside Docker containers.
-\item On Apple Silicon/ARM hosts, images are forced to \verb{--platform linux/amd64} to ensure compatibility.
-\item Ensure Docker Desktop is running and has sufficient memory/CPUs configured.
+\item Panaroo, CD-HIT, and HMMER run inside Docker containers.
+\item HMMER databases are stored separately from individual bug directories and
+are reused across datasets unless a custom \code{hmmer_db_dir} is supplied.
+\item Ensure Docker Desktop is running and has sufficient memory and CPU resources.
 }
 
 \strong{Input Requirements}
 \itemize{
-\item The \code{duckdb_path} must reference a per-selection DuckDB that contains:
-\code{files} (paths to \code{.gff}, \code{.fna}, \code{.PATRIC.faa}),
-\code{filtered} (genomes selected for download/filtering), and
-BV-BRC metadata tables written by earlier steps.
+\item \code{duckdb_path} must reference a per-selection DuckDB containing the genome
+file table, filtered genome selection, and BV-BRC metadata produced by the
+upstream curation workflow.
 }
 
 \strong{Outputs & Side Effects}
 \itemize{
-\item Writes tool-specific intermediate outputs under \code{output_path} (e.g., \verb{panaroo_out_*}, CD-HIT files).
-\item Writes Parquet files to \code{output_path}:
-\code{gene_count.parquet}, \code{protein_count.parquet}, \code{domain_count.parquet}, \code{struct.parquet},
-\code{gene_names.parquet}, \code{protein_names.parquet}, \code{domain_names.parquet},
-\code{gene_seqs.parquet}, \code{protein_seqs.parquet}, \code{genome_gene_protein.parquet},
-\code{metadata.parquet}, \code{amr_phenotype.parquet}, \code{genome_data.parquet}, \code{original_metadata.parquet}.
-\item Creates a new Parquet-backed DuckDB (\verb{*_parquet.duckdb}) with read-only views pointing to those Parquets.
+\item Writes tool-specific intermediate outputs under \code{output_path}.
+\item Writes feature and metadata Parquet files under \code{output_path}.
+\item Creates a new Parquet-backed DuckDB (\verb{*_parquet.duckdb}) with read-only views
+over the generated Parquet files.
+\item Records processing parameters, software versions, database selections, and
+other provenance information in the dataset manifest.
 }
 
 \strong{Threading}
 \itemize{
-\item \code{threads} is a shared budget; each stage uses a portion or all of it.
-\item InterProScan can be memory-intensive; on laptops, single-container mode is used internally.
+\item \code{threads} provides the shared CPU budget for the major processing stages.
+\item Panaroo, CD-HIT, and HMMER allocate that budget according to their respective
+stage parameters.
 }
 }
 \section{Pipeline Steps}{
 
 \enumerate{
-\item \strong{Panaroo} via runPanaroo2Duckdb() → writes:
+\item \strong{Panaroo} via \code{\link[=runPanaroo2Duckdb]{runPanaroo2Duckdb()}} -> writes:
 \itemize{
-\item \code{gene_count} (genome × gene counts)\cr
+\item \code{gene_count} (genome x gene counts)\cr
 \item \code{gene_names}\cr
 \item \code{gene_struct} (structural variants)\cr
 \item \code{gene_ref_seq}, \code{genome_gene_protein}
 }
-\item \strong{CD-HIT} via CDHIT2duckdb() (calls internal \code{.runCDHIT()}) → writes:
+\item \strong{CD-HIT} via \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}} -> writes:
 \itemize{
-\item \code{protein_count} (genome × protein-cluster counts)\cr
+\item \code{protein_count} (genome x protein-cluster counts)\cr
 \item \code{protein_names}\cr
-\item \code{protein_cluster_seq} (representative sequences)
+\item \code{protein_cluster_seq} (representative sequences)\cr
+\item \code{protein_members}
 }
-\item \strong{InterProScan (Pfam)} via domainFromIPR() → writes:
+\item \strong{HMMER} via the configured HMMER databases -> writes:
 \itemize{
-\item \code{domain_names}\cr
-\item \code{domain_count} (genome × domain-family matrix)
+\item \verb{protein_<database>} annotation tables\cr
+\item \verb{protein_<database>_count} genome-by-annotation count tables
+\item The default databases are \code{Pfam}, \code{COG}, \code{AMRFinder}, and \code{DefenseCas}.
 }
-\item \strong{Metadata cleaning + Parquet export} via cleanData() → writes Parquet
-files to \code{output_path}, and builds a \strong{Parquet-backed DuckDB}
-(\verb{*_parquet.duckdb}) with views:
-\itemize{
-\item \code{gene_count}, \code{protein_count}, \code{domain_count}, \code{struct}\cr
-\item \code{metadata} (cleaned), plus \code{amr_phenotype}, \code{genome_data}, \code{original_metadata}\cr
-\item \code{gene_names}, \code{protein_names}, \code{domain_names}\cr
-\item \code{gene_seqs}, \code{protein_seqs}\cr
-\item \code{genome_gene_protein}
-}
+\item \strong{Metadata cleaning + Parquet export} via \code{\link[=cleanData]{cleanData()}} -> writes
+Parquet files to \code{output_path}, and builds a \strong{Parquet-backed DuckDB}
+(\verb{*_parquet.duckdb}) with views over those Parquets.
 }
 }
 
 \examples{
 \dontrun{
-# Paths below are illustrative; adapt to your project layout.
 runDataProcessing(
   duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
   output_path   = "data/Shigella_flexneri",
@@ -194,11 +201,12 @@ runDataProcessing(
 )
 
 # After completion:
-#   data/Shigella_flexneri/Sfl_parquet.duckdb
+# data/Shigella_flexneri/Sfl_parquet.duckdb
 # will contain views over the Parquet files for downstream ML.
 }
 
 }
 \seealso{
-prepareGenomes(), runPanaroo2Duckdb(), CDHIT2duckdb(), domainFromIPR(), cleanData()
+\code{\link[=prepareGenomes]{prepareGenomes()}}, \code{\link[=runPanaroo2Duckdb]{runPanaroo2Duckdb()}}, \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}}, \code{\link[=cleanMetaData]{cleanMetaData()}},
+\code{\link[=cleanData]{cleanData()}}
 }
