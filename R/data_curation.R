@@ -2314,11 +2314,13 @@ prepareGenomes <- function(user_bacs,
   ids <- retrieveGenomes(
     base_dir = base_dir,
     user_bacs = user_bacs,
+    metadata_method = metadata_method,
     method = method,
     skip_existing = !overwrite,
     ftp_workers = num_workers,
     cli_fasta_workers = num_workers,
     cli_gff_workers = num_workers,
+    chunk_size = chunk_size,
     evidence_mode = evidence_mode,
     verbose = verbose
   )
