@@ -12,6 +12,7 @@ prepareGenomes(
   metadata_method = c("api", "cli"),
   overwrite = FALSE,
   num_workers = 8L,
+  chunk_size = 50L,
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
   max_checkm_contam = 5,
   min_checkm_complete = 95,
@@ -46,6 +47,8 @@ Default FALSE.}
 
 \item{num_workers}{Integer. Parallel workers used for genome download.
 Applied to both FTP and CLI download branches. Default: 8.}
+
+\item{chunk_size}{Integer. Size of each genome dataset chunk per download thread.}
 
 \item{evidence_mode}{Character. Sets what types of AMR evidence is acceptable.
 Default \code{lab_only}. \code{any} will not require AMR data for downloads. This will

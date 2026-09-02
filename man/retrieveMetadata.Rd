@@ -10,9 +10,8 @@ retrieveMetadata(
   filter_type = "AMR",
   base_dir = ".",
   abx = "All",
-  overwrite = FALSE,
-  image = "danylmb/bvbrc:5.3",
   metadata_method = c("api", "cli"),
+  image = "danylmb/bvbrc:5.3",
   max_checkm_contam = 5,
   min_checkm_complete = 95,
   gc_deviations = NULL,
@@ -37,16 +36,14 @@ Default NULL.}
 
 \item{filter_type}{Character. "AMR" or "microTraits". Default "AMR".}
 
-\item{base_dir}{Character. Project root. Default "results/" in legacy scripts; now default ".".}
+\item{base_dir}{Character. Project root. Default ".".}
 
 \item{abx}{Character or vector. Antibiotic filter. "All" for all antibiotics, else names.}
 
-\item{overwrite}{Logical. If FALSE and DuckDB exists already, abort. Default FALSE.}
-
-\item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
-
 \item{metadata_method}{Character. Download backend: \code{"api"} (default) or
 \code{"cli"} (Dockerized \verb{BV-BRC p3-* CLI}).}
+
+\item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 
 \item{max_checkm_contam}{Numeric scalar. Maximum allowed CheckM contamination (\%).}
 

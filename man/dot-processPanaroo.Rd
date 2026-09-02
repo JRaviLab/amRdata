@@ -12,7 +12,8 @@
   cluster_threshold,
   family_seq_identity,
   panaroo_threads_per_job,
-  refind_mode = c("off", "default", "strict")
+  refind_mode = c("off", "default", "strict"),
+  verbose = TRUE
 )
 }
 \arguments{

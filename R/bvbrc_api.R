@@ -1,4 +1,4 @@
-# BV-BRC Data API path (additive; opt-in via retrieveMetadata(metadata_method = "api"))
+# BV-BRC Data API path (default; used by retrieveMetadata(metadata_method = "api"))
 # -----------------------------------------------------------------------------
 # Replaces ONLY the Docker/p3-* download of AMR + genome metadata. It returns the
 # same two tibbles the Docker path produces -- columns prefixed `genome_drug.*`
@@ -182,7 +182,7 @@
   df <- df[!duplicated(df$genome_id), , drop = FALSE]
 
   # write bac_data (genome.* columns), mirroring .retrieveQueryIDs()
-  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs, overwrite = overwrite)
+  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
   bac <- .bvbrcPrefixFill(
