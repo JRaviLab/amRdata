@@ -4,14 +4,12 @@
 \alias{.buildDBpath}
 \title{Build a DuckDB path for a user-bacs selection}
 \usage{
-.buildDBpath(base_dir, user_bacs, overwrite = FALSE)
+.buildDBpath(base_dir = ".", user_bacs)
 }
 \arguments{
-\item{base_dir}{Character. Project root.}
+\item{base_dir}{Character. Project root. Default = "."}
 
 \item{user_bacs}{Character vector. The same vector used for DB naming.}
-
-\item{overwrite}{Logical. Ignored (kept for backward compatibility).}
 }
 \value{
 A list with \code{db_dir} and \code{db_path}.
@@ -20,6 +18,6 @@ A list with \code{db_dir} and \code{db_path}.
 Places the per-selection DB at:
 <base_dir>/data/<bug_dir>/\if{html}{\out{<abbrev>}}.duckdb
 where <bug_dir> is derived from full user_bacs input and \if{html}{\out{<abbrev>}} from
-.generateDBname(user_bacs). This function no longer enforces overwrite checks.
+.generateDBname(user_bacs).
 }
 \keyword{internal}

@@ -9,3 +9,5 @@
 ^\.DS_Store$
 ^data_raw$
 ^doc$
+^dev$
+^docs$

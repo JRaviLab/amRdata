@@ -10,7 +10,7 @@ retrieveMetadata(
   filter_type = "AMR",
   base_dir = ".",
   abx = "All",
-  overwrite = FALSE,
+  metadata_method = c("api", "cli"),
   image = "danylmb/bvbrc:5.3",
   max_checkm_contam = 5,
   min_checkm_complete = 95,
@@ -24,7 +24,9 @@ retrieveMetadata(
 )
 }
 \arguments{
-\item{user_bacs}{Character vector. Mixed taxon IDs and/or species strings (used for naming).}
+\item{user_bacs}{Character vector. Mixed taxon IDs and/or species strings.
+Also used for naming the per-selection DuckDB. How entries are resolved to
+genome IDs depends on \code{metadata_method} -- see Details.}
 
 \item{genome_id_file}{Character or NULL. Optional path to a file listing genome
 IDs (one per line). If provided, genome IDs are read from this file instead of
@@ -34,11 +36,12 @@ Default NULL.}
 
 \item{filter_type}{Character. "AMR" or "microTraits". Default "AMR".}
 
-\item{base_dir}{Character. Project root. Default "results/" in legacy scripts; now default ".".}
+\item{base_dir}{Character. Project root. Default ".".}
 
 \item{abx}{Character or vector. Antibiotic filter. "All" for all antibiotics, else names.}
 
-\item{overwrite}{Logical. If FALSE and DuckDB exists already, abort. Default FALSE.}
+\item{metadata_method}{Character. Download backend: \code{"api"} (default) or
+\code{"cli"} (Dockerized \verb{BV-BRC p3-* CLI}).}
 
 \item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 
@@ -73,4 +76,26 @@ Tables written:
 \item genome_data
 \item metadata (join on genome IDs returned by BV-BRC)
 }
+}
+\details{
+\code{metadata_method} selects how \code{user_bacs} entries are resolved to genome IDs,
+and the two backends do not use identical matching rules. For the same input
+they can return different genome sets:
+
+\itemize{
+\item \strong{Species strings.} \code{"cli"} does a case-insensitive substring
+match against \code{genome.species} (so \code{"Escherichia"} matches
+\code{"Escherichia coli"}). \code{"api"} does an exact match on the \code{species} field;
+a string that does not match any species exactly resolves to zero genomes
+and emits a warning.
+\item \strong{Numeric taxon IDs.} \code{"cli"} matches only genomes whose own
+\code{taxon_id} equals the input exactly. \code{"api"} matches the ID anywhere in
+the genome's taxonomic lineage (\code{taxon_lineage_ids}), so a genus- or
+family-rank ID pulls every genome beneath it, and a species-rank ID also
+catches strain-level genomes that \code{"cli"} would miss.
+}
+
+The \code{"api"} rules are generally the more complete of the two. If you need the
+two backends to agree, pass an exact species name and a species- or
+strain-rank taxon ID, or supply \code{genome_id_file} directly.
 }
