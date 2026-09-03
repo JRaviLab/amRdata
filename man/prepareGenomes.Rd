@@ -9,8 +9,10 @@ prepareGenomes(
   genome_id_file = NULL,
   base_dir = ".",
   method = c("ftp", "cli"),
+  metadata_method = c("api", "cli"),
   overwrite = FALSE,
   num_workers = 8L,
+  chunk_size = 50L,
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
   max_checkm_contam = 5,
   min_checkm_complete = 95,
@@ -34,14 +36,19 @@ metadata step is restricted to these genome IDs instead of resolving them from
 
 \item{base_dir}{Character. Project root directory. Default \code{"."}.}
 
-\item{method}{Character. Download method passed to \code{retrieveGenomes()}.
+\item{method}{Character. Genome download method passed to \code{retrieveGenomes()}.
 \code{"ftp"} (default) or \code{"cli"}.}
+
+\item{metadata_method}{Character. Metadata download method passed to \code{retrieveMetadata()}.
+\code{"api"} (default) or \code{"cli"}.}
 
 \item{overwrite}{Logical. Passed to metadata filtering and DuckDB creation.
 Default FALSE.}
 
 \item{num_workers}{Integer. Parallel workers used for genome download.
 Applied to both FTP and CLI download branches. Default: 8.}
+
+\item{chunk_size}{Integer. Size of each genome dataset chunk per download thread.}
 
 \item{evidence_mode}{Character. Sets what types of AMR evidence is acceptable.
 Default \code{lab_only}. \code{any} will not require AMR data for downloads. This will

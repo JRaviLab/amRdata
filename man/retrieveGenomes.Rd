@@ -7,6 +7,7 @@
 retrieveGenomes(
   base_dir = ".",
   user_bacs,
+  metadata_method = c("api", "cli"),
   method = c("ftp", "cli"),
   image = "danylmb/bvbrc:5.3",
   skip_existing = TRUE,
@@ -23,7 +24,9 @@ retrieveGenomes(
 
 \item{user_bacs}{Input label(s) used to locate per-selection DB path.}
 
-\item{method}{"ftp" (default) or "cli".}
+\item{metadata_method}{"api" (default) or "cli". Filters genomes for download.}
+
+\item{method}{"ftp" (default) or "cli". Genome data downloader.}
 
 \item{image}{Docker image for CLI path (default "danylmb/bvbrc:5.3").}
 

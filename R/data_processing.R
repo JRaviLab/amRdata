@@ -977,7 +977,6 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @returns A list of paths to the database hmm files.
 #'
 #' @keywords internal
-#' @examples
 .prepareHmmerDatabases <- function(
     hmmer_db_dir,
     databases = c("Pfam", "COG", "AMRFinder"),
@@ -1306,7 +1305,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   Used to divide the CPU budget among jobs. Default: `8`.
 #' @param verbose Logical. Print progress messages. Default: `TRUE`.
 #'
-#' @returns
+#' @returns the filename of the parquet file with hmmer output post parsing
 #'
 #' @keywords internal
 .runHmmerJob <- function(JOB_NAME, FASTA, DB, total_proteins,
@@ -2226,16 +2225,18 @@ CDHIT2duckdb <- function(duckdb_path,
 }
 
 
-# Clean BV-BRC metadata, then save as Parquet files
+#' Clean BV-BRC metadata, then save as Parquet files
 #'
-#' @param duckdb_path
-#' @param path
-#' @param ref_file_path
-#'
-#' @returns
+#' @param duckdb_path Path to the **per-selection DuckDB** produced by
+#'   [prepareGenomes()] (e.g., `"data/<Bug>/<Abbrev>.duckdb"`). This DB must
+#'   already contain the tables written by [prepareGenomes()] and the upstream
+#'   genome-processing steps.
+#' @param path the path to working directory
+#' @param ref_file_path Directory containing reference TSVs used by
+#'   [cleanMetaData()] and [cleanData()] for metadata harmonization.
+#'   Default: `"data_raw/"`.
+#' 
 #' @export
-#'
-#' @examples
 cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when
@@ -2381,15 +2382,15 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   invisible(TRUE)
 }
 
-# Clean feature matrices, then save as Parquet files
+#' Clean feature matrices, then save as Parquet files
 #'
-#' @param duckdb_path
-#' @param path
+#' @param duckdb_path Path to the **per-selection DuckDB** produced by
+#'   [prepareGenomes()] (e.g., `"data/<Bug>/<Abbrev>.duckdb"`). This DB must
+#'   already contain the tables written by [prepareGenomes()] and the upstream
+#'   genome-processing steps.
+#' @param path the path to working directory
 #'
-#' @returns
 #' @export
-#'
-#' @examples
 cleanData <- function(duckdb_path, path) {
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when
@@ -2536,6 +2537,7 @@ cleanData <- function(duckdb_path, path) {
         names_to = "annotation",
         values_to = "value"
       ) |>
+      dplyr::rename(!!database := annotation) |>
       dplyr::filter(!is.na(value) & value != "") |>
       dplyr::mutate(value = as.integer(value)) |>
       writeCompressedParquet(count_parquet)

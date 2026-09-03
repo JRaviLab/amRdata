@@ -21,21 +21,10 @@
 }
 \value{
 A list with a DuckDB connection and table_name = "filtered"
-Filter genomes by AMR phenotype and metadata, and store results in DuckDB
-
-Preferred path: use per-selection DB "metadata" table (from retrieveMetadata()) and
-apply evidence & genome_quality filters.
-
-Fallback path: if "metadata" is missing and fallback_to_bvbrc_cache = TRUE,
-read BV-BRC cache at <base_dir>/data/bvbrc/bvbrcData.duckdb ("bvbrc_bac_data"),
-derive genome IDs from user_bacs (taxon IDs or species substring), and
-write a minimal "filtered" table (without AMR evidence filtering).
-
-A list with a DuckDB connection and table_name = "filtered"
 }
 \description{
 Preferred path: use per-selection DB "metadata" table (from retrieveMetadata()) and
-apply lab-evidence & genome_quality filters.
+apply evidence & genome_quality filters.
 }
 \details{
 Fallback path: if "metadata" is missing and fallback_to_bvbrc_cache = TRUE,

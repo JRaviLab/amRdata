@@ -8,3 +8,5 @@
 inst/doc
 /inst/extdata/interpro
 /data/tmp
+dev/out/
+docs/*.html
