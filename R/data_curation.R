@@ -2305,8 +2305,14 @@ prepareGenomes <- function(user_bacs,
 
   if (isTRUE(verbose)) {
     message(sprintf(
-      "Evidence filter summary: filtered=%d | genomes with AMR=%s | genomes with genome_data=%s",
-      n_filtered, ifelse(is.na(n_amr), "NA", n_amr), ifelse(is.na(n_meta), "NA", n_meta)
+      paste0(
+        "Evidence filter summary: isolates with genome data=%s | ",
+        "isolates with AMR metadata=%s\n",
+        "Remaining genomes with AMR metadata after filtering=%d"
+      ),
+      ifelse(is.na(n_meta), "NA", n_meta),
+      ifelse(is.na(n_amr), "NA", n_amr),
+      n_filtered
     ))
   }
 
