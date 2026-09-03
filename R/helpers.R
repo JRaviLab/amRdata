@@ -96,6 +96,547 @@
   invisible(TRUE)
 }
 
+#' Check BV-BRC data availability for a single taxon
+#'
+#' Internal worker used by `checkDataAvailability()`. Each call resolves and
+#' summarizes a taxon independently.
+#'
+#' @param user_bac Character scalar. Taxon ID or species name.
+#' @inheritParams checkDataAvailability
+#'
+#' @return A one-row tibble containing genome and AMR availability statistics.
+#' @keywords internal
+.checkDataPerTaxon <- function(
+    user_bac,
+    base_dir = ".",
+    metadata_method = c("api", "cli"),
+    max_checkm_contam = 5,
+    min_checkm_complete = 95,
+    gc_deviations = NULL,
+    length_deviations = NULL,
+    cds_deviations = NULL,
+    verbose = TRUE
+) {
+  metadata_method <- match.arg(metadata_method)
+  base_dir <- normalizePath(base_dir, mustWork = FALSE)
+
+  # Little cache of internal helper helpers to help the helper
+  empty_result <- function() {
+    tibble::tibble(
+      query = user_bac,
+      total_genomes = 0L,
+      wgs_genomes = 0L,
+      complete_genomes = 0L,
+      amr_genomes = 0L,
+      amr_records = 0L,
+      unique_antibiotics = 0L,
+      antibiotics = NA_character_,
+      drug_classes = NA_character_,
+      checkm_available = 0L,
+      qc_pass_genomes = 0L,
+      qc_fail_genomes = 0L,
+      median_genome_length = NA_real_,
+      median_gc_content = NA_real_,
+      median_cds = NA_real_,
+      median_checkm_completeness = NA_real_,
+      median_checkm_contamination = NA_real_,
+      collection_year_min = NA_integer_,
+      collection_year_max = NA_integer_
+    )
+  }
+
+  safe_median <- function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    x <- x[is.finite(x)]
+
+    if (!length(x)) {
+      return(NA_real_)
+    }
+
+    stats::median(x)
+  }
+
+  collapse_unique <- function(x) {
+    x <- trimws(as.character(x))
+    x <- sort(unique(x[!is.na(x) & nzchar(x)]))
+
+    if (!length(x)) {
+      return(NA_character_)
+    }
+
+    paste(x, collapse = ", ")
+  }
+
+  # Resolve this taxon to genome IDs
+  genome_ids <- if (identical(metadata_method, "api")) {
+    .resolveGenomeIDsApi(
+      base_dir = base_dir,
+      user_bacs = user_bac,
+      verbose = verbose
+    )
+  } else {
+    # Legacy CLI shenanigans
+    bac_input_data <- .retrieveCustomQuery(
+      base_dir = base_dir,
+      user_bacs = user_bac
+    )
+
+    if (is.null(bac_input_data) || nrow(bac_input_data) == 0L) {
+      character(0)
+    } else {
+      cache_db <- file.path(
+        base_dir,
+        "data",
+        "bvbrc",
+        "bvbrcData.duckdb"
+      )
+
+      if (!file.exists(cache_db)) {
+        stop(
+          "BV-BRC cache not found at: ",
+          cache_db,
+          ". Run .updateBVBRCdata() first."
+        )
+      }
+
+      con_cache <- DBI::dbConnect(
+        duckdb::duckdb(),
+        dbdir = cache_db,
+        read_only = TRUE
+      )
+      on.exit(
+        try(
+          DBI::dbDisconnect(con_cache, shutdown = TRUE),
+          silent = TRUE
+        ),
+        add = TRUE
+      )
+
+      taxon_ids <- unique(bac_input_data$genome.taxon_id)
+      taxon_sql <- paste(
+        DBI::dbQuoteString(con_cache, taxon_ids),
+        collapse = ", "
+      )
+
+      query <- sprintf(
+        paste0(
+          "SELECT DISTINCT \"genome.genome_id\" AS genome_id ",
+          "FROM bvbrc_bac_data ",
+          "WHERE \"genome.taxon_id\" IN (%s)"
+        ),
+        taxon_sql
+      )
+
+      result <- DBI::dbGetQuery(con_cache, query)
+
+      if (nrow(result)) {
+        unique(as.character(result$genome_id))
+      } else {
+        character(0)
+      }
+    }
+  }
+
+  genome_ids <- unique(as.character(genome_ids))
+  genome_ids <- genome_ids[
+    !is.na(genome_ids) & nzchar(genome_ids)
+  ]
+
+  if (!length(genome_ids)) {
+    if (isTRUE(verbose)) {
+      message("No genomes matched '", user_bac, "'.")
+    }
+    return(empty_result())
+  }
+
+  # Fetch genome metadata
+  genome_fields <- paste(
+    c(
+      "genome_id",
+      "genome_name",
+      "species",
+      "taxon_id",
+      "genome_quality",
+      "genome_status",
+      "collection_year",
+      "genome_length",
+      "gc_content",
+      "cds",
+      "checkm_completeness",
+      "checkm_contamination"
+    ),
+    collapse = ","
+  )
+
+  genome_data <- if (identical(metadata_method, "api")) {
+    .extractGenomeDataApi(
+      genome_ids = genome_ids,
+      fields = genome_fields,
+      verbose = verbose
+    )
+  } else {
+    raw <- .extractGenomeData(
+      base_dir = base_dir,
+      batch_genome_IDs = genome_ids,
+      filter_type = "AMR",
+      amr_fields = genome_fields,
+      microtrait_fields = genome_fields,
+      verbose = verbose
+    )
+
+    .parse_bvbrc_tsv(raw)
+  }
+
+  genome_data <- tibble::as_tibble(genome_data)
+
+  if (!nrow(genome_data)) {
+    if (isTRUE(verbose)) {
+      message(
+        "No genome metadata were returned for '",
+        user_bac,
+        "'."
+      )
+    }
+    return(empty_result())
+  }
+
+  id_col <- dplyr::case_when(
+    "genome.genome_id" %in% names(genome_data) ~
+      "genome.genome_id",
+    "genome_id" %in% names(genome_data) ~
+      "genome_id",
+    TRUE ~ NA_character_
+  )
+
+  if (is.na(id_col)) {
+    stop("Genome metadata did not contain a proper genome ID column.")
+  }
+
+  genome_data <- genome_data |>
+    dplyr::mutate(
+      .genome_id = as.character(.data[[id_col]])
+    ) |>
+    dplyr::filter(
+      !is.na(.data$.genome_id),
+      nzchar(.data$.genome_id)
+    ) |>
+    dplyr::distinct(.data$.genome_id, .keep_all = TRUE)
+
+  # Retrieve AMR phenotype records
+  if (isTRUE(verbose)) {
+    message("Checking AMR phenotype availability for '", user_bac, "'.")
+  }
+
+  amr_data <- if (identical(metadata_method, "api")) {
+    .extractAMRtableApi(
+      genome_ids = genome_ids,
+      abx = "All",
+      verbose = verbose
+    )
+  } else {
+    drug_fields <- paste(
+      c(
+        "genome_id",
+        "antibiotic",
+        "evidence",
+        "laboratory_typing_method",
+        "resistant_phenotype"
+      ),
+      collapse = ","
+    )
+
+    raw <- .extractAMRtable(
+      base_dir = base_dir,
+      batch_genome_IDs = genome_ids,
+      abx_filter = "--required antibiotic",
+      drug_fields = drug_fields,
+      verbose = verbose
+    )
+
+    .parse_bvbrc_tsv(raw)
+  }
+
+  amr_data <- tibble::as_tibble(amr_data)
+
+  amr_id_col <- dplyr::case_when(
+    "genome_drug.genome_id" %in% names(amr_data) ~
+      "genome_drug.genome_id",
+    "genome_id" %in% names(amr_data) ~
+      "genome_id",
+    TRUE ~ NA_character_
+  )
+
+  amr_ids <- if (!is.na(amr_id_col) && nrow(amr_data)) {
+    unique(as.character(amr_data[[amr_id_col]]))
+  } else {
+    character(0)
+  }
+
+  amr_ids <- amr_ids[
+    !is.na(amr_ids) & nzchar(amr_ids)
+  ]
+
+  antibiotic_col <- dplyr::case_when(
+    "genome_drug.antibiotic" %in% names(amr_data) ~
+      "genome_drug.antibiotic",
+    "antibiotic" %in% names(amr_data) ~
+      "antibiotic",
+    TRUE ~ NA_character_
+  )
+
+  genome_length_col <- dplyr::case_when(
+    "genome.genome_length" %in% names(genome_data) ~
+      "genome.genome_length",
+    "genome_length" %in% names(genome_data) ~
+      "genome_length",
+    TRUE ~ NA_character_
+  )
+
+  gc_content_col <- dplyr::case_when(
+    "genome.gc_content" %in% names(genome_data) ~
+      "genome.gc_content",
+    "gc_content" %in% names(genome_data) ~
+      "gc_content",
+    TRUE ~ NA_character_
+  )
+
+  cds_col <- dplyr::case_when(
+    "genome.cds" %in% names(genome_data) ~
+      "genome.cds",
+    "cds" %in% names(genome_data) ~
+      "cds",
+    TRUE ~ NA_character_
+  )
+
+  # Apply the same metadata QC used by retrieveMetadata()
+  qc_out <- .apply_metadata_qc(
+    genome_tbl = genome_data,
+    max_checkm_contam = max_checkm_contam,
+    min_checkm_complete = min_checkm_complete,
+    gc_deviations = gc_deviations,
+    length_deviations = length_deviations,
+    cds_deviations = cds_deviations
+  )
+
+  qc_tbl <- tibble::as_tibble(qc_out$qc_tbl)
+
+  total_genomes <- nrow(genome_data)
+
+  wgs_genomes <- if (
+    "genome.genome_status" %in% names(genome_data)
+  ) {
+    sum(
+      genome_data$genome.genome_status == "WGS",
+      na.rm = TRUE
+    )
+  } else if ("genome_status" %in% names(genome_data)) {
+    sum(genome_data$genome_status == "WGS", na.rm = TRUE)
+  } else {
+    NA_integer_
+  }
+
+  complete_genomes <- if (
+    "genome.genome_status" %in% names(genome_data)
+  ) {
+    sum(
+      genome_data$genome.genome_status == "Complete",
+      na.rm = TRUE
+    )
+  } else if ("genome_status" %in% names(genome_data)) {
+    sum(
+      genome_data$genome_status == "Complete",
+      na.rm = TRUE
+    )
+  } else {
+    NA_integer_
+  }
+
+  checkm_complete_col <- if (
+    "genome.checkm_completeness" %in% names(genome_data)
+  ) {
+    "genome.checkm_completeness"
+  } else if ("checkm_completeness" %in% names(genome_data)) {
+    "checkm_completeness"
+  } else {
+    NA_character_
+  }
+
+  checkm_contam_col <- if (
+    "genome.checkm_contamination" %in% names(genome_data)
+  ) {
+    "genome.checkm_contamination"
+  } else if ("checkm_contamination" %in% names(genome_data)) {
+    "checkm_contamination"
+  } else {
+    NA_character_
+  }
+
+  checkm_available <- if (
+    !is.na(checkm_complete_col) &&
+    !is.na(checkm_contam_col)
+  ) {
+    sum(
+      !is.na(suppressWarnings(
+        as.numeric(genome_data[[checkm_complete_col]])
+      )) &
+        !is.na(suppressWarnings(
+          as.numeric(genome_data[[checkm_contam_col]])
+        ))
+    )
+  } else {
+    NA_integer_
+  }
+
+  qc_pass <- sum(qc_tbl$qc_keep %in% TRUE, na.rm = TRUE)
+  qc_fail <- sum(qc_tbl$qc_keep %in% FALSE, na.rm = TRUE)
+
+  collection_year_col <- if (
+    "genome.collection_year" %in% names(genome_data)
+  ) {
+    "genome.collection_year"
+  } else if ("collection_year" %in% names(genome_data)) {
+    "collection_year"
+  } else {
+    NA_character_
+  }
+
+  collection_year <- if (!is.na(collection_year_col)) {
+    suppressWarnings(
+      as.integer(genome_data[[collection_year_col]])
+    )
+  } else {
+    integer(0)
+  }
+
+  antibiotics <- if (!is.na(antibiotic_col)) {
+    collapse_unique(amr_data[[antibiotic_col]])
+  } else {
+    NA_character_
+  }
+
+  unique_antibiotics <- if (!is.na(antibiotic_col)) {
+    x <- trimws(as.character(amr_data[[antibiotic_col]]))
+    length(unique(x[!is.na(x) & nzchar(x)]))
+  } else {
+    0L
+  }
+
+  drug_classes <- NA_character_
+
+  if (!is.na(antibiotic_col)) {
+    observed_drugs <- trimws(as.character(amr_data[[antibiotic_col]]))
+    observed_drugs <- unique(
+      observed_drugs[!is.na(observed_drugs) & nzchar(observed_drugs)]
+    )
+
+    drug_class_file <- file.path(
+      base_dir,
+      "data_raw",
+      "drug_class.tsv"
+    )
+
+    if (file.exists(drug_class_file)) {
+      drug_class_map <- utils::read.delim(
+        drug_class_file,
+        stringsAsFactors = FALSE,
+        check.names = FALSE
+      )
+
+      drug_classes <- collapse_unique(
+        drug_class_map$drug_class[
+          drug_class_map$drug %in% observed_drugs
+        ]
+      )
+    }
+  }
+
+  median_genome_length <- if (!is.na(genome_length_col)) {
+    safe_median(genome_data[[genome_length_col]])
+  } else {
+    NA_real_
+  }
+
+  median_gc_content <- if (!is.na(gc_content_col)) {
+    safe_median(genome_data[[gc_content_col]])
+  } else {
+    NA_real_
+  }
+
+  median_cds <- if (!is.na(cds_col)) {
+    safe_median(genome_data[[cds_col]])
+  } else {
+    NA_real_
+  }
+
+  median_checkm_completeness <- if (!is.na(checkm_complete_col)) {
+    safe_median(genome_data[[checkm_complete_col]])
+  } else {
+    NA_real_
+  }
+
+  median_checkm_contamination <- if (!is.na(checkm_contam_col)) {
+    safe_median(genome_data[[checkm_contam_col]])
+  } else {
+    NA_real_
+  }
+
+  summary_row <- tibble::tibble(
+    query = user_bac,
+
+    total_genomes = as.integer(total_genomes),
+    wgs_genomes = as.integer(wgs_genomes),
+    complete_genomes = as.integer(complete_genomes),
+
+    amr_genomes = as.integer(
+      length(intersect(genome_data$.genome_id, amr_ids))
+    ),
+    amr_records = as.integer(nrow(amr_data)),
+    unique_antibiotics = as.integer(unique_antibiotics),
+    antibiotics = antibiotics,
+    drug_classes = drug_classes,
+
+    checkm_available = as.integer(checkm_available),
+    qc_pass_genomes = as.integer(qc_pass),
+    qc_fail_genomes = as.integer(qc_fail),
+
+    median_genome_length = median_genome_length,
+    median_gc_content = median_gc_content,
+    median_cds = median_cds,
+    median_checkm_completeness = median_checkm_completeness,
+    median_checkm_contamination = median_checkm_contamination,
+    collection_year_min = if (
+      length(collection_year) &&
+      any(!is.na(collection_year))
+    ) {
+      min(collection_year, na.rm = TRUE)
+    } else {
+      NA_integer_
+    },
+    collection_year_max = if (
+      length(collection_year) &&
+      any(!is.na(collection_year))
+    ) {
+      max(collection_year, na.rm = TRUE)
+    } else {
+      NA_integer_
+    }
+  )
+
+  if (isTRUE(verbose)) {
+    message(
+      "Availability summary for '", user_bac, "': ",
+      total_genomes, " genomes; ",
+      wgs_genomes, " WGS; ",
+      complete_genomes, " Complete; ",
+      length(intersect(genome_data$.genome_id, amr_ids)),
+      " with AMR records; ",
+      qc_pass, " pass metadata QC."
+    )
+  }
+
+  summary_row
+}
+
 #########################
 #   Manifest helpers    #
 #########################
@@ -509,7 +1050,10 @@
 }
 
 # To distinguish multiple manifests in the same bug directory
-.manifest_find_latest <- function(duckdb_path) {
+.manifest_find_latest <- function(
+    duckdb_path,
+    require_success = TRUE
+) {
   manifest_dir <- dirname(normalizePath(
     duckdb_path,
     mustWork = FALSE
@@ -525,7 +1069,33 @@
     return(NULL)
   }
 
-  manifests[which.max(file.info(manifests)$mtime)]
+  manifests <- manifests[
+    order(file.info(manifests)$mtime, decreasing = TRUE)
+  ]
+
+  if (!isTRUE(require_success)) {
+    return(manifests[[1]])
+  }
+
+  for (path in manifests) {
+    manifest <- tryCatch(
+      jsonlite::read_json(path, simplifyVector = FALSE),
+      error = function(e) NULL
+    )
+
+    if (is.null(manifest) || !length(manifest$runs)) {
+      next
+    }
+
+    if (any(purrr::map_lgl(
+      manifest$runs,
+      ~ identical(.x$status, "success")
+    ))) {
+      return(path)
+    }
+  }
+
+  NULL
 }
 
 #' Resume provenance logging in an existing manifest

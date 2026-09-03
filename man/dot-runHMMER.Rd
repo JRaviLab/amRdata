@@ -17,21 +17,30 @@
 )
 }
 \arguments{
-\item{duckdb_path}{path to the duckdb with protein sequences and list}
+\item{duckdb_path}{Character. Path to the DuckDB database containing
+\code{protein_cluster_seq}, which provides the protein sequences to analyze.}
 
-\item{output_path}{path where HMMER output will be saved}
+\item{output_path}{Character. Directory for HMMER intermediate and final
+Parquet outputs.}
 
-\item{threads}{number of threads}
+\item{threads}{Integer. Total CPU budget used by HMMER jobs. Default: \code{8}.}
 
-\item{hmmer_db_dir}{path to the directory where HMM databases are/will be downloaded}
+\item{hmmer_db_dir}{Character. Directory containing the prepared HMMER
+databases. If \code{NULL}, the default \code{amRdata} HMMER database cache is used.}
 
-\item{databases}{list of HMM databases}
+\item{databases}{Character vector of HMMER databases to run.}
 
-\item{docker_image}{the docker image of HMMER}
+\item{docker_image}{Character. Docker image containing HMMER. Default:
+\code{"staphb/hmmer"}.}
 
-\item{num_of_splits}{The number of splits of the protein sequence file for parallel processing}
+\item{num_of_splits}{Integer. Number of chunks into which the protein
+sequences should be divided. Must be a positive integer. The requested
+value is automatically reduced when fewer protein sequences are available.
+Default: \code{8}.}
 
-\item{n_workers}{The number of parallel runs}
+\item{n_workers}{Integer. Number of parallel HMMER jobs to run. Default: \code{8}.}
+
+\item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.#'}
 }
 \description{
 Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.

@@ -2664,23 +2664,22 @@ exportTables <- function(duckdb_path,
 #'   (%) for the QC summary. Default `5`.
 #' @param min_checkm_complete Numeric. Minimum allowed CheckM completeness
 #'   (%) for the QC summary. Default `95`.
-#' @param gc_deviations Numeric. Maximum SDs from the median GC content. Optional.
-#' Default `NULL`.
-#' @param length_deviations Numeric Maximum SDs from the median genome length.
-#' Optional. Default `NULL`.
-#' @param cds_deviations Numeric. Maximum SDs from the median CDS count. Optional.
-#' Default `NULL`.
+#' @param gc_deviations Numeric. Maximum SDs from the median GC content.
+#'   Optional. Default `NULL`.
+#' @param length_deviations Numeric. Maximum SDs from the median genome
+#'   length. Optional. Default `NULL`.
+#' @param cds_deviations Numeric. Maximum SDs from the median CDS count.
+#'   Optional. Default `NULL`.
 #' @param verbose Logical. If TRUE, print progress messages. Default `TRUE`.
 #'
-#' @return
-#' A tibble with one row per requested taxon containing summary statistics
-#' describing genome availability, sequencing status, AMR data availability,
-#' and the number of genomes passing our metadata QC rules.
+#' @return A tibble with one row per requested taxon containing summary
+#'   statistics describing genome availability, sequencing status, AMR data
+#'   availability, and the number of genomes passing metadata QC.
 #'
 #' @examples
 #' \dontrun{
 #' checkDataAvailability(
-#'   c("Staphylococcus aureus", "Klebsiella pneumoniae")
+#'   c("Staphylococcus argenteus", "Streptococcus suis")
 #' )
 #'
 #' checkDataAvailability(
@@ -2723,301 +2722,18 @@ checkDataAvailability <- function(
     )
   }
 
-  # Resolve the requested taxa to genome IDs
-    genome_ids <- if (identical(metadata_method, "api")) {
-    .resolveGenomeIDsApi(
+  dplyr::bind_rows(
+    purrr::map(
+      user_bacs,
+      .checkDataPerTaxon,
       base_dir = base_dir,
-      user_bacs = user_bacs,
+      metadata_method = metadata_method,
+      max_checkm_contam = max_checkm_contam,
+      min_checkm_complete = min_checkm_complete,
+      gc_deviations = gc_deviations,
+      length_deviations = length_deviations,
+      cds_deviations = cds_deviations,
       verbose = verbose
     )
-  } else {
-    # Legacy CLI shenanigans
-      bac_input_data <- .retrieveCustomQuery(base_dir = base_dir, user_bacs = user_bacs)
-
-    if (is.null(bac_input_data) || nrow(bac_input_data) == 0L) {
-      character(0)
-    } else {
-      cache_db <- file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")
-
-      if (!file.exists(cache_db)) {
-        stop("BV-BRC cache not found at: ",
-          cache_db,
-          ". Run .updateBVBRCdata() first.")
-        }
-
-      con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
-      on.exit(
-        try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
-
-      taxon_ids <- unique(bac_input_data$genome.taxon_id)
-
-      taxon_sql <- paste(DBI::dbQuoteString(con_cache, taxon_ids), collapse = ", ")
-
-      query <- sprintf(
-        paste0(
-          "SELECT DISTINCT \"genome.genome_id\" AS genome_id ",
-          "FROM bvbrc_bac_data ",
-          "WHERE \"genome.taxon_id\" IN (%s)"
-        ),
-        taxon_sql
-      )
-
-      result <- DBI::dbGetQuery(con_cache, query)
-
-      if (nrow(result)) {
-        unique(as.character(result$genome_id))
-      } else {
-        character(0)
-      }
-    }
-  }
-
-  # Save what we found
-  genome_ids <- unique(as.character(genome_ids))
-  genome_ids <- genome_ids[nzchar(genome_ids)]
-
-  # Populate an empty result
-  empty_result <- function(query) {
-    tibble::tibble(
-      query = query,
-      total_genomes = 0L,
-      wgs_genomes = 0L,
-      complete_genomes = 0L,
-      amr_genomes = 0L,
-      amr_records = 0L,
-      checkm_available = 0L,
-      qc_pass_genomes = 0L,
-      qc_fail_genomes = 0L,
-      collection_year_min = NA_integer_,
-      collection_year_max = NA_integer_
-    )
-  }
-
-  if (!length(genome_ids)) {
-    if (isTRUE(verbose)) {
-      message("No genomes matched the requested taxa.")
-    }
-
-    return(
-      dplyr::bind_rows(purrr::map(user_bacs, empty_result))
-    )
-  }
-
-  # Fetch genome metadata
-  genome_fields <- paste(
-    c(
-      "genome_id",
-      "genome_name",
-      "species",
-      "taxon_id",
-      "genome_quality",
-      "genome_status",
-      "collection_year",
-      "genome_length",
-      "gc_content",
-      "cds",
-      "checkm_completeness",
-      "checkm_contamination"
-    ),
-    collapse = ","
   )
-
-  genome_data <- if (identical(metadata_method, "api")) {
-    .extractGenomeDataApi(genome_ids = genome_ids, fields = genome_fields, verbose = verbose)
-  } else {
-    raw <- .extractGenomeData(base_dir = base_dir, batch_genome_IDs = genome_ids,
-                              filter_type = "AMR", amr_fields = genome_fields,
-                              microtrait_fields = genome_fields, verbose = verbose)
-
-    .parse_bvbrc_tsv(raw)
-  }
-
-  genome_data <- tibble::as_tibble(genome_data)
-
-  if (!nrow(genome_data)) {
-    if (isTRUE(verbose)) {
-      message("No genome metadata were returned for the matched genome IDs.")
-    }
-
-    return(dplyr::bind_rows(purrr::map(user_bacs, empty_result)))
-  }
-
-  id_col <- dplyr::case_when(
-    "genome.genome_id" %in% names(genome_data) ~ "genome.genome_id",
-    "genome_id" %in% names(genome_data) ~ "genome_id",
-    TRUE ~ NA_character_
-  )
-
-  if (is.na(id_col)) {
-    stop("Genome metadata did not contain a proper genome ID column.")
-  }
-
-  genome_data <- genome_data |>
-    dplyr::mutate(.genome_id = as.character(.data[[id_col]])) |>
-    dplyr::filter(!is.na(.genome_id), nzchar(.genome_id)) |>
-    dplyr::distinct(.genome_id, .keep_all = TRUE)
-
-  # Retrieve AMR phenotype records independently
-  if (isTRUE(verbose)) {
-    message("Checking AMR phenotype availability.")
-  }
-
-  amr_data <- if (identical(metadata_method, "api")) {
-    .extractAMRtableApi(genome_ids = genome_ids, abx = "All",verbose = verbose)
-  } else {
-    drug_fields <- paste(
-      c("genome_id", "antibiotic", "evidence", "laboratory_typing_method", "resistant_phenotype"),
-      collapse = ","
-    )
-
-    abx_filter <- "--required antibiotic"
-
-    raw <- .extractAMRtable(base_dir = base_dir, batch_genome_IDs = genome_ids,
-                            abx_filter = abx_filter, drug_fields = drug_fields,
-                            verbose = verbose)
-
-    .parse_bvbrc_tsv(raw)
-  }
-
-  amr_data <- tibble::as_tibble(amr_data)
-
-  amr_id_col <- dplyr::case_when(
-    "genome_drug.genome_id" %in% names(amr_data) ~ "genome_drug.genome_id",
-    "genome_id" %in% names(amr_data) ~ "genome_id",
-    TRUE ~ NA_character_
-  )
-
-  amr_ids <- if (!is.na(amr_id_col) && nrow(amr_data)) {
-    unique(as.character(amr_data[[amr_id_col]]))
-  } else {
-    character(0)
-  }
-
-  amr_ids <- amr_ids[!is.na(amr_ids) & nzchar(amr_ids)]
-
-  # Apply the same metadata QC rules used by `retrieveMetadata()`
-  qc_out <- .apply_metadata_qc(
-    genome_tbl = genome_data,
-    max_checkm_contam = max_checkm_contam,
-    min_checkm_complete = min_checkm_complete,
-    gc_deviations = gc_deviations,
-    length_deviations = length_deviations,
-    cds_deviations = cds_deviations
-  )
-
-  qc_tbl <- tibble::as_tibble(qc_out$qc_tbl)
-
-  genome_id_for_qc <- if ("genome.genome_id" %in% names(qc_tbl)) {
-    "genome.genome_id"
-  } else {
-    "genome_id"
-  }
-
-  genome_data <- genome_data |>
-    dplyr::mutate(.genome_id = as.character(.data[[id_col]]))
-
-  total_genomes <- nrow(genome_data)
-
-  # Delegate bug genomes to different bins
-  wgs_genomes <- if ("genome.genome_status" %in% names(genome_data)) {
-    sum(genome_data$genome.genome_status == "WGS", na.rm = TRUE)
-  } else if ("genome_status" %in% names(genome_data)) {
-    sum(genome_data$genome_status == "WGS", na.rm = TRUE)
-  } else {
-    NA_integer_
-  }
-
-  complete_genomes <- if ("genome.genome_status" %in% names(genome_data)) {
-    sum(genome_data$genome.genome_status == "Complete", na.rm = TRUE)
-  } else if ("genome_status" %in% names(genome_data)) {
-    sum(genome_data$genome_status == "Complete", na.rm = TRUE)
-  } else {
-    NA_integer_
-  }
-
-  checkm_complete_col <- if ("genome.checkm_completeness" %in% names(genome_data)) {
-    "genome.checkm_completeness"
-  } else if ("checkm_completeness" %in% names(genome_data)) {
-    "checkm_completeness"
-  } else {
-    NA_character_
-  }
-
-  checkm_contam_col <- if ("genome.checkm_contamination" %in% names(genome_data)) {
-    "genome.checkm_contamination"
-  } else if ("checkm_contamination" %in% names(genome_data)) {
-    "checkm_contamination"
-  } else {
-    NA_character_
-  }
-
-  checkm_available <- if (!is.na(checkm_complete_col) &&
-                          !is.na(checkm_contam_col)) {
-    sum(
-      !is.na(suppressWarnings(as.numeric(genome_data[[checkm_complete_col]]))) &
-        !is.na(suppressWarnings(as.numeric(genome_data[[checkm_contam_col]])))
-    )
-  } else {
-    NA_integer_
-  }
-
-  qc_pass <- sum(qc_tbl$qc_keep %in% TRUE, na.rm = TRUE)
-  qc_fail <- sum(qc_tbl$qc_keep %in% FALSE, na.rm = TRUE)
-
-  collection_year_col <- if ("genome.collection_year" %in% names(genome_data)) {
-    "genome.collection_year"
-  } else if ("collection_year" %in% names(genome_data)) {
-    "collection_year"
-  } else {
-    NA_character_
-  }
-
-  collection_year <- if (!is.na(collection_year_col)) {
-    suppressWarnings(as.integer(genome_data[[collection_year_col]]))
-  } else {
-    integer(0)
-  }
-
-  # Summary tibble of everything retrieved
-  summary_row <- tibble::tibble(
-    query = paste(user_bacs, collapse = ", "),
-    total_genomes = as.integer(total_genomes),
-    wgs_genomes = as.integer(wgs_genomes),
-    complete_genomes = as.integer(complete_genomes),
-    amr_genomes = as.integer(length(intersect(
-      genome_data$.genome_id,
-      amr_ids
-    ))),
-    amr_records = as.integer(nrow(amr_data)),
-    checkm_available = as.integer(checkm_available),
-    qc_pass_genomes = as.integer(qc_pass),
-    qc_fail_genomes = as.integer(qc_fail),
-    collection_year_min = if (length(collection_year) &&
-                              any(!is.na(collection_year))) {
-      min(collection_year, na.rm = TRUE)
-    } else {
-      NA_integer_
-    },
-    collection_year_max = if (length(collection_year) &&
-                              any(!is.na(collection_year))) {
-      max(collection_year, na.rm = TRUE)
-    } else {
-      NA_integer_
-    }
-  )
-
-  # Print it!
-  if (isTRUE(verbose)) {
-    message(
-      "Availability summary: ",
-      total_genomes, " genomes; ",
-      wgs_genomes, " WGS; ",
-      complete_genomes, " Complete; ",
-      length(intersect(genome_data$.genome_id, amr_ids)),
-      " with AMR records; ",
-      qc_pass, " pass metadata QC."
-    )
-  }
-
-  summary_row
 }
