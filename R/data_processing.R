@@ -3154,6 +3154,7 @@ runDataProcessing <- function(
   )
 
   # With all features completed, create the dyad feature map
+if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all features and exporting Parquet-backed views.")
   buildDyadFeatureMap(duckdb_path = duckdb_path, output_path = out_dir)
 
   # And if the user wants to export processed data
