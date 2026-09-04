@@ -10,6 +10,7 @@ exportProcessedData(
   amr_phenotype_mode = c("separate", "append"),
   export_formats = c("csv"),
   export_sequences = FALSE,
+  export_dyads = FALSE,
   tables = NULL,
   export_tables = TRUE,
   verbose = TRUE
@@ -28,8 +29,20 @@ file.path(dirname(duckdb_path), "processed_exports").}
 
 \item{export_formats}{Character vector. Any of "csv", "tsv", "parquet", "xlsx".}
 
-\item{tables}{Character vector or NULL. Tables to export. If NULL, exports the
-standard processed tables present in the database.}
+\item{export_sequences}{Logical. If TRUE, also exports gene and protein
+sequence tables and the genome-to-gene-to-protein mapping. Default FALSE.}
+
+\item{export_dyads}{Logical. If TRUE, exports the optional dyad annotation
+table. Each row represents a protein-gene dyad with semicolon-separated
+mapped feature values for structural annotations and the HMMER databases
+recorded in the dataset manifest. The export uses \code{export_formats}.
+Default FALSE.}
+
+\item{tables}{Character vector or NULL. Tables to export. If NULL, exports
+the standard processed tables plus HMMER tables recorded in the manifest.}
+
+\item{export_tables}{Logical. If TRUE, write the selected tables to disk.
+Default TRUE.}
 
 \item{verbose}{Logical. If TRUE, prints progress messages.}
 }

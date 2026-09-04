@@ -2645,3 +2645,95 @@ exportTables <- function(duckdb_path,
     summary = summary_tbl
   ))
 }
+
+#' Check BV-BRC data availability for selected bacterial taxa
+#'
+#' Performs a lightweight metadata-only query to summarize the data available
+#' for one or more bacterial taxa before running the genome-download and
+#' feature-processing workflows.
+#'
+#' By default, genome IDs and metadata are resolved through the BV-BRC Data API.
+#' The legacy CLI path can be selected with `metadata_method = "cli"`.
+#'
+#' @param user_bacs Character vector. Mixed taxon IDs and/or species names.
+#' @param base_dir Character. Project root. Used by the legacy CLI path.
+#'   Default `"."`.
+#' @param metadata_method Character. Metadata backend: `"api"` (default) or
+#'   `"cli"`.
+#' @param max_checkm_contam Numeric. Maximum allowed CheckM contamination
+#'   (%) for the QC summary. Default `5`.
+#' @param min_checkm_complete Numeric. Minimum allowed CheckM completeness
+#'   (%) for the QC summary. Default `95`.
+#' @param gc_deviations Numeric. Maximum SDs from the median GC content.
+#'   Optional. Default `NULL`.
+#' @param length_deviations Numeric. Maximum SDs from the median genome
+#'   length. Optional. Default `NULL`.
+#' @param cds_deviations Numeric. Maximum SDs from the median CDS count.
+#'   Optional. Default `NULL`.
+#' @param verbose Logical. If TRUE, print progress messages. Default `TRUE`.
+#'
+#' @return A tibble with one row per requested taxon containing summary
+#'   statistics describing genome availability, sequencing status, AMR data
+#'   availability, and the number of genomes passing metadata QC.
+#'
+#' @examples
+#' \dontrun{
+#' checkDataAvailability(
+#'   c("Staphylococcus argenteus", "Streptococcus suis")
+#' )
+#'
+#' checkDataAvailability(
+#'   c("1280", "28901"),
+#'   metadata_method = "api"
+#' )
+#' }
+#'
+#' @export
+checkDataAvailability <- function(
+    user_bacs,
+    base_dir = ".",
+    metadata_method = c("api", "cli"),
+    max_checkm_contam = 5,
+    min_checkm_complete = 95,
+    gc_deviations = NULL,
+    length_deviations = NULL,
+    cds_deviations = NULL,
+    verbose = TRUE
+) {
+  metadata_method <- match.arg(metadata_method)
+  base_dir <- normalizePath(base_dir, mustWork = FALSE)
+
+  if (missing(user_bacs) || length(user_bacs) == 0L) {
+    stop("`user_bacs` must contain at least one taxon ID or species name.")
+  }
+
+  user_bacs <- unique(trimws(as.character(user_bacs)))
+  user_bacs <- user_bacs[nzchar(user_bacs)]
+
+  if (!length(user_bacs)) {
+    stop("`user_bacs` must contain at least one non-empty taxon ID or species name.")
+  }
+
+  if (isTRUE(verbose)) {
+    message(
+      "Checking BV-BRC data availability using metadata_method = \"",
+      metadata_method,
+      "\"."
+    )
+  }
+
+  dplyr::bind_rows(
+    purrr::map(
+      user_bacs,
+      .checkDataPerTaxon,
+      base_dir = base_dir,
+      metadata_method = metadata_method,
+      max_checkm_contam = max_checkm_contam,
+      min_checkm_complete = min_checkm_complete,
+      gc_deviations = gc_deviations,
+      length_deviations = length_deviations,
+      cds_deviations = cds_deviations,
+      verbose = verbose
+    )
+  )
+}

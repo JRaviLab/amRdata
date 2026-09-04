@@ -9,7 +9,7 @@
   base_dir = ".",
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
   verbose = TRUE,
-  fallback_to_bvbrc_cache = TRUE
+  fallback_to_bvbrc_cache = FALSE
 )
 }
 \arguments{

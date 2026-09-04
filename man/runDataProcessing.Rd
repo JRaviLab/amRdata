@@ -8,6 +8,7 @@ runDataProcessing(
   duckdb_path,
   output_path = NULL,
   threads = 8,
+  export_tabular_data = FALSE,
   panaroo_split_jobs = FALSE,
   panaroo_core_threshold = 0.9,
   panaroo_len_dif_percent = 0.95,
@@ -43,6 +44,10 @@ CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
 
 \item{threads}{Integer. Shared concurrency budget used across Panaroo, CD-HIT,
 and HMMER. Defaults to \code{8}.}
+
+\item{export_tabular_data}{Logical. If TRUE, automatically call
+\code{\link[=exportProcessedData]{exportProcessedData()}} after the processing pipeline completes to create
+the default human-readable exports. Default: \code{FALSE}.}
 
 \item{panaroo_split_jobs}{Logical. If \code{TRUE}, Panaroo runs in multiple batches
 that can be merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaroo runs once on all
@@ -153,6 +158,10 @@ upstream curation workflow.
 over the generated Parquet files.
 \item Records processing parameters, software versions, database selections, and
 other provenance information in the dataset manifest.
+\item Creates the protein-gene dyad feature map for downstream graph analysis.
+\item If \code{export_tabular_data = TRUE}, exports features in human-readable CSVs.
+Additional export options are available by calling \code{exportProcessedData()}
+after \code{runDataProcessing()} completes.
 }
 
 \strong{Threading}
@@ -188,6 +197,9 @@ stage parameters.
 \item \strong{Metadata cleaning + Parquet export} via \code{\link[=cleanData]{cleanData()}} -> writes
 Parquet files to \code{output_path}, and builds a \strong{Parquet-backed DuckDB}
 (\verb{*_parquet.duckdb}) with views over those Parquets.
+
+\item \strong{Dyad feature mapping} via \code{\link[=buildDyadFeatureMap]{buildDyadFeatureMap()}} -> writes the
+protein-gene dyad feature network used for downstream graph analysis.
 }
 }
 

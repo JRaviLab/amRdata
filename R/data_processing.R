@@ -962,10 +962,17 @@ CDHIT2duckdb <- function(duckdb_path,
 
 #' Download and prepare HMMER databases for generating new file types.
 #'
-#' @param hmmer_db_dir Directory to store HMMER databases
-#' @param databases List of databases to prepare (default: c("Pfam", "COG", "AMRFinder"))
-#' @param docker_image Docker image containing HMMER (default: "staphb/hmmer")
-#' @param hmmer_db_url If the databases contain custom database(s), the url is required to download the database.
+#' @param hmmer_db_dir Character. Directory where HMMER databases are cached.
+#' @param databases Character vector of database names to prepare. Supported
+#'   built-in databases are `Pfam`, `COG`, and `AMRFinder`; `DefenseCas` is
+#'   prepared separately by the DefenseFinder/CasFinder workflow.
+#' @param docker_image Character. Docker image containing HMMER tools used to
+#'   press the prepared databases. Default: `"staphb/hmmer"`.
+#' @param hmmer_db_url NON-FUNCTIONAL. Character or `NULL`. URL used to download
+#'   a custom HMMER database when `databases` contains names not covered by the
+#'   built-in database definitions. This function is not currently active!
+#' @param verbose Logical. Print status messages while checking, downloading,
+#'   combining, and pressing databases. Default: `TRUE`.
 #'
 #' @returns A list of paths to the database hmm files.
 #'
@@ -1280,20 +1287,28 @@ CDHIT2duckdb <- function(duckdb_path,
 
 #' The function to run HMMER with docker
 #'
-#' @param JOB_NAME protein_chunk id
-#' @param FASTA fasta sequences
-#' @param DB HMM database
-#' @param Total_proteins protein sequence count
-#' @param output_path path for saving hmmer outputs
-#' @param db_paths path to HMM database 
-#' @param docker_image hmmer docker image (ideally from dockerhub)
-#' @param threads number of threads
-#' @param n_workers number of parallel workers
+##' @param JOB_NAME Character. Identifier used for the HMMER job and output
+#'   filename.
+#' @param FASTA Character. File name of the protein FASTA chunk to search.
+#' @param DB Character. Name of the HMMER database to search against.
+#' @param total_proteins Integer. Total number of proteins in the full input
+#'   dataset, used to set HMMER's `-Z` and `--domZ` values.
+#' @param output_path Character. Directory containing the FASTA input, HMMER
+#'   output, and final Parquet result.
+#' @param db_paths List. Prepared HMMER database metadata indexed by database
+#'   name.
+#' @param docker_image Character. Docker image containing HMMER. Default:
+#'   `"staphb/hmmer"`.
+#' @param threads Integer. Total CPU budget used when calculating the number
+#'   of threads allocated to this job. Default: `8`.
+#' @param n_workers Integer. Number of HMMER jobs being run in parallel.
+#'   Used to divide the CPU budget among jobs. Default: `8`.
+#' @param verbose Logical. Print progress messages. Default: `TRUE`.
 #'
 #' @returns the filename of the parquet file with hmmer output post parsing
 #'
 #' @keywords internal
-.runHmmerJob <- function(JOB_NAME, FASTA, DB, Total_proteins,
+.runHmmerJob <- function(JOB_NAME, FASTA, DB, total_proteins,
                          output_path = NULL, db_paths,
                          docker_image = "staphb/hmmer", threads = 8L,
                          n_workers = 8L,
@@ -1326,8 +1341,8 @@ CDHIT2duckdb <- function(duckdb_path,
     "hmmsearch",
     "--notextw",
     "--cpu", as.character(threads_per_job),
-    "-Z", Total_proteins,
-    "--domZ", Total_proteins,
+    "-Z", total_proteins,
+    "--domZ", total_proteins,
     "--domtblout", .to_container(hmmer_output, mount_host, mount_cont),
     db_cont_path,
     .to_container(hmmer_input, mount_host, mount_cont)
@@ -1374,14 +1389,23 @@ CDHIT2duckdb <- function(duckdb_path,
 
 #' Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.
 #'
-#' @param duckdb_path path to the duckdb with protein sequences and list
-#' @param output_path path where HMMER output will be saved
-#' @param threads number of threads
-#' @param hmmer_db_dir path to the directory where HMM databases are/will be downloaded
-#' @param databases list of HMM databases
-#' @param docker_image the docker image of HMMER
-#' @param num_of_splits The number of splits of the protein sequence file for parallel processing
-#' @param n_workers The number of parallel runs
+#' @param duckdb_path Character. Path to the DuckDB database containing
+#'   `protein_cluster_seq`, which provides the protein sequences to analyze.
+#' @param output_path Character. Directory for HMMER intermediate and final
+#'   Parquet outputs.
+#' @param threads Integer. Total CPU budget used by HMMER jobs. Default: `8`.
+#' @param hmmer_db_dir Character. Directory containing the prepared HMMER
+#'   databases. If `NULL`, the default `amRdata` HMMER database cache is used.
+#' @param databases Character vector of HMMER databases to run.
+#' @param docker_image Character. Docker image containing HMMER. Default:
+#'   `"staphb/hmmer"`.
+#' @param num_of_splits Integer. Number of chunks into which the protein
+#'   sequences should be divided. Must be a positive integer. The requested
+#'   value is automatically reduced when fewer protein sequences are available.
+#'   Default: `8`.
+#' @param n_workers Integer. Number of parallel HMMER jobs to run. Default: `8`.
+#' @param verbose Logical. Print progress messages. Default: `TRUE`.#'
+#' @returns
 #'
 #' @keywords internal
 .runHMMER <- function(duckdb_path,
@@ -1433,7 +1457,7 @@ CDHIT2duckdb <- function(duckdb_path,
   }
 
   # required to define the database size for hmmsearch --Z and --domZ parameters
-  Total_proteins <- nrow(prot_seqs)
+  total_proteins <- nrow(prot_seqs)
 
   if (is.null(hmmer_db_dir)) {
     hmmer_db_dir <- .defaultHmmerDbDir()
@@ -1509,7 +1533,7 @@ CDHIT2duckdb <- function(duckdb_path,
         JOB_NAME = job_list$JOB_NAME[i],
         FASTA = job_list$FASTA[i],
         DB = job_list$DB[i],
-        Total_proteins = Total_proteins,
+        total_proteins = total_proteins,
         output_path = output_path,
         db_paths = db_paths,
         docker_image = docker_image,
@@ -1608,11 +1632,13 @@ CDHIT2duckdb <- function(duckdb_path,
 #' counts per genome and annotation, and writes the result both as a Parquet file
 #' and as a new table in the DuckDB database.
 #'
-#' @param annotated_parquet Path to the combined HMMER results Parquet file
-#'   (e.g. `"results/Ecoli/protein_COG.parquet"`). The filename stem is used as
-#'   the table name in DuckDB.
-#' @param duckdb_path Path to the per-selection DuckDB database containing a
-#'   `protein_count` table (created by [CDHIT2duckdb()]).
+#' @param duckdb_path Character. Path to the per-selection DuckDB database
+#'   containing the `protein_count` table created by [CDHIT2duckdb()].
+#' @param databases Character vector of HMMER database names to process.
+#'   Each database must correspond to a `protein_<database>` annotation table
+#'   already present in the DuckDB.
+#' @param output_path Character. Directory where the genome-by-annotation
+#'   Parquet files will be written. Defaults to `dirname(duckdb_path)`.
 #'
 #' @return Invisibly returns the path to the written count Parquet file.
 #'
@@ -2052,7 +2078,7 @@ CDHIT2duckdb <- function(duckdb_path,
   )
 
   # required to define the database size for hmmsearch --Z and --domZ parameters
-  Total_proteins <- nrow(prot_seqs)
+  total_proteins <- nrow(prot_seqs)
 
   readr::write_lines(
     paste0(
@@ -2107,8 +2133,8 @@ CDHIT2duckdb <- function(duckdb_path,
         "--notextw",
         "--cpu",
         as.character(threads),
-        "-Z", Total_proteins,
-        "--domZ", Total_proteins,
+        "-Z", total_proteins,
+        "--domZ", total_proteins,
         "--domtblout",
         file.path(
           "/work",
@@ -2628,6 +2654,9 @@ cleanData <- function(duckdb_path, path) {
 #'   \item **Metadata cleaning + Parquet export** via [cleanData()] -> writes
 #'         Parquet files to `output_path`, and builds a **Parquet-backed DuckDB**
 #'         (`*_parquet.duckdb`) with views over those Parquets.
+#'
+#'   \item **Dyad feature mapping** via [buildDyadFeatureMap()] -> writes the
+#'         protein-gene dyad feature network used for downstream graph analysis.
 #' }
 #'
 #' @param duckdb_path Character. Path to the **per-selection DuckDB** produced by
@@ -2640,6 +2669,10 @@ cleanData <- function(duckdb_path, path) {
 #'
 #' @param threads Integer. Shared concurrency budget used across Panaroo, CD-HIT,
 #'   and HMMER. Defaults to `8`.
+#'
+#' @param export_tabular_data Logical. If TRUE, automatically call
+#'   [exportProcessedData()] after the processing pipeline completes to create
+#'   the default human-readable exports. Default: `FALSE`.
 #'
 #' @param panaroo_split_jobs Logical. If `TRUE`, Panaroo runs in multiple batches
 #'   that can be merged by [.mergePanaroo()]. If `FALSE`, Panaroo runs once on all
@@ -2710,6 +2743,10 @@ cleanData <- function(duckdb_path, path) {
 #'   over the generated Parquet files.
 #' * Records processing parameters, software versions, database selections, and
 #'   other provenance information in the dataset manifest.
+#' * Creates the protein-gene dyad feature map for downstream graph analysis.
+#' * If `export_tabular_data = TRUE`, exports features in human-readable CSVs.
+#'   Additional export options are available by calling `exportProcessedData()`
+#'   after `runDataProcessing()` completes.
 #'
 #' **Threading**
 #' * `threads` provides the shared CPU budget for the major processing stages.
@@ -2739,6 +2776,7 @@ runDataProcessing <- function(
     duckdb_path,
     output_path = NULL,
     threads = 8,
+    export_tabular_data = FALSE,
 
     # Panaroo
     panaroo_split_jobs = FALSE,
@@ -3115,6 +3153,24 @@ runDataProcessing <- function(
     "_parquet.duckdb"
   )
 
+  # With all features completed, create the dyad feature map
+if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all features and exporting Parquet-backed views.")
+  buildDyadFeatureMap(duckdb_path = duckdb_path, output_path = out_dir)
+
+  # And if the user wants to export processed data
+  if (export_tabular_data == TRUE) {
+    if (isTRUE(verbose))
+      message("\n============================================")
+      message("Exporting human-readable processed data tables.")
+      message("Additional export options are available through `exportProcessedData()`.")
+      message("\n============================================")
+
+    # Export with default parameters
+    exportProcessedData(duckdb_path = duckdb_path,
+                        output_path = out_dir,
+                        verbose = verbose)
+  }
+
   if (isTRUE(verbose)) {
     message("\n============================================")
     message("Completed data-processing workflow successfully.")
@@ -3126,6 +3182,45 @@ runDataProcessing <- function(
     message("  runMLmodels(\"", normalizePath(parquet_duckdb_path), "\")")
     message("============================================\n")
   }
+
+  # Final Parquets generated by this run
+  parquet_files <- c(
+    # Metadata outputs
+    file.path(out_dir, "metadata.parquet"),
+    file.path(out_dir, "amr_phenotype.parquet"),
+    file.path(out_dir, "genome_data.parquet"),
+    file.path(out_dir, "original_metadata.parquet"),
+
+    # Core feature outputs
+    file.path(out_dir, "gene_count.parquet"),
+    file.path(out_dir, "gene_names.parquet"),
+    file.path(out_dir, "gene_seqs.parquet"),
+    file.path(out_dir, "genome_gene_protein.parquet"),
+    file.path(out_dir, "struct.parquet"),
+    file.path(out_dir, "protein_count.parquet"),
+    file.path(out_dir, "protein_names.parquet"),
+    file.path(out_dir, "protein_seqs.parquet"),
+    file.path(out_dir, "protein_members.parquet"),
+
+    # HMMER outputs
+    file.path(
+      out_dir,
+      paste0("protein_", hmmer_databases, ".parquet")
+    ),
+    file.path(
+      out_dir,
+      paste0("protein_", hmmer_databases, "_count.parquet")
+    ),
+
+    # Dyad feature map
+    file.path(out_dir, "dyad_feature.parquet")
+  )
+
+  # Record only files that exist, so manifest reflects successful runs
+  parquet_files <- normalizePath(
+    parquet_files[file.exists(parquet_files)],
+    mustWork = TRUE
+  )
 
   # Log!
   manifest <- .manifest_stage(
@@ -3143,11 +3238,12 @@ runDataProcessing <- function(
       ref_file_path
     ),
     outputs = c(
-      out_dir,
+      parquet_files,
       parquet_duckdb_path
     ),
     metrics = list(
-      parquet_duckdb = parquet_duckdb_path
+      parquet_duckdb = parquet_duckdb_path,
+      parquet_files = parquet_files
     )
   )
 
@@ -3180,8 +3276,17 @@ runDataProcessing <- function(
 #'   "separate" exports the AMR labels as a separate wide table.
 #'   "append" joins those labels onto the main feature tables before export.
 #' @param export_formats Character vector. Any of "csv", "tsv", "parquet", "xlsx".
-#' @param tables Character vector or NULL. Tables to export. If NULL, exports the
-#'   standard processed tables present in the database.
+#' @param export_sequences Logical. If TRUE, also exports gene and protein
+#'   sequence tables and the genome-to-gene-to-protein mapping. Default FALSE.
+#' @param export_dyads Logical. If TRUE, exports the optional dyad annotation
+#'   table. Each row represents a protein-gene dyad with semicolon-separated
+#'   mapped feature values for structural annotations and the HMMER databases
+#'   recorded in the dataset manifest. The export uses `export_formats`.
+#'   Default FALSE.
+#' @param tables Character vector or NULL. Tables to export. If NULL, exports
+#'   the standard processed tables plus HMMER tables recorded in the manifest.
+#' @param export_tables Logical. If TRUE, write the selected tables to disk.
+#'   Default TRUE.
 #' @param verbose Logical. If TRUE, prints progress messages.
 #'
 #' @return Invisibly returns a list containing the export path, table names, and mode.
@@ -3191,6 +3296,7 @@ exportProcessedData <- function(duckdb_path,
                                 amr_phenotype_mode = c("separate", "append"),
                                 export_formats = c("csv"),
                                 export_sequences = FALSE,
+                                export_dyads = FALSE,
                                 tables = NULL,
                                 export_tables = TRUE,
                                 verbose = TRUE) {
@@ -3264,14 +3370,14 @@ exportProcessedData <- function(duckdb_path,
         df, file = file.path(output_path, paste0(stem, ".csv")),
         sep = ",", row.names = FALSE, col.names = TRUE,
         quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
-      )
+        )
     }
     if ("tsv" %in% export_formats) {
       utils::write.table(
         df, file = file.path(output_path, paste0(stem, ".tsv")),
         sep = "\t", row.names = FALSE, col.names = TRUE,
         quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
-      )
+        )
     }
     if ("parquet" %in% export_formats) {
       arrow::write_parquet(df, file.path(output_path, paste0(stem, ".parquet")))
@@ -3279,6 +3385,56 @@ exportProcessedData <- function(duckdb_path,
     if ("xlsx" %in% export_formats) {
       writexl::write_xlsx(list(data = df), file.path(output_path, paste0(stem, ".xlsx")))
     }
+  }
+
+  # Determine which HMMER databases were actually run from the latest
+  # successful `runDataProcessing()` manifest
+  manifest_path <- .manifest_find_latest(duckdb_path)
+
+  hmmer_databases <- character()
+
+  if (!is.null(manifest_path)) {
+    manifest <- jsonlite::read_json(
+      manifest_path,
+      simplifyVector = FALSE
+    )
+
+    successful_hmmer <- list()
+
+    for (run in rev(manifest$runs %||% list())) {
+      stages <- run$stages %||% list()
+
+      matches <- purrr::keep(
+        stages,
+        ~ identical(.x$name, "hmmer") &&
+          identical(.x$status, "success")
+      )
+
+      if (length(matches)) {
+        successful_hmmer <- matches[[1]]
+        break
+      }
+    }
+
+    if (length(successful_hmmer)) {
+      hmmer_databases <- unlist(
+        successful_hmmer$parameters$databases %||% character(),
+        use.names = FALSE
+      )
+      hmmer_databases <- unique(as.character(hmmer_databases))
+    }
+  }
+
+  if (!length(hmmer_databases) && isTRUE(verbose)) {
+    message(
+      "No successful HMMER runs were found in the manifest. ",
+      "HMMER tables will not be selected automatically."
+    )
+  } else if (isTRUE(verbose)) {
+    message(
+      "Successful HMMER runs were identified in the manifest: ",
+      paste(hmmer_databases, collapse = ", ")
+    )
   }
 
   build_amr_wide <- function() {
@@ -3325,35 +3481,75 @@ exportProcessedData <- function(duckdb_path,
   table_specs <- list(
     gene_count = list(source = "gene_count", stem = "gene_count", appendable = TRUE),
     protein_count = list(source = "protein_count", stem = "protein_count", appendable = TRUE),
-    domain_count = list(source = "domain_count", stem = "domain_count", appendable = TRUE),
     struct = list(source = "gene_struct", stem = "struct", appendable = TRUE),
     gene_names = list(source = "gene_names", stem = "gene_names", appendable = FALSE),
     protein_names = list(source = "protein_names", stem = "protein_names", appendable = FALSE),
-    domain_names = list(source = "domain_names", stem = "domain_names", appendable = FALSE),
     metadata = list(source = "metadata", stem = "metadata", appendable = FALSE),
     genome_data = list(source = "genome_data", stem = "genome_data", appendable = FALSE),
     amr_phenotype_wide = list(source = NULL, stem = "amr_phenotype_wide", appendable = FALSE)
   )
 
+  # Add only the HMMER databases recorded in the manifest.
+  for (database in hmmer_databases) {
+    annotation_key <- paste0("protein_", database)
+    count_key <- paste0(annotation_key, "_count")
+
+    table_specs[[annotation_key]] <- list(
+      source = annotation_key,
+      stem = annotation_key,
+      appendable = FALSE
+    )
+
+    table_specs[[count_key]] <- list(
+      source = count_key,
+      stem = count_key,
+      appendable = TRUE
+    )
+  }
+
   if (isTRUE(export_sequences)) {
-    table_specs$gene_seqs <- list(source = "gene_ref_seq", stem = "gene_seqs", appendable = FALSE)
-    table_specs$protein_seqs <- list(source = "protein_cluster_seq", stem = "protein_seqs", appendable = FALSE)
-    table_specs$genome_gene_protein <- list(source = "genome_gene_protein", stem = "genome_gene_protein", appendable = FALSE)
+    table_specs$gene_seqs <- list(
+      source = "gene_ref_seq",
+      stem = "gene_seqs",
+      appendable = FALSE
+    )
+
+    table_specs$protein_seqs <- list(
+      source = "protein_cluster_seq",
+      stem = "protein_seqs",
+      appendable = FALSE
+    )
+
+    table_specs$genome_gene_protein <- list(
+      source = "genome_gene_protein",
+      stem = "genome_gene_protein",
+      appendable = FALSE
+    )
   }
 
   if (is.null(tables)) {
     selected_keys <- c(
       "gene_count",
       "protein_count",
-      "domain_count",
       "struct",
       "gene_names",
       "protein_names",
-      "domain_names",
       "metadata",
       "genome_data",
-      "amr_phenotype_wide"
+      "amr_phenotype_wide",
+      paste0(
+        "protein_",
+        hmmer_databases,
+        "_count"
+      ),
+      paste0(
+        "protein_",
+        hmmer_databases
+      )
     )
+
+    selected_keys <- selected_keys[selected_keys %in% names(table_specs)]
+
     if (isTRUE(export_sequences)) {
       selected_keys <- c(selected_keys, "gene_seqs", "protein_seqs", "genome_gene_protein")
     }
@@ -3371,6 +3567,30 @@ exportProcessedData <- function(duckdb_path,
     phenotype_wide <- .preserve_export_id_text(phenotype_wide)
   }
   exported <- character(0)
+
+  # Optionally export a mapping table rooted on the protein-gene dyads
+  if (isTRUE(export_dyads)) {
+    dyad_tbl <- .exportDyadAnnotations(
+      duckdb_path = duckdb_path,
+      verbose = verbose
+    )
+
+    if (isTRUE(export_tables)) {
+      write_one(
+        dyad_tbl,
+        "dyad_annotations"
+      )
+
+      exported <- c(
+        exported,
+        "dyad_annotations"
+      )
+
+      if (isTRUE(verbose)) {
+        message("Exported: dyad_annotations")
+      }
+    }
+  }
 
   for (key in selected_keys) {
     spec <- table_specs[[key]]
@@ -3403,10 +3623,14 @@ exportProcessedData <- function(duckdb_path,
       out_stem <- paste0(spec$stem, "_with_phenotypes")
     }
 
-    write_one(df, out_stem)
-    exported <- c(exported, out_stem)
+    if (isTRUE(export_tables)) {
+      write_one(df, out_stem)
+      exported <- c(exported, out_stem)
 
-    if (isTRUE(verbose)) message("Exported: ", out_stem)
+      if (isTRUE(verbose)) {
+        message("Exported: ", out_stem)
+      }
+    }
   }
 
   invisible(list(
@@ -3415,6 +3639,8 @@ exportProcessedData <- function(duckdb_path,
     tables = exported,
     amr_phenotype_mode = amr_phenotype_mode,
     export_formats = export_formats,
-    export_sequences = isTRUE(export_sequences)
+    export_sequences = isTRUE(export_sequences),
+    hmmer_databases = hmmer_databases,
+    manifest_path = manifest_path
   ))
 }

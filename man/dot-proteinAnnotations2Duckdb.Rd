@@ -11,12 +11,15 @@
 )
 }
 \arguments{
-\item{duckdb_path}{Path to the per-selection DuckDB database containing a
-\code{protein_count} table (created by \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}}).}
+\item{duckdb_path}{Character. Path to the per-selection DuckDB database
+containing the \code{protein_count} table created by \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}}.}
 
-\item{annotated_parquet}{Path to the combined HMMER results Parquet file
-(e.g. \code{"results/Ecoli/protein_COG.parquet"}). The filename stem is used as
-the table name in DuckDB.}
+\item{databases}{Character vector of HMMER database names to process.
+Each database must correspond to a \verb{protein_<database>} annotation table
+already present in the DuckDB.}
+
+\item{output_path}{Character. Directory where the genome-by-annotation
+Parquet files will be written. Defaults to \code{dirname(duckdb_path)}.}
 }
 \value{
 Invisibly returns the path to the written count Parquet file.
