@@ -2232,12 +2232,9 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   already contain the tables written by [prepareGenomes()] and the upstream
 #'   genome-processing steps.
 #' @param path the path to working directory
-#' @param ref_file_path Directory containing reference TSVs used by
-#'   [cleanMetaData()] and [cleanData()] for metadata harmonization.
-#'   Default: `"data_raw/"`.
-#' 
+#'
 #' @export
-cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
+cleanMetaData <- function(duckdb_path, path) {
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when
   # the DuckDB lives under data/<bug>/, or else fall back to the DuckDB directory.
@@ -2257,13 +2254,7 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
-  ref_file_path <- normalizePath(ref_file_path)
-
-  clean_drug <- readr::read_tsv(file.path(ref_file_path, "clean_drug.tsv"))
-  drug_class <- readr::read_tsv(file.path(ref_file_path, "drug_class.tsv"))
-  drug_abbr <- readr::read_tsv(file.path(ref_file_path, "drug_abbr.tsv"))
-  class_abbr <- readr::read_tsv(file.path(ref_file_path, "class_abbr.tsv"))
-  clean_countries <- readr::read_tsv(file.path(ref_file_path, "cleaned_bvbrc_countries.tsv")) |>
+  clean_countries <- cleaned_bvbrc_countries |>
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
@@ -2711,9 +2702,6 @@ cleanData <- function(duckdb_path, path) {
 #'   Default: `8`.
 #' @param hmmer_workers Integer. Number of parallel HMMER workers. Default: `8`.
 #'
-#' @param ref_file_path Character. Directory containing reference TSVs used by
-#'   [cleanMetaData()] and [cleanData()] for metadata harmonization.
-#'   Default: `"data_raw/"`.
 #' @param verbose Logical. Print progress messages. Default: `TRUE`.
 #'
 #' @return
@@ -2762,8 +2750,7 @@ cleanData <- function(duckdb_path, path) {
 #' runDataProcessing(
 #'   duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
 #'   output_path   = "data/Shigella_flexneri",
-#'   threads       = 8,
-#'   ref_file_path = "data_raw/"
+#'   threads       = 8
 #' )
 #'
 #' # After completion:
@@ -2809,7 +2796,6 @@ runDataProcessing <- function(
     hmmer_workers = 8L,
 
     # Metadata cleaning
-    ref_file_path = "data_raw/",
     verbose = TRUE
 ) {
   panaroo_refind_mode <- match.arg(panaroo_refind_mode)
@@ -3141,11 +3127,11 @@ runDataProcessing <- function(
   )
 
   # 4) Clean metadata and export Parquet + Parquet-backed DuckDB
-  if (is.null(ref_file_path) || !nzchar(ref_file_path)) {
-    stop("`ref_file_path` (directory with reference TSVs) must be provided to cleanData().")
+  if (isTRUE(verbose)) {
+    message("Cleaning metadata and exporting Parquet-backed views.")
   }
-  if (isTRUE(verbose)) message("Cleaning metadata and exporting Parquet-backed views.")
-  cleanMetaData(duckdb_path = duckdb_path, path = out_dir, ref_file_path = ref_file_path)
+
+  cleanMetaData(duckdb_path = duckdb_path, path = out_dir)
   cleanData(duckdb_path = duckdb_path, path = out_dir)
 
   parquet_duckdb_path <- paste0(
@@ -3228,15 +3214,15 @@ if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all f
     name = "clean_metadata_and_export",
     status = "success",
     parameters = list(
-      reference_path = normalizePath(
-        ref_file_path,
-        mustWork = FALSE
+      reference_data = c(
+        "clean_drug",
+        "drug_class",
+        "drug_abbr",
+        "class_abbr",
+        "cleaned_bvbrc_countries"
       )
     ),
-    inputs = c(
-      duckdb_path,
-      ref_file_path
-    ),
+    inputs = duckdb_path,
     outputs = c(
       parquet_files,
       parquet_duckdb_path

@@ -521,34 +521,11 @@
     0L
   }
 
-  drug_classes <- NA_character_
-
-  if (!is.na(antibiotic_col)) {
-    observed_drugs <- trimws(as.character(amr_data[[antibiotic_col]]))
-    observed_drugs <- unique(
-      observed_drugs[!is.na(observed_drugs) & nzchar(observed_drugs)]
-    )
-
-    drug_class_file <- file.path(
-      base_dir,
-      "data_raw",
-      "drug_class.tsv"
-    )
-
-    if (file.exists(drug_class_file)) {
-      drug_class_map <- utils::read.delim(
-        drug_class_file,
-        stringsAsFactors = FALSE,
-        check.names = FALSE
-      )
-
-      drug_classes <- collapse_unique(
-        drug_class_map$drug_class[
-          drug_class_map$drug %in% observed_drugs
-        ]
-      )
-    }
-  }
+  drug_classes <- collapse_unique(
+    drug_class$drug_class[
+      drug_class$drug %in% observed_drugs
+    ]
+  )
 
   median_genome_length <- if (!is.na(genome_length_col)) {
     safe_median(genome_data[[genome_length_col]])
