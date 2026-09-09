@@ -446,6 +446,7 @@ NULL
     tidyr::separate_rows(protein_ids, sep = ";") |>
     # dplyr::filter(!stringr::str_detect(protein_ids, "_pseudo")) |>
     dplyr::mutate(protein_ids = gsub("_pseudo", "", protein_ids)) |>
+    dplyr::mutate(protein_ids = gsub("_len", "", protein_ids)) |>
     DBI::dbWriteTable(conn = con, name = "genome_gene_protein", overwrite = TRUE)
 }
 
