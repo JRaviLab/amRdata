@@ -444,7 +444,7 @@ buildDyadFeatureMap <- function(
       view_name = "v_defensecas",
       parquet_dir = parquet_dir,
       dataset_name = "protein_DefenseCas",
-      feature_expr = "query_name"
+      feature_expr = "REPLACE(query_name, '-', '.')"
     )
   }
 
