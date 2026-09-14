@@ -33,6 +33,169 @@
   df
 }
 
+#########################
+# BiocFileCache helpers #
+#########################
+
+# BFC instance used by amRdata and other amR packages.
+# The default BiocFileCache location is intentionally used so the registry is
+# package-independent and can be shared across the amR suite
+.amr_bfc <- function() {
+  if (!requireNamespace("BiocFileCache", quietly = TRUE)) {
+    stop("Package 'BiocFileCache' is required for amRdata resource caching.")
+  }
+
+  BiocFileCache::BiocFileCache(ask = FALSE)
+}
+
+# Find a BFC record by exact resource name.
+.amr_bfc_find <- function(bfc, rname) {
+  hits <- BiocFileCache::bfcquery(
+    bfc,
+    query = rname,
+    field = "rname",
+    exact = TRUE
+  )
+
+  if (!nrow(hits)) NULL else hits[1, , drop = FALSE]
+}
+
+# Return the cached local path for a named BV-BRC resource. When create = TRUE,
+# reserve a new path in BFC for the caller to populate
+.amr_bfc_bvbrc_path <- function(create = FALSE, rname = "amRdata_bvbrc_bacterial_metadata") {
+  bfc <- .amr_bfc()
+  hit <- .amr_bfc_find(bfc, rname)
+
+  if (!is.null(hit)) {
+    path <- tryCatch(
+      BiocFileCache::bfcrpath(bfc, rids = hit$rid[[1]], exact = TRUE),
+      error = function(e) NA_character_
+    )
+
+    if (length(path) == 1L && file.exists(path)) {
+      return(normalizePath(path, mustWork = TRUE))
+    }
+
+    if (isTRUE(create)) {
+      BiocFileCache::bfcremove(bfc, hit$rid[[1]])
+    } else {
+      return(NULL)
+    }
+  }
+
+  if (!isTRUE(create)) {
+    return(NULL)
+  }
+
+  path <- BiocFileCache::bfcnew(
+    bfc,
+    rname = rname,
+    rtype = "relative",
+    ext = ".duckdb",
+    fname = "exact"
+  )
+
+  normalizePath(path, mustWork = FALSE)
+}
+
+# BFC name for a prepared HMMER database
+.amr_bfc_hmmer_rname <- function(database, component = NULL) {
+  parts <- c("amR_hmmer", database, component)
+  parts <- parts[!is.na(parts) & nzchar(parts)]
+
+  paste(parts, collapse = "_")
+}
+
+# Register a prepared HMMER database with BFC
+.amr_bfc_register_hmmer <- function(database,
+                                    hmm_path,
+                                    component = NULL) {
+  hmm_path <- normalizePath(hmm_path, mustWork = TRUE)
+
+  pressed <- paste0(
+    hmm_path,
+    c(".h3m", ".h3i", ".h3f", ".h3p")
+  )
+
+  missing <- pressed[!file.exists(pressed)]
+
+  if (length(missing)) {
+    stop(
+      "Cannot register HMMER database before hmmpress is complete: ",
+      paste(missing, collapse = ", ")
+    )
+  }
+
+  rname <- .amr_bfc_hmmer_rname(
+    database = database,
+    component = component
+  )
+
+  rid <- .amr_bfc_register_local(
+    path = hmm_path,
+    rname = rname
+  )
+
+  invisible(list(
+    rid = rid,
+    rname = rname,
+    hmm = hmm_path,
+    pressed = pressed
+  ))
+}
+
+# List HMMER databases known to the shared amR BFC
+.amr_bfc_hmmer_resources <- function() {
+  bfc <- .amr_bfc()
+
+  BiocFileCache::bfcquery(
+    bfc,
+    query = "^amR_hmmer_",
+    field = "rname",
+    exact = FALSE
+  )
+}
+
+# Register local files, used for dataset manifests: the manifest remains with data
+# while BFC provides for cross-package discovery
+.amr_bfc_register_local <- function(path, rname) {
+  path <- normalizePath(path, mustWork = TRUE)
+  bfc <- .amr_bfc()
+  hit <- .amr_bfc_find(bfc, rname)
+
+  if (is.null(hit)) {
+    added <- BiocFileCache::bfcadd(
+      bfc,
+      rname = rname,
+      fpath = path,
+      rtype = "local",
+      action = "asis",
+      progress = FALSE
+    )
+
+    rid <- names(added)[[1]]
+
+    return(invisible(rid))
+  }
+
+  existing_path <- tryCatch(
+    normalizePath(hit$rpath[[1]], mustWork = TRUE),
+    error = function(e) NA_character_
+  )
+
+  if (!identical(existing_path, path)) {
+    BiocFileCache::bfcupdate(
+      bfc,
+      hit$rid[[1]],
+      rpath = path,
+      rname = rname
+    )
+  }
+
+  invisible(hit$rid[[1]])
+}
+
+
 #' Helps normalize Docker paths
 #' @keywords internal
 .docker_path <- function(p) gsub("\\\\", "/", normalizePath(p, mustWork = FALSE))
@@ -184,18 +347,12 @@
     if (is.null(bac_input_data) || nrow(bac_input_data) == 0L) {
       character(0)
     } else {
-      cache_db <- file.path(
-        base_dir,
-        "data",
-        "bvbrc",
-        "bvbrcData.duckdb"
-      )
+      cache_db <- .amr_bfc_bvbrc_path(create = FALSE)
 
-      if (!file.exists(cache_db)) {
+      if (is.null(cache_db) || !file.exists(cache_db)) {
         stop(
-          "BV-BRC cache not found at: ",
-          cache_db,
-          ". Run .updateBVBRCdata() first."
+          "BV-BRC cache not found in BiocFileCache. ",
+          "Run .updateBVBRCdata() first."
         )
       }
 
@@ -781,8 +938,14 @@
     showWarnings = FALSE
   )
 
+  manifest_id <- tools::file_path_sans_ext(
+    basename(manifest_path)
+  )
+
   manifest <- list(
     schema_version = 1L,
+    manifest_type = "amR_dataset",
+    manifest_id = manifest_id,
     manifest_created_at = as.character(Sys.time()),
     manifest_updated_at = as.character(Sys.time()),
     dataset_id = dataset_id,
@@ -790,6 +953,7 @@
       duckdb = duckdb_path,
       selection = selection
     ),
+    artifacts = list(),
     runs = list()
   )
 
@@ -837,6 +1001,87 @@
     ),
     class = "amr_manifest"
   )
+}
+
+# Registering manifest name and stage
+.amr_bfc_manifest_rname <- function(manifest_state) {
+  paste0(
+    "amR_dataset_manifest_",
+    manifest_state$manifest$dataset_id,
+    "_",
+    manifest_state$manifest$manifest_id
+  )
+}
+
+# Better status recording for cross-suite hijinx
+.manifest_artifact <- function(manifest_state,
+                               name,
+                               status = "ready",
+                               details = list()) {
+  if (!inherits(manifest_state, "amr_manifest")) {
+    stop("Invalid manifest state.")
+  }
+
+  artifact <- c(
+    list(
+      status = status,
+      updated_at = as.character(Sys.time())
+    ),
+    details
+  )
+
+  manifest_state$manifest$artifacts[[name]] <- artifact
+  manifest_state$manifest$manifest_updated_at <- as.character(Sys.time())
+
+  jsonlite::write_json(
+    manifest_state$manifest,
+    manifest_state$path,
+    auto_unbox = TRUE,
+    pretty = TRUE,
+    null = "null"
+  )
+
+  manifest_state
+}
+
+# Manifest schema validation helper
+.manifest_validate <- function(manifest) {
+  if (!is.list(manifest)) {
+    stop("Manifest must be a list.")
+  }
+
+  if (!identical(as.integer(manifest$schema_version), 1L)) {
+    stop(
+      "Unsupported amR manifest schema version: ",
+      manifest$schema_version %||% "missing",
+      ". Expected schema version 1."
+    )
+  }
+
+  if (!identical(manifest$manifest_type, "amR_dataset")) {
+    stop("Manifest is not an amR dataset manifest.")
+  }
+
+  # We need this stuff
+  required <- c(
+    "manifest_id",
+    "dataset_id",
+    "dataset",
+    "artifacts",
+    "runs"
+  )
+
+  missing <- setdiff(required, names(manifest))
+
+  # If we don't have that stuff, hold your horses
+  if (length(missing)) {
+    stop(
+      "Manifest is missing required field(s): ",
+      paste(missing, collapse = ", ")
+    )
+  }
+
+  invisible(TRUE)
 }
 
 
@@ -1103,6 +1348,9 @@
     manifest_path,
     simplifyVector = FALSE
   )
+
+  # Is this manifest any good?
+  .manifest_validate(manifest)
 
   if (is.null(manifest$runs)) {
     manifest$runs <- list()
@@ -1869,7 +2117,7 @@
 # Default persistent cache for shared HMMER databases
 .defaultHmmerDbDir <- function() {
   file.path(
-    tools::R_user_dir("amRdata", "cache"),
+    BiocFileCache::bfccache(.amr_bfc()),
     "hmmer"
   )
 }

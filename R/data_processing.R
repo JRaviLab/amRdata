@@ -1262,11 +1262,19 @@ CDHIT2duckdb <- function(duckdb_path,
       }
     }
 
+    # Registering HMMER databases in BiocFileCache for later use
+    bfc_resource <- .amr_bfc_register_hmmer(
+      database = db_name,
+      hmm_path = hmm_file
+    )
+
     db_paths[[db_name]] <- list(
       hmm = hmm_file,
       source = db$url,
       type = db$type,
-      pressed = pressed_files
+      pressed = pressed_files,
+      bfc_rid = bfc_resource$rid,
+      bfc_rname = bfc_resource$rname
     )
 
     if (verbose) {
@@ -2046,6 +2054,18 @@ CDHIT2duckdb <- function(duckdb_path,
     "CasFinder"
   )
 
+  defense_bfc <- .amr_bfc_register_hmmer(
+    database = "DefenseCas",
+    component = "DefenseFinder",
+    hmm_path = defense_hmm
+  )
+
+  cas_bfc <- .amr_bfc_register_hmmer(
+    database = "DefenseCas",
+    component = "CasFinder",
+    hmm_path = cas_hmm
+  )
+
   ####################################################################
   # load proteins
   ####################################################################
@@ -2217,8 +2237,16 @@ CDHIT2duckdb <- function(duckdb_path,
 
   invisible(list(
     databases = list(
-      DefenseFinder = defense_hmm,
-      CasFinder = cas_hmm
+      DefenseFinder = list(
+        hmm = defense_hmm,
+        bfc_rid = defense_bfc$rid,
+        bfc_rname = defense_bfc$rname
+      ),
+      CasFinder = list(
+        hmm = cas_hmm,
+        bfc_rid = cas_bfc$rid,
+        bfc_rname = cas_bfc$rname
+      )
     ),
     output = parquet_file
   ))
@@ -2694,8 +2722,9 @@ cleanData <- function(duckdb_path, path) {
 #'
 #' @param hmmer_databases Character vector. HMMER annotation databases to run.
 #'   Default: `c("Pfam", "COG", "AMRFinder", "DefenseCas")`.
-#' @param hmmer_db_dir Character or `NULL`. Directory containing the shared HMMER
-#'   database cache. If `NULL`, uses the amRdata user cache.
+#' @param hmmer_db_dir Character. Directory containing the prepared HMMER
+#'   databases. If `NULL`, the default BiocFileCache-managed HMMER directory
+#'   is used.
 #' @param hmmer_docker_image Character. Docker image containing HMMER.
 #'   Default: `"staphb/hmmer"`.
 #' @param hmmer_num_splits Integer. Number of protein-sequence chunks for HMMER.
@@ -2831,6 +2860,19 @@ runDataProcessing <- function(
       )
     },
     add = TRUE
+  )
+
+  processing_run_id <-
+    manifest$manifest$runs[[manifest$run_index]]$run_id
+
+  manifest <- .manifest_artifact(
+    manifest,
+    name = "amRml_input",
+    status = "building",
+    details = list(
+      producer = "amRdata",
+      producer_run_id = processing_run_id
+    )
   )
 
   # Record the start of this processing run
@@ -2997,6 +3039,7 @@ runDataProcessing <- function(
     parameters = list(
       databases = hmmer_databases,
       database_dir = hmmer_db_dir,
+      database_cache = "BiocFileCache",
       docker_image = hmmer_docker_image,
       threads = threads,
       num_of_splits = hmmer_num_splits,
@@ -3036,17 +3079,13 @@ runDataProcessing <- function(
 
   if ("DefenseCas" %in% hmmer_databases) {
     defense_result <- .defenseHMMER(
-                                    defense_db_dir = if (is.null(hmmer_db_dir)) {
-                                      .defaultHmmerDbDir()
-                                    } else {
-                                      file.path(hmmer_db_dir, "DefenseCas")
-                                    },
-                                    docker_image = hmmer_docker_image,
-                                    duckdb_path = duckdb_path,
-                                    output_path = out_dir,
-                                    threads = threads,
-                                    verbose = verbose
-                                  )
+      defense_db_dir = file.path(hmmer_db_dir, "DefenseCas"),
+      docker_image = hmmer_docker_image,
+      duckdb_path = duckdb_path,
+      output_path = out_dir,
+      threads = threads,
+      verbose = verbose
+    )
   }
 
   expected_outputs <- file.path(
@@ -3097,6 +3136,7 @@ runDataProcessing <- function(
     parameters = list(
       databases = hmmer_databases,
       database_dir = hmmer_db_dir,
+      database_cache = "BiocFileCache",
       docker_image = hmmer_docker_image,
       threads = threads,
       num_of_splits = hmmer_num_splits,
@@ -3233,12 +3273,35 @@ if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all f
     )
   )
 
-  run_failed <- FALSE
+  # Labeling that this run is ready for amRml in the next package
+  manifest <- .manifest_artifact(
+    manifest,
+    name = "amRml_input",
+    status = "ready",
+    details = list(
+      producer = "amRdata",
+      producer_run_id = processing_run_id,
+      directory = normalizePath(
+        out_dir,
+        mustWork = TRUE
+      ),
+      parquet_duckdb = normalizePath(
+        parquet_duckdb_path,
+        mustWork = TRUE
+      ),
+      metadata_parquet = normalizePath(
+        file.path(out_dir, "metadata.parquet"),
+        mustWork = TRUE
+      )
+    )
+  )
 
-  .manifest_finish(
+  manifest <- .manifest_finish(
     manifest,
     status = "success"
   )
+
+  run_failed <- FALSE
 
   invisible(list(
     duckdb_path = duckdb_path,

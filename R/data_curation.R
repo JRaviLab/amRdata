@@ -530,21 +530,23 @@
 .ensure_bvbrc_cache <- function(base_dir = ".",
                                 verbose = TRUE,
                                 max_age_days = 30L,
-                                cache_rel = file.path("data", "bvbrc", "bvbrcData.duckdb"),
                                 cache_table = "bvbrc_bac_data") {
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  cache_db <- file.path(base_dir, cache_rel)
-
-  # Always delegate to .updateBVBRCdata() so its max_age_days staleness check
-  # actually runs
   .updateBVBRCdata(base_dir = base_dir, max_age_days = max_age_days, verbose = verbose)
 
-  if (!file.exists(cache_db)) stop("After .updateBVBRCdata(), cache DB still missing at: ", cache_db)
+  cache_db <- .amr_bfc_bvbrc_path(create = FALSE)
+
+  if (is.null(cache_db) || !file.exists(cache_db)) {
+    stop("After .updateBVBRCdata(), BFC cache DB could not be located.")
+  }
 
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
-  on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
+  on.exit(
+    try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE),
+    add = TRUE
+  )
+
   if (!(cache_table %in% DBI::dbListTables(con_cache))) {
-    stop("After .updateBVBRCdata(), table '", cache_table, "' still not found in ", cache_db)
+    stop("After .updateBVBRCdata(), table '", cache_table,"' was not found in BFC cache: ", cache_db)
   }
 
   invisible(cache_db)
@@ -553,12 +555,12 @@
 #' Update BV-BRC metadata in DuckDB
 #'
 #' Fetches bacterial genome metadata from BV-BRC using the BV-BRC CLI and stores
-#' it in a DuckDB database under `data/bvbrc/bvbrcData.duckdb` within `base_dir`.
+#' it in a BiocFileCache-managed DuckDB database.
 #' If the table exists and is older than `max_age_days`, it refreshes; otherwise,
 #' loads the existing table. BV-BRC column names are preserved exactly.
 #'
-#' @param base_dir Character. Project root. The DuckDB database is created at
-#'   `file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")`.
+#' @param base_dir Character. Project root. Retained for compatibility with the
+#'   overall amRdata workflow; the cache itself is managed by BiocFileCache.
 #' @param max_age_days Integer. Refresh the table if older than this many days. Default: 30.
 #' @param image Character. Docker image used by `.fetchBVBRCdata()`. Default: `"danylmb/bvbrc:5.3"`.
 #' @param verbose Logical. If TRUE, prints informative messages. Default: TRUE.
@@ -569,16 +571,13 @@
                              max_age_days = 30L,
                              image = "danylmb/bvbrc:5.3",
                              verbose = TRUE) {
-  # base_dir as project root
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  data_dir <- file.path(base_dir, "data")
-  bvbrc_dir <- file.path(data_dir, "bvbrc")
-  logs_dir <- file.path(data_dir, "logs")
 
-  dir.create(bvbrc_dir, recursive = TRUE, showWarnings = FALSE)
+  logs_dir <- file.path(base_dir, "data", "logs")
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
 
-  db_path <- file.path(bvbrc_dir, "bvbrcData.duckdb")
+  # Creates the BiocFileCache-assisted home for BV-BRC data
+  db_path <- .amr_bfc_bvbrc_path(create = TRUE)
   table_name <- "bvbrc_bac_data"
   meta_table <- "__meta"
 
@@ -669,7 +668,7 @@
 #' case-insensitive substrings against `genome.species`.
 #'
 #' @param base_dir Character. Project root. BV-BRC cache is expected at
-#'   `file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")`.
+#'   the default BiocFileCache data directory.
 #' @param user_bacs Character vector. Mixed inputs of taxon IDs and/or species strings.
 #'
 #' @return A tibble with columns `genome.taxon_id` and `genome.species`, or NULL with a message.
@@ -828,10 +827,11 @@
   db_path <- paths$db_path
 
   # Got a cache? Use that, it's fast
-  cache_db <- file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")
-  if (!file.exists(cache_db)) {
-    stop("BV-BRC cache not found at: ", cache_db, ". Run .updateBVBRCdata() first.")
+  cache_db <- .amr_bfc_bvbrc_path(create = FALSE)
+  if (is.null(cache_db) || !file.exists(cache_db)) {
+    stop("BV-BRC cache not found in BiocFileCache. Run .updateBVBRCdata() first.")
   }
+
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
   on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
 
@@ -1476,9 +1476,9 @@ retrieveMetadata <- function(user_bacs,
 #' apply evidence & genome_quality filters.
 #'
 #' Fallback path: if "metadata" is missing and fallback_to_bvbrc_cache = TRUE,
-#' read BV-BRC cache at <base_dir>/data/bvbrc/bvbrcData.duckdb ("bvbrc_bac_data"),
-#' derive genome IDs from user_bacs (taxon IDs or species substring), and
-#' write a minimal "filtered" table (without AMR evidence filtering).
+#' read BV-BRC cache at default BiocFileCache data directory, derive genome IDs
+#' from user_bacs (taxon IDs or species substring), and write a minimal
+#' "filtered" table (without AMR evidence filtering).
 #'
 #' @param evidence_mode Character. One of:
 #'   "lab_only"   (default) -> only laboratory evidence
@@ -1581,12 +1581,14 @@ retrieveMetadata <- function(user_bacs,
     DBI::dbDisconnect(con, shutdown = TRUE)
     stop("No 'metadata' table found in ", db_path, ". Run retrieveMetadata() first.")
   }
-  if (isTRUE(verbose)) message("No 'metadata' in per-selection DB. Falling back to BV-BRC cache at data/bvbrc/.")
+  if (isTRUE(verbose)) {
+    message("No 'metadata' in per-selection DB. Falling back to BV-BRC cache in BiocFileCache.")
+  }
 
-  cache_db <- file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")
-  if (!file.exists(cache_db)) {
+  cache_db <- .amr_bfc_bvbrc_path(create = FALSE)
+  if (is.null(cache_db) || !file.exists(cache_db)) {
     DBI::dbDisconnect(con, shutdown = TRUE)
-    stop("BV-BRC cache not found at: ", cache_db, ". Run .updateBVBRCdata() first.")
+    stop("BV-BRC cache not found in BiocFileCache. Run .updateBVBRCdata() first.")
   }
 
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
@@ -2199,7 +2201,7 @@ prepareGenomes <- function(user_bacs,
       parameters = list(
         max_age_days = 30L
       ),
-      outputs = file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb"),
+      outputs = .amr_bfc_bvbrc_path(create = FALSE),
       tool = list(
         name = "BV-BRC",
         interface = "p3-all-genomes"
@@ -2395,22 +2397,41 @@ prepareGenomes <- function(user_bacs,
     )
   }
 
-  if (isTRUE(load_tables)) {
-    return(list(
+  result <- if (isTRUE(load_tables)) {
+    list(
       duckdb_path = paths$db_path,
       table_name = "files",
       data = if (!is.null(export_res)) export_res$data else NULL
-    ))
+    )
+  } else {
+    out
   }
 
-  run_failed <- FALSE
-
-  .manifest_finish(
+  manifest <- .manifest_finish(
     manifest,
     status = "success"
   )
 
-  invisible(out)
+  run_failed <- FALSE
+
+  tryCatch(
+    {
+      .amr_bfc_register_local(
+        path = manifest$path,
+        rname = .amr_bfc_manifest_rname(manifest)
+      )
+    },
+    error = function(e) {
+      warning(
+        "Dataset completed successfully, but its manifest could not be registered ",
+        "with BiocFileCache: ",
+        conditionMessage(e),
+        call. = FALSE
+      )
+    }
+  )
+
+  invisible(result)
 }
 
 #' Export DuckDB tables and optionally load them into R
