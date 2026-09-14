@@ -1897,12 +1897,12 @@
   )
 }
 
-.hmmer_version <- function(docker_image = "staphb/hmmer") {
+.hmmer_version <- function(docker_image = "docker://staphb/hmmer:latest") {
   output <- system2(
-    "docker",
+    "apptainer",
     args = c(
-      "run",
-      "--rm",
+      "exec",
+#       "--rm",
       docker_image,
       "hmmsearch",
       "-h"
