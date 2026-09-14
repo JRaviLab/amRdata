@@ -1406,7 +1406,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   Default: `8`.
 #' @param n_workers Integer. Number of parallel HMMER jobs to run. Default: `8`.
 #' @param verbose Logical. Print progress messages. Default: `TRUE`.#'
-#' @returns
+#' @returns Invisibily returns completed HMMER Parquet files per requested database.
 #'
 #' @keywords internal
 .runHMMER <- function(duckdb_path,
@@ -2236,7 +2236,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @param ref_file_path Directory containing reference TSVs used by
 #'   [cleanMetaData()] and [cleanData()] for metadata harmonization.
 #'   Default: `"data_raw/"`.
-#' 
+#'
 #' @export
 cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
   duckdb_path <- normalizePath(duckdb_path)
