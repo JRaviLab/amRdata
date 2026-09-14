@@ -3,7 +3,6 @@
 export(.extractAMRtable)
 export(.updateBVBRCdata)
 export(CDHIT2duckdb)
-export(buildClusterFeatureMap)
 export(buildDyadFeatureMap)
 export(checkDataAvailability)
 export(cleanData)

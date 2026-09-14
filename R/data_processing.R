@@ -446,6 +446,7 @@ NULL
     tidyr::separate_rows(protein_ids, sep = ";") |>
     # dplyr::filter(!stringr::str_detect(protein_ids, "_pseudo")) |>
     dplyr::mutate(protein_ids = gsub("_pseudo", "", protein_ids)) |>
+    dplyr::mutate(protein_ids = gsub("_len", "", protein_ids)) |>
     DBI::dbWriteTable(conn = con, name = "genome_gene_protein", overwrite = TRUE)
 }
 
@@ -1413,7 +1414,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   Default: `8`.
 #' @param n_workers Integer. Number of parallel HMMER jobs to run. Default: `8`.
 #' @param verbose Logical. Print progress messages. Default: `TRUE`.#'
-#' @returns
+#' @returns Invisibily returns completed HMMER Parquet files per requested database.
 #'
 #' @keywords internal
 .runHMMER <- function(duckdb_path,
