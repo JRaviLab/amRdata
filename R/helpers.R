@@ -678,6 +678,13 @@
     0L
   }
 
+observed_drugs <- if (!is.na(antibiotic_col)) {
+    x <- trimws(as.character(amr_data[[antibiotic_col]]))
+    unique(x[!is.na(x) & nzchar(x)])
+  } else {
+    character(0)
+  }
+
   drug_classes <- collapse_unique(
     drug_class$drug_class[
       drug_class$drug %in% observed_drugs
