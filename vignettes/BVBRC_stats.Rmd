@@ -479,7 +479,7 @@ print(diag_table, n = Inf)
 ```{r priority-pathogens}
 species_for_amreh <- bvbrc_clean |> 
   dplyr::distinct(species, antimicrobial_resistance, genome_id, antimicrobial_resistance_evidence, genome_quality, genome_status, checkm_completeness) |>
-  dplyr::filter(antimicrobial_resistance_evidence == "AMR Panel", genome_quality == "Good", genome_status %in% c("WGS", "Complete"), checkm_completeness > 98, !is.na(species)) |>
+  dplyr::filter(antimicrobial_resistance_evidence == "AMR Panel", genome_quality == "Good", genome_status %in% c("WGS", "Complete"), as.numeric(checkm_completeness) > 98, !is.na(species), !is.na(antimicrobial_resistance)) |>
   dplyr::distinct(species, genome_id) |> 
   dplyr::count(species) |> 
   dplyr::arrange(n) |>
