@@ -1,6 +1,116 @@
 #' @importFrom data.table :=
 NULL
 
+#' Clear cached HMMER databases
+#'
+#' Removes user-specified HMMER databases from the shared amRdata BFC registry
+#' and deletes their local databases. Databases will be downloaded and prepared
+#' again the next time they are requested. This can help resolve corrupt database
+#' issues that may arise from time to time, especially on certain environments
+#' with unstable network connections.
+#'
+#' If specific `databases` are not supplied in an interactive R session, a menu
+#' allows the user to select a specific database, or remove all databases.
+#'
+#' @param databases Character vector of HMMER databases to remove.
+#'   Supported values are `"Pfam"`, `"COG"`, `"AMRFinder"`, and `"DefenseCas"`.
+#'   If `NULL` in an interactive session, the user is prompted to choose.
+#' @param verbose Logical. Print information about removed databases.
+#'   Default: `TRUE`.
+#'
+#' @return Invisibly returns the names of databases removed.
+#'
+#' @export
+clearHMMERdatabases <- function(
+    databases = NULL,
+    verbose = TRUE
+) {
+  supported <- c(
+    "Pfam",
+    "COG",
+    "AMRFinder",
+    "DefenseCas"
+  )
+
+  # Interactive selection if no database supplied
+  if (is.null(databases)) {
+    if (!interactive()) {
+      stop(
+        "Values for `databases` must be supplied in non-interactive sessions.",
+        call. = FALSE
+      )
+    }
+
+    selection <- utils::menu(
+      choices = c(supported, "All"),
+      title = "Which HMMER database would you like to remove?"
+    )
+
+    # utils::menu() returns a 0 value when cancelled. Reassure user that
+    # no damage was done to their precious databases
+    if (selection == 0L) {
+      if (isTRUE(verbose)) message("No HMMER databases removed.")
+
+      return(invisible(character(0)))
+    }
+
+    # Final numbered option is "All" if you want the nuclear option
+    if (selection == length(supported) + 1L) {
+      databases <- supported
+    } else {
+      databases <- supported[[selection]]
+    }
+  }
+
+  databases <- unique(as.character(databases))
+
+  if (!length(databases)) {
+    stop("At least one HMMER database must be specified.", call. = FALSE)
+  }
+
+  # For when you either have a typo or forget what databases there are
+  unknown <- setdiff(databases, supported)
+
+  if (length(unknown)) {
+    stop(
+      "Unknown HMMER database(s): ",
+      paste(unknown, collapse = ", "),
+      ". Supported databases are: ",
+      paste(supported, collapse = ", "),
+      ".",
+      call. = FALSE
+    )
+  }
+
+  # What's in the file cache already?
+  bfc <- .amr_bfc()
+  resources <- .amr_bfc_hmmer_resources()
+  hmmer_dir <- .defaultHmmerDbDir()
+
+  for (db in databases) {
+    prefix <- .amr_bfc_hmmer_rname(db)
+
+    # Match the database itself and any registered components
+    hits <- resources[resources$rname == prefix | startsWith(resources$rname, paste0(prefix, "_")),, drop = FALSE]
+
+    if (nrow(hits)) {
+      BiocFileCache::bfcremove(bfc, hits$rid)
+    }
+
+    # Purge the whole directory so partially downloaded/extracted files,
+    # combined HMMs, and hmmpress fluff cannot persist in vile ways
+    db_dir <- file.path(hmmer_dir, db)
+
+    if (dir.exists(db_dir)) {
+      unlink(db_dir, recursive = TRUE, force = TRUE)
+    }
+
+    if (isTRUE(verbose)) message("Cleared HMMER database: ", db)
+  }
+
+  invisible(databases)
+}
+
 # Launch Panaroo to build a pangenome (per batch)
 #' processPanaroo()
 #'
