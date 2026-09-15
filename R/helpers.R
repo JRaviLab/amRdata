@@ -1,4 +1,83 @@
 ### Helpers for amRdata live in this script
+
+##########################
+# CPU allocation helpers #
+##########################
+
+#' Resolve requested worker counts againstCPUs available
+#' @keywords internal
+.resolve_workers <- function(requested = NULL, n_tasks = NULL, warn = TRUE) {
+  # No detectCores shenanigans
+  available <- as.integer(parallelly::availableCores())
+
+  if (is.null(requested)) {
+    workers <- available
+  } else {
+    if (length(requested) != 1L ||
+        is.na(requested) ||
+        !is.numeric(requested) ||
+        requested < 1 ||
+        requested != floor(requested)) {
+      stop("`requested` must be a positive number.")
+    }
+
+    requested <- as.integer(requested)
+    workers <- min(requested, available)
+
+    # Have you requested too many? The code politely figures it out for you
+    if (isTRUE(warn) && requested > available) {
+      warning(
+        sprintf(
+          "Requested %d parallel workers, but only %d CPU cores are available ",
+          requested, available
+        ),
+        "to this R process; using ",
+        available,
+        " workers instead.",
+        call. = FALSE
+      )
+    }
+  }
+
+  if (!is.null(n_tasks)) {
+    workers <- min(workers, max(1L, as.integer(n_tasks)))
+  }
+
+  max(1L, as.integer(workers))
+}
+
+#' Run independent BV-BRC API requests with explicit future plan
+#' @keywords internal
+.bvbrcFutureMap <- function(.x, .f, num_workers = 8L, ...) {
+  if (!length(.x)) {
+    return(list())
+  }
+
+  n_workers <- .resolve_workers(
+    requested = num_workers,
+    n_tasks = length(.x)
+  )
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+
+  if (n_workers == 1L) {
+    future::plan(future::sequential)
+  } else {
+    future::plan(
+      future::multisession,
+      workers = n_workers
+    )
+  }
+
+  furrr::future_map(
+    .x,
+    .f,
+    ...,
+    .options = furrr::furrr_options(seed = TRUE)
+  )
+}
+
 #########################
 # Data curation helpers #
 #########################
@@ -676,6 +755,13 @@
     length(unique(x[!is.na(x) & nzchar(x)]))
   } else {
     0L
+  }
+
+observed_drugs <- if (!is.na(antibiotic_col)) {
+    x <- trimws(as.character(amr_data[[antibiotic_col]]))
+    unique(x[!is.na(x) & nzchar(x)])
+  } else {
+    character(0)
   }
 
   drug_classes <- collapse_unique(
