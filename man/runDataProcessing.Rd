@@ -28,7 +28,6 @@ runDataProcessing(
   hmmer_docker_image = "staphb/hmmer",
   hmmer_num_splits = 8L,
   hmmer_workers = 8L,
-  ref_file_path = "data_raw/",
   verbose = TRUE
 )
 }
@@ -91,8 +90,9 @@ Default: \code{"cdhit_out"}.}
 \item{hmmer_databases}{Character vector. HMMER annotation databases to run.
 Default: \code{c("Pfam", "COG", "AMRFinder", "DefenseCas")}.}
 
-\item{hmmer_db_dir}{Character or \code{NULL}. Directory containing the shared HMMER
-database cache. If \code{NULL}, uses the amRdata user cache.}
+\item{hmmer_db_dir}{Character. Directory containing the prepared HMMER
+databases. If \code{NULL}, the default BiocFileCache-managed HMMER directory
+is used.}
 
 \item{hmmer_docker_image}{Character. Docker image containing HMMER.
 Default: \code{"staphb/hmmer"}.}
@@ -101,10 +101,6 @@ Default: \code{"staphb/hmmer"}.}
 Default: \code{8}.}
 
 \item{hmmer_workers}{Integer. Number of parallel HMMER workers. Default: \code{8}.}
-
-\item{ref_file_path}{Character. Directory containing reference TSVs used by
-\code{\link[=cleanMetaData]{cleanMetaData()}} and \code{\link[=cleanData]{cleanData()}} for metadata harmonization.
-Default: \code{"data_raw/"}.}
 
 \item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.}
 }
@@ -208,8 +204,7 @@ protein-gene dyad feature network used for downstream graph analysis.
 runDataProcessing(
   duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
   output_path   = "data/Shigella_flexneri",
-  threads       = 8,
-  ref_file_path = "data_raw/"
+  threads       = 8
 )
 
 # After completion:

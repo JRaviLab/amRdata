@@ -1,6 +1,6 @@
 Package: amRdata
 Title: To download, process, and featurize AMR genome isolates and metadata | pkg 1 of 3-pkg amR suite
-Version: 0.0.0.9000
+Version: 0.0.0.9001
 Authors@R: c(
     person("Janani", "Ravi", , "janani.ravi@cuanschutz.edu", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0001-7443-925X")),
@@ -31,6 +31,7 @@ BugReports: https://github.com/JRaviLab/amRdata/issues
 Imports:
     arrow,
     BiocParallel,
+    BiocFileCache,
     Biostrings,
     DBI,
     data.table,
@@ -58,3 +59,4 @@ Suggests:
     writexl,
     testthat (>= 3.0.0)
 Config/roxygen2/version: 8.1.0
+RoxygenNote: 7.3.3

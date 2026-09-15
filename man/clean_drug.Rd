@@ -11,7 +11,7 @@ A data frame
 Internal reference data
 }
 \usage{
-clean_drug
+data(clean_drug)
 }
 \description{
 A dataset mapping original drug names to cleaned/standardized names.

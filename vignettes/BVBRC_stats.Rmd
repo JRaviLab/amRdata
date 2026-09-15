@@ -298,6 +298,27 @@ clean_all_char_cols <- function(df) {
     ))
 }
 
+# Clean ALL List columns in the data frame
+clean_list_col <- function(x) {
+  purrr::map(
+    x,
+    \(z) {
+      if (is.null(z) || length(z) == 0)
+        return(NA_character_)
+
+      z <- as.character(unlist(z))
+      z <- stringr::str_squish(z)
+
+      z[is_placeholder_na(z)] <- NA_character_
+
+      if (all(is.na(z)))
+        return(NA_character_)
+
+      z
+    }
+  )
+}
+
 # --- Block-level summaries ---------------------------------------------------
 summarize_block <- function(df, cols, block_name) {
   if (length(cols) == 0) {
@@ -337,6 +358,40 @@ bvbrc <- fetchCompleteBVBRCMetadataAPI()
 
 # Apply to your table
 bvbrc_clean <- clean_all_char_cols(bvbrc)
+list_cols <- names(bvbrc_clean)[sapply(bvbrc_clean, is.list)]
+bvbrc_clean <- bvbrc_clean |>
+  mutate(
+    across(all_of(list_cols), clean_list_col)
+  )
+
+# Save the table to parquet
+
+flatten_list <- function(x) {
+  purrr::map_chr(
+    x,
+    \(z) {
+      if (is.null(z) || length(z) == 0)
+        return(NA_character_)
+
+      paste(as.character(unlist(z)), collapse = ";")
+    }
+  )
+}
+
+bvbrc_clean <- bvbrc_clean |>
+  dplyr::mutate(
+    dplyr::across(
+      dplyr::all_of(list_cols),
+      flatten_list
+    )
+  )
+
+arrow::write_parquet(
+  bvbrc_clean,
+  "data/bvbrc_clean.parquet",
+  compression = "zstd"
+)
+
 # --- Per-column stats --------------------------------------------------------
 col_stats <- tibble::tibble(column = colnames(bvbrc_clean)) |>
   dplyr::mutate(

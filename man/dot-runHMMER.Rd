@@ -42,6 +42,9 @@ Default: \code{8}.}
 
 \item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.#'}
 }
+\value{
+Invisibily returns completed HMMER Parquet files per requested database.
+}
 \description{
 Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.
 }

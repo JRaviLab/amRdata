@@ -444,6 +444,7 @@ NULL
     tidyr::separate_rows(protein_ids, sep = ";") |>
     # dplyr::filter(!stringr::str_detect(protein_ids, "_pseudo")) |>
     dplyr::mutate(protein_ids = gsub("_pseudo", "", protein_ids)) |>
+    dplyr::mutate(protein_ids = gsub("_len", "", protein_ids)) |>
     DBI::dbWriteTable(conn = con, name = "genome_gene_protein", overwrite = TRUE)
 }
 
@@ -1258,11 +1259,19 @@ CDHIT2duckdb <- function(duckdb_path,
       }
     }
 
+    # Registering HMMER databases in BiocFileCache for later use
+    bfc_resource <- .amr_bfc_register_hmmer(
+      database = db_name,
+      hmm_path = hmm_file
+    )
+
     db_paths[[db_name]] <- list(
       hmm = hmm_file,
       source = db$url,
       type = db$type,
-      pressed = pressed_files
+      pressed = pressed_files,
+      bfc_rid = bfc_resource$rid,
+      bfc_rname = bfc_resource$rname
     )
 
     if (verbose) {
@@ -1403,7 +1412,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   Default: `8`.
 #' @param n_workers Integer. Number of parallel HMMER jobs to run. Default: `8`.
 #' @param verbose Logical. Print progress messages. Default: `TRUE`.#'
-#' @returns
+#' @returns Invisibily returns completed HMMER Parquet files per requested database.
 #'
 #' @keywords internal
 .runHMMER <- function(duckdb_path,
@@ -2044,6 +2053,18 @@ CDHIT2duckdb <- function(duckdb_path,
     "CasFinder"
   )
 
+  defense_bfc <- .amr_bfc_register_hmmer(
+    database = "DefenseCas",
+    component = "DefenseFinder",
+    hmm_path = defense_hmm
+  )
+
+  cas_bfc <- .amr_bfc_register_hmmer(
+    database = "DefenseCas",
+    component = "CasFinder",
+    hmm_path = cas_hmm
+  )
+
   ####################################################################
   # load proteins
   ####################################################################
@@ -2215,8 +2236,16 @@ CDHIT2duckdb <- function(duckdb_path,
 
   invisible(list(
     databases = list(
-      DefenseFinder = defense_hmm,
-      CasFinder = cas_hmm
+      DefenseFinder = list(
+        hmm = defense_hmm,
+        bfc_rid = defense_bfc$rid,
+        bfc_rname = defense_bfc$rname
+      ),
+      CasFinder = list(
+        hmm = cas_hmm,
+        bfc_rid = cas_bfc$rid,
+        bfc_rname = cas_bfc$rname
+      )
     ),
     output = parquet_file
   ))
@@ -2230,12 +2259,9 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   already contain the tables written by [prepareGenomes()] and the upstream
 #'   genome-processing steps.
 #' @param path the path to working directory
-#' @param ref_file_path Directory containing reference TSVs used by
-#'   [cleanMetaData()] and [cleanData()] for metadata harmonization.
-#'   Default: `"data_raw/"`.
-#' 
+#'
 #' @export
-cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
+cleanMetaData <- function(duckdb_path, path) {
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when
   # the DuckDB lives under data/<bug>/, or else fall back to the DuckDB directory.
@@ -2255,13 +2281,7 @@ cleanMetaData <- function(duckdb_path, path, ref_file_path = "data_raw/") {
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
-  ref_file_path <- normalizePath(ref_file_path)
-
-  clean_drug <- readr::read_tsv(file.path(ref_file_path, "clean_drug.tsv"))
-  drug_class <- readr::read_tsv(file.path(ref_file_path, "drug_class.tsv"))
-  drug_abbr <- readr::read_tsv(file.path(ref_file_path, "drug_abbr.tsv"))
-  class_abbr <- readr::read_tsv(file.path(ref_file_path, "class_abbr.tsv"))
-  clean_countries <- readr::read_tsv(file.path(ref_file_path, "cleaned_bvbrc_countries.tsv")) |>
+  clean_countries <- cleaned_bvbrc_countries |>
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
@@ -2701,17 +2721,15 @@ cleanData <- function(duckdb_path, path) {
 #'
 #' @param hmmer_databases Character vector. HMMER annotation databases to run.
 #'   Default: `c("Pfam", "COG", "AMRFinder", "DefenseCas")`.
-#' @param hmmer_db_dir Character or `NULL`. Directory containing the shared HMMER
-#'   database cache. If `NULL`, uses the amRdata user cache.
+#' @param hmmer_db_dir Character. Directory containing the prepared HMMER
+#'   databases. If `NULL`, the default BiocFileCache-managed HMMER directory
+#'   is used.
 #' @param hmmer_docker_image Character. Docker image containing HMMER.
 #'   Default: `"staphb/hmmer"`.
 #' @param hmmer_num_splits Integer. Number of protein-sequence chunks for HMMER.
 #'   Default: `8`.
 #' @param hmmer_workers Integer. Number of parallel HMMER workers. Default: `8`.
 #'
-#' @param ref_file_path Character. Directory containing reference TSVs used by
-#'   [cleanMetaData()] and [cleanData()] for metadata harmonization.
-#'   Default: `"data_raw/"`.
 #' @param verbose Logical. Print progress messages. Default: `TRUE`.
 #'
 #' @return
@@ -2760,8 +2778,7 @@ cleanData <- function(duckdb_path, path) {
 #' runDataProcessing(
 #'   duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
 #'   output_path   = "data/Shigella_flexneri",
-#'   threads       = 8,
-#'   ref_file_path = "data_raw/"
+#'   threads       = 8
 #' )
 #'
 #' # After completion:
@@ -2807,7 +2824,6 @@ runDataProcessing <- function(
     hmmer_workers = 8L,
 
     # Metadata cleaning
-    ref_file_path = "data_raw/",
     verbose = TRUE
 ) {
   panaroo_refind_mode <- match.arg(panaroo_refind_mode)
@@ -2843,6 +2859,19 @@ runDataProcessing <- function(
       )
     },
     add = TRUE
+  )
+
+  processing_run_id <-
+    manifest$manifest$runs[[manifest$run_index]]$run_id
+
+  manifest <- .manifest_artifact(
+    manifest,
+    name = "amRml_input",
+    status = "building",
+    details = list(
+      producer = "amRdata",
+      producer_run_id = processing_run_id
+    )
   )
 
   # Record the start of this processing run
@@ -3009,6 +3038,7 @@ runDataProcessing <- function(
     parameters = list(
       databases = hmmer_databases,
       database_dir = hmmer_db_dir,
+      database_cache = "BiocFileCache",
       docker_image = hmmer_docker_image,
       threads = threads,
       num_of_splits = hmmer_num_splits,
@@ -3048,17 +3078,13 @@ runDataProcessing <- function(
 
   if ("DefenseCas" %in% hmmer_databases) {
     defense_result <- .defenseHMMER(
-                                    defense_db_dir = if (is.null(hmmer_db_dir)) {
-                                      .defaultHmmerDbDir()
-                                    } else {
-                                      file.path(hmmer_db_dir, "DefenseCas")
-                                    },
-                                    docker_image = hmmer_docker_image,
-                                    duckdb_path = duckdb_path,
-                                    output_path = out_dir,
-                                    threads = threads,
-                                    verbose = verbose
-                                  )
+      defense_db_dir = file.path(hmmer_db_dir, "DefenseCas"),
+      docker_image = hmmer_docker_image,
+      duckdb_path = duckdb_path,
+      output_path = out_dir,
+      threads = threads,
+      verbose = verbose
+    )
   }
 
   expected_outputs <- file.path(
@@ -3109,6 +3135,7 @@ runDataProcessing <- function(
     parameters = list(
       databases = hmmer_databases,
       database_dir = hmmer_db_dir,
+      database_cache = "BiocFileCache",
       docker_image = hmmer_docker_image,
       threads = threads,
       num_of_splits = hmmer_num_splits,
@@ -3139,11 +3166,11 @@ runDataProcessing <- function(
   )
 
   # 4) Clean metadata and export Parquet + Parquet-backed DuckDB
-  if (is.null(ref_file_path) || !nzchar(ref_file_path)) {
-    stop("`ref_file_path` (directory with reference TSVs) must be provided to cleanData().")
+  if (isTRUE(verbose)) {
+    message("Cleaning metadata and exporting Parquet-backed views.")
   }
-  if (isTRUE(verbose)) message("Cleaning metadata and exporting Parquet-backed views.")
-  cleanMetaData(duckdb_path = duckdb_path, path = out_dir, ref_file_path = ref_file_path)
+
+  cleanMetaData(duckdb_path = duckdb_path, path = out_dir)
   cleanData(duckdb_path = duckdb_path, path = out_dir)
 
   parquet_duckdb_path <- paste0(
@@ -3226,15 +3253,15 @@ if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all f
     name = "clean_metadata_and_export",
     status = "success",
     parameters = list(
-      reference_path = normalizePath(
-        ref_file_path,
-        mustWork = FALSE
+      reference_data = c(
+        "clean_drug",
+        "drug_class",
+        "drug_abbr",
+        "class_abbr",
+        "cleaned_bvbrc_countries"
       )
     ),
-    inputs = c(
-      duckdb_path,
-      ref_file_path
-    ),
+    inputs = duckdb_path,
     outputs = c(
       parquet_files,
       parquet_duckdb_path
@@ -3245,12 +3272,35 @@ if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all f
     )
   )
 
-  run_failed <- FALSE
+  # Labeling that this run is ready for amRml in the next package
+  manifest <- .manifest_artifact(
+    manifest,
+    name = "amRml_input",
+    status = "ready",
+    details = list(
+      producer = "amRdata",
+      producer_run_id = processing_run_id,
+      directory = normalizePath(
+        out_dir,
+        mustWork = TRUE
+      ),
+      parquet_duckdb = normalizePath(
+        parquet_duckdb_path,
+        mustWork = TRUE
+      ),
+      metadata_parquet = normalizePath(
+        file.path(out_dir, "metadata.parquet"),
+        mustWork = TRUE
+      )
+    )
+  )
 
-  .manifest_finish(
+  manifest <- .manifest_finish(
     manifest,
     status = "success"
   )
+
+  run_failed <- FALSE
 
   invisible(list(
     duckdb_path = duckdb_path,
