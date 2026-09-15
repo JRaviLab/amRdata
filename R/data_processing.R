@@ -158,6 +158,7 @@ NULL
                         write_pseudogene_audit = TRUE,
                         verbose = TRUE) {
   refind_mode <- match.arg(refind_mode)
+  threads <- .resolve_workers(requested = threads)
   duckdb_path <- normalizePath(duckdb_path)
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
@@ -224,15 +225,20 @@ NULL
     return(invisible(list()))
   }
 
-  # Ensure sum of per-job CPUs does not exceed `threads`
-  panaroo_threads_per_job <- max(1L, floor(threads / n_jobs))
+  # Never allow more simultaneous Panaroo jobs than total CPUs -- that's bad
+  n_parallel_jobs <- .resolve_workers(requested = min(n_jobs, threads),
+    n_tasks = n_jobs, warn = FALSE)
+
+  # Divide the total CPU budget across simultaneous Panaroo jobs
+  panaroo_threads_per_job <- max(1L, floor(threads / n_parallel_jobs))
 
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
-  if (n_jobs <= 1L) {
+
+  if (n_parallel_jobs == 1L) {
     future::plan(future::sequential)
   } else {
-    future::plan(future::multisession, workers = n_jobs)
+    future::plan(future::multisession, workers = n_parallel_jobs)
   }
 
   batch_panaroo_run <- furrr::future_map(
@@ -283,6 +289,7 @@ NULL
     stop("Docker is not available on your PATH but is required to run panaroo-merge.")
   }
 
+  threads <- .resolve_workers(requested = threads)
   merge_dir <- file.path(input_path, "merge_output")
   dir.create(merge_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -503,6 +510,12 @@ NULL
     stop("Docker is not available on your PATH but is required to run CD-HIT.")
   }
 
+  # CD-HIT sets theads = 0 to mean all CPUs, we limit to CPUs available to this R session
+  if (identical(threads, 0L) || identical(threads, 0)) {
+    threads <- .resolve_workers(requested = NULL)
+  } else {
+    threads <- .resolve_workers(requested = threads)
+  }
   duckdb_path <- .docker_path(duckdb_path)
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
     output_path <- dirname(duckdb_path)
@@ -1447,6 +1460,7 @@ CDHIT2duckdb <- function(duckdb_path,
     )
   }
 
+  threads <- .resolve_workers(requested = threads)
   duckdb_path <- .docker_path(duckdb_path)
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
     output_path <- dirname(duckdb_path)
@@ -1525,13 +1539,16 @@ CDHIT2duckdb <- function(duckdb_path,
     ) |>
     dplyr::select(JOB_NAME, FASTA, DB)
 
+  n_workers <- .resolve_workers(requested = n_workers, n_tasks = min(nrow(job_list), threads))
+
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
 
-  future::plan(
-    future::multisession,
-    workers = max(1L, n_workers)
-  )
+  if (n_workers == 1L) {
+    future::plan(future::sequential)
+  } else {
+    future::plan(future::multisession, workers = n_workers)
+  }
 
   if (verbose) message("Running HMMER jobs")
   parquet_files <- furrr::future_map_chr(
@@ -1815,6 +1832,7 @@ CDHIT2duckdb <- function(duckdb_path,
     stop("Docker is required.")
   }
 
+  threads <- .resolve_workers(requested = threads)
   defense_db_dir <- normalizePath(
     defense_db_dir,
     mustWork = FALSE
@@ -2829,6 +2847,9 @@ runDataProcessing <- function(
     verbose = TRUE
 ) {
   panaroo_refind_mode <- match.arg(panaroo_refind_mode)
+
+  requested_threads <- threads
+  threads <- .resolve_workers(requested = threads)
   duckdb_path <- normalizePath(duckdb_path)
   out_dir <- if (is.null(output_path)) dirname(duckdb_path) else normalizePath(output_path)
 
@@ -2899,7 +2920,8 @@ runDataProcessing <- function(
       len_dif_percent = panaroo_len_dif_percent,
       cluster_threshold = panaroo_cluster_threshold,
       family_seq_identity = panaroo_family_seq_identity,
-      threads = threads,
+      threads_requested = requested_threads,
+      threads_used = threads,
       split_jobs = panaroo_split_jobs,
       refind_mode = panaroo_refind_mode,
       strip_pseudogenes = panaroo_strip_pseudogenes

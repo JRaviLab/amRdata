@@ -96,7 +96,8 @@
 
 # --- AMR phenotype (genome_amr) -> genome_drug.* ------------------------------
 .extractAMRtableApi <- function(genome_ids, abx = "All",
-                                chunk_size = 500L, verbose = TRUE) {
+                                chunk_size = 500L, num_workers = 8L,
+                                verbose = TRUE) {
   # Full genome_amr field set; computational_method and measurement_unit are
   # populated on live BV-BRC (confirmed against the real API), so both are
   # fetched -- only `source` is consistently absent and gets filled "".
@@ -116,21 +117,34 @@
     message("  [api] AMR: ", length(genome_ids), " genomes in ",
       length(chunks), " chunk(s)")
   }
-  parts <- furrr::future_map(
+  parts <- .bvbrcFutureMap(
     chunks,
     function(ids) {
       ab <- if (identical(abx, "All")) {
         ""
       } else {
-        sprintf(",in(antibiotic,(%s))",
-          paste(vapply(abx, .bvbrcEnc, ""), collapse = ","))
+        sprintf(
+          ",in(antibiotic,(%s))",
+          paste(vapply(abx, .bvbrcEnc, ""), collapse = ",")
+        )
       }
-      filt <- sprintf("and(in(genome_id,(%s))%s)",
-        paste(vapply(ids, .bvbrcEnc, ""), collapse = ","), ab)
-      .bvbrcApiFetch("genome_amr", filt, sel, key = "id")
+
+      filt <- sprintf(
+        "and(in(genome_id,(%s))%s)",
+        paste(vapply(ids, .bvbrcEnc, ""), collapse = ","),
+        ab
+      )
+
+      .bvbrcApiFetch(
+        "genome_amr",
+        filt,
+        sel,
+        key = "id"
+      )
     },
-    .options = furrr::furrr_options(seed = TRUE)
+    num_workers = num_workers
   )
+
   df <- data.table::rbindlist(parts, fill = TRUE, use.names = TRUE)
   .bvbrcPrefixFill(df, expected, "genome_drug")
 }
@@ -141,23 +155,36 @@
 # retrieveMetadata()'s summary). Uses the Data API instead of the Docker-built
 # cache, so retrieveMetadata(metadata_method = "api") needs no Docker.
 .resolveGenomeIDsApi <- function(base_dir = ".", user_bacs,
-                                 overwrite = FALSE, verbose = TRUE) {
+                                 overwrite = FALSE, num_workers = 8L,
+                                 verbose = TRUE) {
   sel <- "genome_name,taxon_id,species,strain"
-  parts <- furrr::future_map(
+  parts <- .bvbrcFutureMap(
     user_bacs,
     function(ub) {
       ub <- trimws(as.character(ub))
+
       key_filter <- if (grepl("^[0-9]+$", ub)) {
-        sprintf("eq(taxon_lineage_ids,%s)", ub) # taxon ID (any rank)
+        sprintf("eq(taxon_lineage_ids,%s)", ub)
       } else {
-        sprintf("eq(species,%s)", .bvbrcEnc(ub)) # species name
+        sprintf("eq(species,%s)", .bvbrcEnc(ub))
       }
+
       filt <- sprintf(
         "and(%s,eq(genome_quality,Good),in(genome_status,(WGS,Complete)))",
         key_filter
       )
-      if (isTRUE(verbose)) message("  [api] resolving genome IDs for '", ub, "'")
-      res <- .bvbrcApiFetch("genome", filt, sel, key = "genome_id")
+
+      if (isTRUE(verbose)) {
+        message("  [api] resolving genome IDs for '", ub, "'")
+      }
+
+      res <- .bvbrcApiFetch(
+        "genome",
+        filt,
+        sel,
+        key = "genome_id"
+      )
+
       if (nrow(res) == 0L) {
         warning(
           "BV-BRC API resolved 0 genomes for user_bacs entry '", ub, "'. ",
@@ -167,9 +194,10 @@
           call. = FALSE
         )
       }
+
       res
     },
-    .options = furrr::furrr_options(seed = TRUE)
+    num_workers = num_workers
   )
   df <- as.data.frame(
     data.table::rbindlist(parts, fill = TRUE, use.names = TRUE),
@@ -199,7 +227,8 @@
 
 # --- genome metadata (genome) -> genome.* -------------------------------------
 .extractGenomeDataApi <- function(genome_ids, fields,
-                                  chunk_size = 500L, verbose = TRUE) {
+                                  chunk_size = 500L, num_workers = 8L,
+                                  verbose = TRUE) {
   expected <- strsplit(fields, ",", fixed = TRUE)[[1]]
   expected <- unique(c("genome_id", expected))
   sel <- paste(setdiff(expected, "genome_id"), collapse = ",")
@@ -209,14 +238,22 @@
     message("  [api] genome metadata: ", length(genome_ids), " genomes in ",
       length(chunks), " chunk(s)")
   }
-  parts <- furrr::future_map(
+  parts <- .bvbrcFutureMap(
     chunks,
     function(ids) {
-      filt <- sprintf("in(genome_id,(%s))",
-        paste(vapply(ids, .bvbrcEnc, ""), collapse = ","))
-      .bvbrcApiFetch("genome", filt, sel, key = "genome_id")
+      filt <- sprintf(
+        "in(genome_id,(%s))",
+        paste(vapply(ids, .bvbrcEnc, ""), collapse = ",")
+      )
+
+      .bvbrcApiFetch(
+        "genome",
+        filt,
+        sel,
+        key = "genome_id"
+      )
     },
-    .options = furrr::furrr_options(seed = TRUE)
+    num_workers = num_workers
   )
   df <- data.table::rbindlist(parts, fill = TRUE, use.names = TRUE)
   .bvbrcPrefixFill(df, expected, "genome")
