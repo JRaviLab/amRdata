@@ -45,7 +45,7 @@ metadata step is restricted to these genome IDs instead of resolving them from
 \item{overwrite}{Logical. Passed to metadata filtering and DuckDB creation.
 Default FALSE.}
 
-\item{num_workers}{Integer. Parallel workers used for genome download.
+\item{num_workers}{Integer. Parallel workers used for metadata and genome download.
 Applied to both FTP and CLI download branches. Default: 8.}
 
 \item{chunk_size}{Integer. Size of each genome dataset chunk per download thread.}

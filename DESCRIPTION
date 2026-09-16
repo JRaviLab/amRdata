@@ -1,6 +1,6 @@
 Package: amRdata
 Title: To download, process, and featurize AMR genome isolates and metadata | pkg 1 of 3-pkg amR suite
-Version: 0.0.0.9000
+Version: 0.0.0.9001
 Authors@R: c(
     person("Janani", "Ravi", , "janani.ravi@cuanschutz.edu", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0001-7443-925X")),
@@ -23,6 +23,7 @@ Description: amRdata starts with a user's species query and downloads all
 Config/testthat/edition: 3
 License: BSD_3_clause + file LICENSE
 Encoding: UTF-8
+LazyData: true
 Roxygen: list(markdown = TRUE)
 Depends:
     R (>= 4.5.0)
@@ -31,6 +32,7 @@ BugReports: https://github.com/JRaviLab/amRdata/issues
 Imports:
     arrow,
     BiocParallel,
+    BiocFileCache,
     Biostrings,
     DBI,
     data.table,
@@ -45,6 +47,7 @@ Imports:
     httr2,
     jsonlite,
     knitr,
+    parallelly,
     purrr,
     readr,
     reshape2,
