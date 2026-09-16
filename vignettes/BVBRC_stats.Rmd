@@ -502,9 +502,10 @@ species_counts_for_amreh$species
 )
 
 save(
-species_counts_for_amreh,
-file = "data/species_counts_for_amreh.rda"
+  species_counts_named,
+  file = "data/species_counts_for_amreh.rda"
 )
+
 
 species_for_amreh <- species_counts_for_amreh |>
   dplyr::pull(species)
