@@ -2280,6 +2280,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'
 #' @export
 cleanMetaData <- function(duckdb_path, path) {
+invisible(lapply(list.files("data", pattern = "\\.rda$", full.names = TRUE), load, envir = .GlobalEnv))
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when
   # the DuckDB lives under data/<bug>/, or else fall back to the DuckDB directory.

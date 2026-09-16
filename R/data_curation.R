@@ -1257,6 +1257,7 @@ retrieveMetadata <- function(user_bacs,
   batch_size <- 500L
   genome_batches <- split(genome_ids, ceiling(seq_along(genome_ids) / batch_size))
 
+
   if (identical(metadata_method, "api")) {
     # BV-BRC Data API path (Docker-free, resilient; see R/bvbrc_api.R, issue #30)
     # Don't need to build a future pool for this branch either
