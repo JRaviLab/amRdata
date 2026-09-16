@@ -496,9 +496,9 @@ species_counts_for_amreh <- bvbrc_clean |>
   ) |>
   dplyr::arrange(genome_count)
 
-species_counts_for_amreh <- stats::setNames(
-species_counts_for_amreh$genome_count,
-species_counts_for_amreh$species
+species_counts_named <- stats::setNames(
+  species_counts_for_amreh$genome_count,
+  species_counts_for_amreh$species
 )
 
 save(
