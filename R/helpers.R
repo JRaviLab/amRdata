@@ -1,4 +1,83 @@
 ### Helpers for amRdata live in this script
+
+##########################
+# CPU allocation helpers #
+##########################
+
+#' Resolve requested worker counts againstCPUs available
+#' @keywords internal
+.resolve_workers <- function(requested = NULL, n_tasks = NULL, warn = TRUE) {
+  # No detectCores shenanigans
+  available <- as.integer(parallelly::availableCores())
+
+  if (is.null(requested)) {
+    workers <- available
+  } else {
+    if (length(requested) != 1L ||
+        is.na(requested) ||
+        !is.numeric(requested) ||
+        requested < 1 ||
+        requested != floor(requested)) {
+      stop("`requested` must be a positive number.")
+    }
+
+    requested <- as.integer(requested)
+    workers <- min(requested, available)
+
+    # Have you requested too many? The code politely figures it out for you
+    if (isTRUE(warn) && requested > available) {
+      warning(
+        sprintf(
+          "Requested %d parallel workers, but only %d CPU cores are available ",
+          requested, available
+        ),
+        "to this R process; using ",
+        available,
+        " workers instead.",
+        call. = FALSE
+      )
+    }
+  }
+
+  if (!is.null(n_tasks)) {
+    workers <- min(workers, max(1L, as.integer(n_tasks)))
+  }
+
+  max(1L, as.integer(workers))
+}
+
+#' Run independent BV-BRC API requests with explicit future plan
+#' @keywords internal
+.bvbrcFutureMap <- function(.x, .f, num_workers = 8L, ...) {
+  if (!length(.x)) {
+    return(list())
+  }
+
+  n_workers <- .resolve_workers(
+    requested = num_workers,
+    n_tasks = length(.x)
+  )
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+
+  if (n_workers == 1L) {
+    future::plan(future::sequential)
+  } else {
+    future::plan(
+      future::multisession,
+      workers = n_workers
+    )
+  }
+
+  furrr::future_map(
+    .x,
+    .f,
+    ...,
+    .options = furrr::furrr_options(seed = TRUE)
+  )
+}
+
 #########################
 # Data curation helpers #
 #########################
@@ -32,6 +111,169 @@
 
   df
 }
+
+#########################
+# BiocFileCache helpers #
+#########################
+
+# BFC instance used by amRdata and other amR packages.
+# The default BiocFileCache location is intentionally used so the registry is
+# package-independent and can be shared across the amR suite
+.amr_bfc <- function() {
+  if (!requireNamespace("BiocFileCache", quietly = TRUE)) {
+    stop("Package 'BiocFileCache' is required for amRdata resource caching.")
+  }
+
+  BiocFileCache::BiocFileCache(ask = FALSE)
+}
+
+# Find a BFC record by exact resource name.
+.amr_bfc_find <- function(bfc, rname) {
+  hits <- BiocFileCache::bfcquery(
+    bfc,
+    query = rname,
+    field = "rname",
+    exact = TRUE
+  )
+
+  if (!nrow(hits)) NULL else hits[1, , drop = FALSE]
+}
+
+# Return the cached local path for a named BV-BRC resource. When create = TRUE,
+# reserve a new path in BFC for the caller to populate
+.amr_bfc_bvbrc_path <- function(create = FALSE, rname = "amRdata_bvbrc_bacterial_metadata") {
+  bfc <- .amr_bfc()
+  hit <- .amr_bfc_find(bfc, rname)
+
+  if (!is.null(hit)) {
+    path <- tryCatch(
+      BiocFileCache::bfcrpath(bfc, rids = hit$rid[[1]], exact = TRUE),
+      error = function(e) NA_character_
+    )
+
+    if (length(path) == 1L && file.exists(path)) {
+      return(normalizePath(path, mustWork = TRUE))
+    }
+
+    if (isTRUE(create)) {
+      BiocFileCache::bfcremove(bfc, hit$rid[[1]])
+    } else {
+      return(NULL)
+    }
+  }
+
+  if (!isTRUE(create)) {
+    return(NULL)
+  }
+
+  path <- BiocFileCache::bfcnew(
+    bfc,
+    rname = rname,
+    rtype = "relative",
+    ext = ".duckdb",
+    fname = "exact"
+  )
+
+  normalizePath(path, mustWork = FALSE)
+}
+
+# BFC name for a prepared HMMER database
+.amr_bfc_hmmer_rname <- function(database, component = NULL) {
+  parts <- c("amR_hmmer", database, component)
+  parts <- parts[!is.na(parts) & nzchar(parts)]
+
+  paste(parts, collapse = "_")
+}
+
+# Register a prepared HMMER database with BFC
+.amr_bfc_register_hmmer <- function(database,
+                                    hmm_path,
+                                    component = NULL) {
+  hmm_path <- normalizePath(hmm_path, mustWork = TRUE)
+
+  pressed <- paste0(
+    hmm_path,
+    c(".h3m", ".h3i", ".h3f", ".h3p")
+  )
+
+  missing <- pressed[!file.exists(pressed)]
+
+  if (length(missing)) {
+    stop(
+      "Cannot register HMMER database before hmmpress is complete: ",
+      paste(missing, collapse = ", ")
+    )
+  }
+
+  rname <- .amr_bfc_hmmer_rname(
+    database = database,
+    component = component
+  )
+
+  rid <- .amr_bfc_register_local(
+    path = hmm_path,
+    rname = rname
+  )
+
+  invisible(list(
+    rid = rid,
+    rname = rname,
+    hmm = hmm_path,
+    pressed = pressed
+  ))
+}
+
+# List HMMER databases known to the shared amR BFC
+.amr_bfc_hmmer_resources <- function() {
+  bfc <- .amr_bfc()
+
+  BiocFileCache::bfcquery(
+    bfc,
+    query = "^amR_hmmer_",
+    field = "rname",
+    exact = FALSE
+  )
+}
+
+# Register local files, used for dataset manifests: the manifest remains with data
+# while BFC provides for cross-package discovery
+.amr_bfc_register_local <- function(path, rname) {
+  path <- normalizePath(path, mustWork = TRUE)
+  bfc <- .amr_bfc()
+  hit <- .amr_bfc_find(bfc, rname)
+
+  if (is.null(hit)) {
+    added <- BiocFileCache::bfcadd(
+      bfc,
+      rname = rname,
+      fpath = path,
+      rtype = "local",
+      action = "asis",
+      progress = FALSE
+    )
+
+    rid <- names(added)[[1]]
+
+    return(invisible(rid))
+  }
+
+  existing_path <- tryCatch(
+    normalizePath(hit$rpath[[1]], mustWork = TRUE),
+    error = function(e) NA_character_
+  )
+
+  if (!identical(existing_path, path)) {
+    BiocFileCache::bfcupdate(
+      bfc,
+      hit$rid[[1]],
+      rpath = path,
+      rname = rname
+    )
+  }
+
+  invisible(hit$rid[[1]])
+}
+
 
 #' Helps normalize Docker paths
 #' @keywords internal
@@ -184,18 +426,12 @@
     if (is.null(bac_input_data) || nrow(bac_input_data) == 0L) {
       character(0)
     } else {
-      cache_db <- file.path(
-        base_dir,
-        "data",
-        "bvbrc",
-        "bvbrcData.duckdb"
-      )
+      cache_db <- .amr_bfc_bvbrc_path(create = FALSE)
 
-      if (!file.exists(cache_db)) {
+      if (is.null(cache_db) || !file.exists(cache_db)) {
         stop(
-          "BV-BRC cache not found at: ",
-          cache_db,
-          ". Run .updateBVBRCdata() first."
+          "BV-BRC cache not found in BiocFileCache. ",
+          "Run .updateBVBRCdata() first."
         )
       }
 
@@ -521,34 +757,18 @@
     0L
   }
 
-  drug_classes <- NA_character_
-
-  if (!is.na(antibiotic_col)) {
-    observed_drugs <- trimws(as.character(amr_data[[antibiotic_col]]))
-    observed_drugs <- unique(
-      observed_drugs[!is.na(observed_drugs) & nzchar(observed_drugs)]
-    )
-
-    drug_class_file <- file.path(
-      base_dir,
-      "data_raw",
-      "drug_class.tsv"
-    )
-
-    if (file.exists(drug_class_file)) {
-      drug_class_map <- utils::read.delim(
-        drug_class_file,
-        stringsAsFactors = FALSE,
-        check.names = FALSE
-      )
-
-      drug_classes <- collapse_unique(
-        drug_class_map$drug_class[
-          drug_class_map$drug %in% observed_drugs
-        ]
-      )
-    }
+observed_drugs <- if (!is.na(antibiotic_col)) {
+    x <- trimws(as.character(amr_data[[antibiotic_col]]))
+    unique(x[!is.na(x) & nzchar(x)])
+  } else {
+    character(0)
   }
+
+  drug_classes <- collapse_unique(
+    drug_class$drug_class[
+      drug_class$drug %in% observed_drugs
+    ]
+  )
 
   median_genome_length <- if (!is.na(genome_length_col)) {
     safe_median(genome_data[[genome_length_col]])
@@ -804,8 +1024,14 @@
     showWarnings = FALSE
   )
 
+  manifest_id <- tools::file_path_sans_ext(
+    basename(manifest_path)
+  )
+
   manifest <- list(
     schema_version = 1L,
+    manifest_type = "amR_dataset",
+    manifest_id = manifest_id,
     manifest_created_at = as.character(Sys.time()),
     manifest_updated_at = as.character(Sys.time()),
     dataset_id = dataset_id,
@@ -813,6 +1039,7 @@
       duckdb = duckdb_path,
       selection = selection
     ),
+    artifacts = list(),
     runs = list()
   )
 
@@ -860,6 +1087,87 @@
     ),
     class = "amr_manifest"
   )
+}
+
+# Registering manifest name and stage
+.amr_bfc_manifest_rname <- function(manifest_state) {
+  paste0(
+    "amR_dataset_manifest_",
+    manifest_state$manifest$dataset_id,
+    "_",
+    manifest_state$manifest$manifest_id
+  )
+}
+
+# Better status recording for cross-suite hijinx
+.manifest_artifact <- function(manifest_state,
+                               name,
+                               status = "ready",
+                               details = list()) {
+  if (!inherits(manifest_state, "amr_manifest")) {
+    stop("Invalid manifest state.")
+  }
+
+  artifact <- c(
+    list(
+      status = status,
+      updated_at = as.character(Sys.time())
+    ),
+    details
+  )
+
+  manifest_state$manifest$artifacts[[name]] <- artifact
+  manifest_state$manifest$manifest_updated_at <- as.character(Sys.time())
+
+  jsonlite::write_json(
+    manifest_state$manifest,
+    manifest_state$path,
+    auto_unbox = TRUE,
+    pretty = TRUE,
+    null = "null"
+  )
+
+  manifest_state
+}
+
+# Manifest schema validation helper
+.manifest_validate <- function(manifest) {
+  if (!is.list(manifest)) {
+    stop("Manifest must be a list.")
+  }
+
+  if (!identical(as.integer(manifest$schema_version), 1L)) {
+    stop(
+      "Unsupported amR manifest schema version: ",
+      manifest$schema_version %||% "missing",
+      ". Expected schema version 1."
+    )
+  }
+
+  if (!identical(manifest$manifest_type, "amR_dataset")) {
+    stop("Manifest is not an amR dataset manifest.")
+  }
+
+  # We need this stuff
+  required <- c(
+    "manifest_id",
+    "dataset_id",
+    "dataset",
+    "artifacts",
+    "runs"
+  )
+
+  missing <- setdiff(required, names(manifest))
+
+  # If we don't have that stuff, hold your horses
+  if (length(missing)) {
+    stop(
+      "Manifest is missing required field(s): ",
+      paste(missing, collapse = ", ")
+    )
+  }
+
+  invisible(TRUE)
 }
 
 
@@ -1126,6 +1434,9 @@
     manifest_path,
     simplifyVector = FALSE
   )
+
+  # Is this manifest any good?
+  .manifest_validate(manifest)
 
   if (is.null(manifest$runs)) {
     manifest$runs <- list()
@@ -1892,7 +2203,7 @@
 # Default persistent cache for shared HMMER databases
 .defaultHmmerDbDir <- function() {
   file.path(
-    tools::R_user_dir("amRdata", "cache"),
+    BiocFileCache::bfccache(.amr_bfc()),
     "hmmer"
   )
 }

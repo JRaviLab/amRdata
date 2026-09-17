@@ -11,6 +11,7 @@ retrieveMetadata(
   base_dir = ".",
   abx = "All",
   metadata_method = c("api", "cli"),
+  num_workers = 8L,
   image = "danylmb/bvbrc:5.3",
   max_checkm_contam = 5,
   min_checkm_complete = 95,
@@ -42,6 +43,10 @@ Default NULL.}
 
 \item{metadata_method}{Character. Download backend: \code{"api"} (default) or
 \code{"cli"} (Dockerized \verb{BV-BRC p3-* CLI}).}
+
+\item{num_workers}{Integer. Maximum number of parallel workers used by the
+CLI metadata backend. Automatically capped to available CPUs and the
+number of metadata batches. Default: 8.}
 
 \item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 
