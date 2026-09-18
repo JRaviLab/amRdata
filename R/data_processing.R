@@ -316,7 +316,14 @@ NULL
       "-t", as.character(threads)
     )
 
-    system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+    res <- system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+    status <- attr(res, "status")
+
+    if (!is.null(status) && status != 0L) {
+      stop(sprintf("panaroo-merge failed with exit status %s:\n%s", status, paste(res, collapse = "\n")))
+    }
+
+    invisible(res)
   } else {
     stop("No valid Panaroo batch directories found (need >= 2 with final_graph.gml).")
   }
@@ -561,6 +568,11 @@ NULL
       stop("cd-hit execution failed: ", e$message)
     }
   )
+
+  status <- attr(output, "status")
+  if (!is.null(status) && status != 0L) {
+    stop(sprintf("cd-hit failed with exit status %s:\n%s", status, paste(output, collapse = "\n")))
+  }
 
   if (!file.exists(clustered_faa)) {
     stop("cd-hit failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
@@ -1253,7 +1265,9 @@ CDHIT2duckdb <- function(duckdb_path,
         stderr = TRUE
       )
 
-      if (!all(file.exists(pressed_files))) {
+      status <- attr(output, "status")
+
+      if ((!is.null(status) && status != 0L) || !all(file.exists(pressed_files))) {
         stop(
           "hmmpress failed for ",
           db_name,
@@ -1358,6 +1372,11 @@ CDHIT2duckdb <- function(duckdb_path,
       stop("hmmsearch execution failed: ", e$message)
     }
   )
+
+  status <- attr(output, "status")
+  if (!is.null(status) && status != 0L) {
+    stop(sprintf("hmmsearch failed with exit status %s:\n%s", status, paste(output, collapse = "\n")))
+  }
 
   if (!file.exists(hmmer_output)) {
     stop("hmmsearch failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
@@ -2018,7 +2037,9 @@ CDHIT2duckdb <- function(duckdb_path,
         stderr = TRUE
       )
 
-      if (!all(file.exists(pressed_files))) {
+      status <- attr(output, "status")
+
+      if ((!is.null(status) && status != 0L) || !all(file.exists(pressed_files))) {
 
         stop(
           "hmmpress failed for ",
@@ -2151,7 +2172,9 @@ CDHIT2duckdb <- function(duckdb_path,
       stderr = TRUE
     )
 
-    if (!file.exists(tbl_file)) {
+    status <- attr(output, "status")
+
+    if ((!is.null(status) && status != 0L) || !file.exists(tbl_file)) {
       stop(
         "hmmsearch failed for ",
         db_name,
@@ -3223,6 +3246,24 @@ if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all f
     mustWork = TRUE
   )
 
+  # The specific reference TSVs cleanMetaData() actually reads, so the
+  # manifest records which files drove metadata cleaning, not just the
+  # directory they live in
+  reference_files <- file.path(
+    ref_file_path,
+    c(
+      "clean_drug.tsv",
+      "drug_class.tsv",
+      "drug_abbr.tsv",
+      "class_abbr.tsv",
+      "cleaned_bvbrc_countries.tsv"
+    )
+  )
+  reference_files <- normalizePath(
+    reference_files[file.exists(reference_files)],
+    mustWork = TRUE
+  )
+
   # Log!
   manifest <- .manifest_stage(
     manifest,
@@ -3236,7 +3277,7 @@ if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all f
     ),
     inputs = c(
       duckdb_path,
-      ref_file_path
+      reference_files
     ),
     outputs = c(
       parquet_files,
