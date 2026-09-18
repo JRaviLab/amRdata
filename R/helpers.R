@@ -534,6 +534,67 @@
   invisible(log_path)
 }
 
+
+#' Find the most recent recorded attempt of a named stage in a manifest run
+#'
+#' @param run A single run entry from a manifest's `runs` list, or `NULL`.
+#' @param name Character. Stage name to look up.
+#'
+#' @return The matching stage entry (a list), or `NULL` if not found.
+#' @keywords internal
+.manifest_prior_stage <- function(run, name) {
+  if (is.null(run) || !length(run$stages)) {
+    return(NULL)
+  }
+
+  stage_names <- purrr::map_chr(run$stages, "name")
+  idx <- which(stage_names == name)
+
+  if (!length(idx)) {
+    return(NULL)
+  }
+
+  run$stages[[idx[length(idx)]]]
+}
+
+
+#' Determine which pipeline stages can be safely skipped when resuming
+#'
+#' Looks at the most recent prior run recorded in a manifest and works out
+#' how far into `stage_order` it got before it can be trusted. A stage only
+#' counts as done if every earlier stage in `stage_order` also succeeded ---
+#' later stages depend on earlier ones' DuckDB writes, so a gap partway
+#' through can't be skipped around --- and its recorded output files are
+#' still present on disk.
+#'
+#' @param prev_run A single run entry from a manifest's `runs` list, or `NULL`.
+#' @param stage_order Character vector of stage names, in pipeline order.
+#'
+#' @return Named logical vector (named by `stage_order`) marking which
+#'   stages are safe to skip.
+#' @keywords internal
+.resume_plan <- function(prev_run, stage_order) {
+  completed <- stats::setNames(rep(FALSE, length(stage_order)), stage_order)
+
+  for (name in stage_order) {
+    stage <- .manifest_prior_stage(prev_run, name)
+
+    if (is.null(stage) || !identical(stage$status, "success")) {
+      break
+    }
+
+    out_paths <- purrr::map_chr(stage$outputs, "path")
+
+    if (length(out_paths) && !all(file.exists(out_paths))) {
+      break
+    }
+
+    completed[[name]] <- TRUE
+  }
+
+  completed
+}
+
 # To distinguish multiple manifests in the same bug directory
 .manifest_find_latest <- function(duckdb_path) {
   manifest_dir <- dirname(normalizePath(

@@ -8,6 +8,7 @@ runDataProcessing(
   duckdb_path,
   output_path = NULL,
   threads = 8,
+  resume = FALSE,
   panaroo_split_jobs = FALSE,
   panaroo_core_threshold = 0.9,
   panaroo_len_dif_percent = 0.95,
@@ -43,6 +44,15 @@ CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
 
 \item{threads}{Integer. Shared concurrency budget used across Panaroo, CD-HIT,
 and HMMER. Defaults to \code{8}.}
+
+\item{resume}{Logical. If \code{TRUE}, checks the dataset manifest for the most
+recent prior \code{runDataProcessing()} attempt and skips Panaroo, CD-HIT,
+and/or HMMER if they already completed successfully and their recorded
+output files are still present on disk. Only a contiguous run of
+successes from the start of the pipeline is honored (e.g. if CD-HIT
+failed, HMMER is always re-run even if it previously succeeded, since it
+depends on CD-HIT's output). Metadata cleaning and Parquet export always
+run, since they're fast and idempotent. Default: \code{FALSE}.}
 
 \item{panaroo_split_jobs}{Logical. If \code{TRUE}, Panaroo runs in multiple batches
 that can be merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaroo runs once on all
@@ -163,6 +173,16 @@ other provenance information in the dataset manifest.
 \item \code{threads} provides the shared CPU budget for the major processing stages.
 \item Panaroo, CD-HIT, and HMMER allocate that budget according to their respective
 stage parameters.
+}
+
+\strong{Resuming a Failed Run}
+\itemize{
+\item Set \code{resume = TRUE} to avoid re-running stages that already completed
+successfully in the most recent prior attempt (per the dataset manifest).
+\item Resuming is driven entirely by the manifest plus a check that the
+previously recorded output files still exist --- it does not re-validate
+the contents of those outputs, so don't rely on it if files may have
+been altered or deleted since the failed run.
 }
 }
 \section{Pipeline Steps}{

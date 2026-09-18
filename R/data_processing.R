@@ -2640,6 +2640,14 @@ cleanData <- function(duckdb_path, path) {
 #'
 #' @param threads Integer. Shared concurrency budget used across Panaroo, CD-HIT,
 #'   and HMMER. Defaults to `8`.
+#' @param resume Logical. If `TRUE`, checks the dataset manifest for the most
+#'   recent prior `runDataProcessing()` attempt and skips Panaroo, CD-HIT,
+#'   and/or HMMER if they already completed successfully and their recorded
+#'   output files are still present on disk. Only a contiguous run of
+#'   successes from the start of the pipeline is honored (e.g. if CD-HIT
+#'   failed, HMMER is always re-run even if it previously succeeded, since it
+#'   depends on CD-HIT's output). Metadata cleaning and Parquet export always
+#'   run, since they're fast and idempotent. Default: `FALSE`.
 #'
 #' @param panaroo_split_jobs Logical. If `TRUE`, Panaroo runs in multiple batches
 #'   that can be merged by [.mergePanaroo()]. If `FALSE`, Panaroo runs once on all
@@ -2719,6 +2727,14 @@ cleanData <- function(duckdb_path, path) {
 #' * Panaroo, CD-HIT, and HMMER allocate that budget according to their respective
 #'   stage parameters.
 #'
+#' **Resuming a Failed Run**
+#' * Set `resume = TRUE` to avoid re-running stages that already completed
+#'   successfully in the most recent prior attempt (per the dataset manifest).
+#' * Resuming is driven entirely by the manifest plus a check that the
+#'   previously recorded output files still exist --- it does not re-validate
+#'   the contents of those outputs, so don't rely on it if files may have
+#'   been altered or deleted since the failed run.
+#'
 #' @seealso
 #' [prepareGenomes()], [runPanaroo2Duckdb()], [CDHIT2duckdb()], [cleanMetaData()],
 #' [cleanData()]
@@ -2742,6 +2758,7 @@ runDataProcessing <- function(
     duckdb_path,
     output_path = NULL,
     threads = 8,
+    resume = FALSE,
 
     # Panaroo
     panaroo_split_jobs = FALSE,
@@ -2812,6 +2829,22 @@ runDataProcessing <- function(
     hash_files = FALSE
   )
 
+  # Work out which stages can be skipped, based on the most recent prior run
+  stage_order <- c("panaroo", "cdhit", "hmmer")
+  prev_run <- if (isTRUE(resume) && manifest$run_index > 1L) {
+    manifest$manifest$runs[[manifest$run_index - 1L]]
+  } else {
+    NULL
+  }
+  resume_completed <- .resume_plan(prev_run, stage_order)
+
+  if (any(resume_completed)) {
+    progress(
+      "Resuming: skipping already-completed stage(s): ",
+      paste(stage_order[resume_completed], collapse = ", ")
+    )
+  }
+
   run_failed <- TRUE
 
   on.exit(
@@ -2837,137 +2870,179 @@ runDataProcessing <- function(
   )
 
   # 1) Panaroo (run + optional merge) -> write Panaroo tables
-  progress("Running Panaroo and writing gene & struct tables to DuckDB.")
+  if (resume_completed[["panaroo"]]) {
+    progress("Skipping Panaroo (resume): reusing output from the previous run.")
 
-  # Log!
-  manifest <- .manifest_stage(
-    manifest,
-    name = "panaroo",
-    status = "running",
-    parameters = list(
-      core_threshold = panaroo_core_threshold,
-      len_dif_percent = panaroo_len_dif_percent,
-      cluster_threshold = panaroo_cluster_threshold,
-      family_seq_identity = panaroo_family_seq_identity,
-      threads = threads,
-      split_jobs = panaroo_split_jobs,
-      refind_mode = panaroo_refind_mode,
-      strip_pseudogenes = panaroo_strip_pseudogenes
-    ),
-    inputs = duckdb_path,
-    tool = list(
-      name = "Panaroo",
-      docker_image = "staphb/panaroo:1.7.0"
+    pan_dir <- .manifest_prior_stage(prev_run, "panaroo")$outputs[[1]]$path
+
+    manifest <- .manifest_stage(
+      manifest,
+      name = "panaroo",
+      status = "skipped",
+      inputs = duckdb_path,
+      outputs = c(
+        pan_dir,
+        duckdb_path
+      ),
+      tool = list(
+        name = "Panaroo",
+        docker_image = "staphb/panaroo:1.7.0"
+      ),
+      message = "Resumed: reused successful output from a previous run."
     )
-  )
+  } else {
+    progress("Running Panaroo and writing gene & struct tables to DuckDB.")
 
-  pan_dir <- runPanaroo2Duckdb(
-    duckdb_path            = duckdb_path,
-    output_path            = out_dir,
-    core_threshold         = panaroo_core_threshold,
-    len_dif_percent        = panaroo_len_dif_percent,
-    cluster_threshold      = panaroo_cluster_threshold,
-    family_seq_identity    = panaroo_family_seq_identity,
-    threads                = threads,
-    split_jobs             = panaroo_split_jobs,
-    refind_mode            = panaroo_refind_mode,
-    strip_pseudogenes      = panaroo_strip_pseudogenes,
-    pseudogene_clean_dir   = panaroo_pseudogene_clean_dir,
-    write_pseudogene_audit = panaroo_write_pseudogene_audit,
-    verbose                = verbose
-  )
-
-  manifest <- .manifest_stage(
-    manifest,
-    name = "panaroo",
-    status = "success",
-    parameters = list(
-      core_threshold = panaroo_core_threshold,
-      len_dif_percent = panaroo_len_dif_percent,
-      cluster_threshold = panaroo_cluster_threshold,
-      family_seq_identity = panaroo_family_seq_identity,
-      threads = threads,
-      split_jobs = panaroo_split_jobs,
-      refind_mode = panaroo_refind_mode,
-      strip_pseudogenes = panaroo_strip_pseudogenes
-    ),
-    inputs = duckdb_path,
-    outputs = c(
-      pan_dir,
-      duckdb_path
-    ),
-    tool = list(
-      name = "Panaroo",
-      version = "1.7.0",
-      docker_image = "staphb/panaroo:1.7.0"
+    # Log!
+    manifest <- .manifest_stage(
+      manifest,
+      name = "panaroo",
+      status = "running",
+      parameters = list(
+        core_threshold = panaroo_core_threshold,
+        len_dif_percent = panaroo_len_dif_percent,
+        cluster_threshold = panaroo_cluster_threshold,
+        family_seq_identity = panaroo_family_seq_identity,
+        threads = threads,
+        split_jobs = panaroo_split_jobs,
+        refind_mode = panaroo_refind_mode,
+        strip_pseudogenes = panaroo_strip_pseudogenes
+      ),
+      inputs = duckdb_path,
+      tool = list(
+        name = "Panaroo",
+        docker_image = "staphb/panaroo:1.7.0"
+      )
     )
-  )
-  progress("Finished Panaroo.")
+
+    pan_dir <- runPanaroo2Duckdb(
+      duckdb_path            = duckdb_path,
+      output_path            = out_dir,
+      core_threshold         = panaroo_core_threshold,
+      len_dif_percent        = panaroo_len_dif_percent,
+      cluster_threshold      = panaroo_cluster_threshold,
+      family_seq_identity    = panaroo_family_seq_identity,
+      threads                = threads,
+      split_jobs             = panaroo_split_jobs,
+      refind_mode            = panaroo_refind_mode,
+      strip_pseudogenes      = panaroo_strip_pseudogenes,
+      pseudogene_clean_dir   = panaroo_pseudogene_clean_dir,
+      write_pseudogene_audit = panaroo_write_pseudogene_audit,
+      verbose                = verbose
+    )
+
+    manifest <- .manifest_stage(
+      manifest,
+      name = "panaroo",
+      status = "success",
+      parameters = list(
+        core_threshold = panaroo_core_threshold,
+        len_dif_percent = panaroo_len_dif_percent,
+        cluster_threshold = panaroo_cluster_threshold,
+        family_seq_identity = panaroo_family_seq_identity,
+        threads = threads,
+        split_jobs = panaroo_split_jobs,
+        refind_mode = panaroo_refind_mode,
+        strip_pseudogenes = panaroo_strip_pseudogenes
+      ),
+      inputs = duckdb_path,
+      outputs = c(
+        pan_dir,
+        duckdb_path
+      ),
+      tool = list(
+        name = "Panaroo",
+        version = "1.7.0",
+        docker_image = "staphb/panaroo:1.7.0"
+      )
+    )
+    progress("Finished Panaroo.")
+  }
 
   # 2) CD-HIT -> write `protein` tables
-  progress("Running CD-HIT and writing protein tables to DuckDB.")
+  if (resume_completed[["cdhit"]]) {
+    progress("Skipping CD-HIT (resume): reusing output from the previous run.")
 
-  # Log!
-  manifest <- .manifest_stage(
-    manifest,
-    name = "cdhit",
-    status = "running",
-    parameters = list(
-      identity = cdhit_identity,
-      word_length = cdhit_word_length,
-      memory = cdhit_memory,
-      threads = threads,
-      extra_args = cdhit_extra_args,
-      output_prefix = cdhit_output_prefix
-    ),
-    inputs = duckdb_path,
-    tool = list(
-      name = "CD-HIT",
-      version = "4.8.1",
-      docker_image = "weizhongli1987/cdhit:4.8.1"
+    manifest <- .manifest_stage(
+      manifest,
+      name = "cdhit",
+      status = "skipped",
+      inputs = duckdb_path,
+      outputs = c(
+        file.path(out_dir, paste0(cdhit_output_prefix, "_input.fa")),
+        file.path(out_dir, paste0(cdhit_output_prefix, "_proteins")),
+        file.path(duckdb_path)
+      ),
+      tool = list(
+        name = "CD-HIT",
+        version = "4.8.1",
+        docker_image = "weizhongli1987/cdhit:4.8.1"
+      ),
+      message = "Resumed: reused successful output from a previous run."
     )
-  )
+  } else {
+    progress("Running CD-HIT and writing protein tables to DuckDB.")
 
-  CDHIT2duckdb(
-    duckdb_path   = duckdb_path,
-    output_path   = out_dir,
-    output_prefix = cdhit_output_prefix,
-    identity      = cdhit_identity,
-    word_length   = cdhit_word_length,
-    threads       = threads,
-    memory        = cdhit_memory,
-    extra_args    = cdhit_extra_args
-  )
-
-  manifest <- .manifest_stage(
-    manifest,
-    name = "cdhit",
-    status = "success",
-    parameters = list(
-      identity = cdhit_identity,
-      word_length = cdhit_word_length,
-      memory = cdhit_memory,
-      threads = threads,
-      extra_args = cdhit_extra_args,
-      output_prefix = cdhit_output_prefix
-    ),
-    inputs = duckdb_path,
-    outputs = c(
-      file.path(out_dir, paste0(cdhit_output_prefix, "_input.fa")),
-      file.path(out_dir, paste0(cdhit_output_prefix, "_proteins")),
-      file.path(duckdb_path)
-    ),
-    tool = list(
-      name = "CD-HIT",
-      version = "4.8.1",
-      docker_image = "weizhongli1987/cdhit:4.8.1"
+    # Log!
+    manifest <- .manifest_stage(
+      manifest,
+      name = "cdhit",
+      status = "running",
+      parameters = list(
+        identity = cdhit_identity,
+        word_length = cdhit_word_length,
+        memory = cdhit_memory,
+        threads = threads,
+        extra_args = cdhit_extra_args,
+        output_prefix = cdhit_output_prefix
+      ),
+      inputs = duckdb_path,
+      tool = list(
+        name = "CD-HIT",
+        version = "4.8.1",
+        docker_image = "weizhongli1987/cdhit:4.8.1"
+      )
     )
-  )
-  progress("Finished CD-HIT.")
+
+    CDHIT2duckdb(
+      duckdb_path   = duckdb_path,
+      output_path   = out_dir,
+      output_prefix = cdhit_output_prefix,
+      identity      = cdhit_identity,
+      word_length   = cdhit_word_length,
+      threads       = threads,
+      memory        = cdhit_memory,
+      extra_args    = cdhit_extra_args
+    )
+
+    manifest <- .manifest_stage(
+      manifest,
+      name = "cdhit",
+      status = "success",
+      parameters = list(
+        identity = cdhit_identity,
+        word_length = cdhit_word_length,
+        memory = cdhit_memory,
+        threads = threads,
+        extra_args = cdhit_extra_args,
+        output_prefix = cdhit_output_prefix
+      ),
+      inputs = duckdb_path,
+      outputs = c(
+        file.path(out_dir, paste0(cdhit_output_prefix, "_input.fa")),
+        file.path(out_dir, paste0(cdhit_output_prefix, "_proteins")),
+        file.path(duckdb_path)
+      ),
+      tool = list(
+        name = "CD-HIT",
+        version = "4.8.1",
+        docker_image = "weizhongli1987/cdhit:4.8.1"
+      )
+    )
+    progress("Finished CD-HIT.")
+  }
 
   # 3) HMMER -> write HMM-based match tables for desired databases
-  progress("Running HMMER with databases: ", paste(hmmer_databases, collapse = ", "))
-
   hmmer_db_dir <- if (is.null(hmmer_db_dir)) {
     .defaultHmmerDbDir()
   } else {
@@ -2980,65 +3055,84 @@ runDataProcessing <- function(
     showWarnings = FALSE
   )
 
-  manifest <- .manifest_stage(
-    manifest,
-    name = "hmmer",
-    status = "running",
-    parameters = list(
-      databases = hmmer_databases,
-      database_dir = hmmer_db_dir,
-      docker_image = hmmer_docker_image,
-      threads = threads,
-      num_of_splits = hmmer_num_splits,
-      workers = hmmer_workers
-    ),
-    inputs = duckdb_path,
-    tool = list(
-      name = "HMMER",
-      version = .hmmer_version(hmmer_docker_image),
-      docker_image = hmmer_docker_image
-    )
-  )
-
-  generic_databases <- intersect(
-    hmmer_databases,
-    c("Pfam", "COG", "AMRFinder")
-  )
-
   hmmer_result <- NULL
   defense_result <- NULL
 
-  if (length(generic_databases)) {
-    hmmer_result <- .runHMMER(
-                              duckdb_path = duckdb_path,
-                              output_path = out_dir,
-                              threads = threads,
-                              hmmer_db_dir = hmmer_db_dir,
-                              databases = generic_databases,
-                              docker_image = hmmer_docker_image,
-                              num_of_splits = hmmer_num_splits,
-                              n_workers = hmmer_workers,
-                              verbose = verbose
-                            )
-                          }
+  if (resume_completed[["hmmer"]]) {
+    progress("Skipping HMMER (resume): reusing output from the previous run.")
+
+    manifest <- .manifest_stage(
+      manifest,
+      name = "hmmer",
+      status = "skipped",
+      inputs = duckdb_path,
+      tool = list(
+        name = "HMMER",
+        docker_image = hmmer_docker_image
+      ),
+      message = "Resumed: reused successful output from a previous run."
+    )
+  } else {
+    progress("Running HMMER with databases: ", paste(hmmer_databases, collapse = ", "))
+
+    manifest <- .manifest_stage(
+      manifest,
+      name = "hmmer",
+      status = "running",
+      parameters = list(
+        databases = hmmer_databases,
+        database_dir = hmmer_db_dir,
+        docker_image = hmmer_docker_image,
+        threads = threads,
+        num_of_splits = hmmer_num_splits,
+        workers = hmmer_workers
+      ),
+      inputs = duckdb_path,
+      tool = list(
+        name = "HMMER",
+        version = .hmmer_version(hmmer_docker_image),
+        docker_image = hmmer_docker_image
+      )
+    )
+
+    generic_databases <- intersect(
+      hmmer_databases,
+      c("Pfam", "COG", "AMRFinder")
+    )
+
+    if (length(generic_databases)) {
+      hmmer_result <- .runHMMER(
+                                duckdb_path = duckdb_path,
+                                output_path = out_dir,
+                                threads = threads,
+                                hmmer_db_dir = hmmer_db_dir,
+                                databases = generic_databases,
+                                docker_image = hmmer_docker_image,
+                                num_of_splits = hmmer_num_splits,
+                                n_workers = hmmer_workers,
+                                verbose = verbose
+                              )
+                            }
 
 
 
-  if ("DefenseCas" %in% hmmer_databases) {
-    defense_result <- .defenseHMMER(
-                                    defense_db_dir = if (is.null(hmmer_db_dir)) {
-                                      .defaultHmmerDbDir()
-                                    } else {
-                                      file.path(hmmer_db_dir, "DefenseCas")
-                                    },
-                                    docker_image = hmmer_docker_image,
-                                    duckdb_path = duckdb_path,
-                                    output_path = out_dir,
-                                    threads = threads,
-                                    verbose = verbose
-                                  )
+    if ("DefenseCas" %in% hmmer_databases) {
+      defense_result <- .defenseHMMER(
+                                      defense_db_dir = if (is.null(hmmer_db_dir)) {
+                                        .defaultHmmerDbDir()
+                                      } else {
+                                        file.path(hmmer_db_dir, "DefenseCas")
+                                      },
+                                      docker_image = hmmer_docker_image,
+                                      duckdb_path = duckdb_path,
+                                      output_path = out_dir,
+                                      threads = threads,
+                                      verbose = verbose
+                                    )
+    }
   }
 
+  # Verify expected outputs regardless of whether HMMER just ran or was skipped
   expected_outputs <- file.path(
     out_dir,
     paste0("protein_", hmmer_databases, ".parquet")
@@ -3080,42 +3174,44 @@ runDataProcessing <- function(
     )
   }
 
-  manifest <- .manifest_stage(
-    manifest,
-    name = "hmmer",
-    status = "success",
-    parameters = list(
-      databases = hmmer_databases,
-      database_dir = hmmer_db_dir,
-      docker_image = hmmer_docker_image,
-      threads = threads,
-      num_of_splits = hmmer_num_splits,
-      workers = hmmer_workers
-    ),
-    inputs = duckdb_path,
-    outputs = c(
-      purrr::map(
-        hmmer_databases,
-        ~ file.path(out_dir, paste0("protein_", .x, ".parquet"))
+  if (!resume_completed[["hmmer"]]) {
+    manifest <- .manifest_stage(
+      manifest,
+      name = "hmmer",
+      status = "success",
+      parameters = list(
+        databases = hmmer_databases,
+        database_dir = hmmer_db_dir,
+        docker_image = hmmer_docker_image,
+        threads = threads,
+        num_of_splits = hmmer_num_splits,
+        workers = hmmer_workers
       ),
-      duckdb_path
-    ),
-    metrics = list(
-      annotation_tables = paste0(
-        "protein_",
-        hmmer_databases
+      inputs = duckdb_path,
+      outputs = c(
+        purrr::map(
+          hmmer_databases,
+          ~ file.path(out_dir, paste0("protein_", .x, ".parquet"))
+        ),
+        duckdb_path
       ),
-      database_provenance = list(
-        generic = if (!is.null(hmmer_result)) hmmer_result$databases else NULL,
-        DefenseCas = if (!is.null(defense_result)) defense_result$databases else NULL
+      metrics = list(
+        annotation_tables = paste0(
+          "protein_",
+          hmmer_databases
+        ),
+        database_provenance = list(
+          generic = if (!is.null(hmmer_result)) hmmer_result$databases else NULL,
+          DefenseCas = if (!is.null(defense_result)) defense_result$databases else NULL
+        )
+      ),
+      tool = list(
+        name = "HMMER",
+        docker_image = hmmer_docker_image
       )
-    ),
-    tool = list(
-      name = "HMMER",
-      docker_image = hmmer_docker_image
     )
-  )
-  progress("Finished HMMER.")
+    progress("Finished HMMER.")
+  }
 
   # 4) Clean metadata and export Parquet + Parquet-backed DuckDB
   if (is.null(ref_file_path) || !nzchar(ref_file_path)) {
