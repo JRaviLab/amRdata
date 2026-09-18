@@ -508,6 +508,32 @@
   invisible(manifest_state)
 }
 
+
+#' Append a timestamped line to a plain-text progress log
+#'
+#' A lightweight, human-readable companion to the JSON provenance manifest.
+#' The manifest records complete provenance but is rewritten wholesale on
+#' every update, which makes it impractical to watch while a long-running
+#' pipeline executes. This appends single lines instead, so the file can be
+#' tailed (e.g. `tail -f`) to see what stage is currently running.
+#'
+#' @param log_path Character. Path to the log file. Created if it doesn't exist.
+#' @param ... Character fragments pasted together to form the log message.
+#'
+#' @return Invisibly returns `log_path`.
+#' @keywords internal
+.log_write <- function(log_path, ...) {
+  dir.create(dirname(log_path), recursive = TRUE, showWarnings = FALSE)
+
+  cat(
+    sprintf("[%s] %s\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), paste0(...)),
+    file = log_path,
+    append = TRUE
+  )
+
+  invisible(log_path)
+}
+
 # To distinguish multiple manifests in the same bug directory
 .manifest_find_latest <- function(duckdb_path) {
   manifest_dir <- dirname(normalizePath(

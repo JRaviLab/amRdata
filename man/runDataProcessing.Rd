@@ -109,6 +109,9 @@ Invisibly returns a list with:
 \item \code{duckdb_path} - input DuckDB path
 \item \code{panaroo_output} - path to the selected Panaroo output directory used for import
 \item \code{parquet_duckdb_path} - absolute path to the created Parquet-backed DuckDB
+\item \code{log_path} - path to a plain-text progress log, appended to as each
+stage starts and finishes. Tail it (e.g. \verb{tail -f <log_path>}) to watch
+progress without parsing the full JSON provenance manifest.
 }
 }
 \description{

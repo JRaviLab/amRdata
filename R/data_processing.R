@@ -2689,6 +2689,9 @@ cleanData <- function(duckdb_path, path) {
 #'   \item `duckdb_path` - input DuckDB path
 #'   \item `panaroo_output` - path to the selected Panaroo output directory used for import
 #'   \item `parquet_duckdb_path` - absolute path to the created Parquet-backed DuckDB
+#'   \item `log_path` - path to a plain-text progress log, appended to as each
+#'     stage starts and finishes. Tail it (e.g. `tail -f <log_path>`) to watch
+#'     progress without parsing the full JSON provenance manifest.
 #' }
 #'
 #' @details
@@ -2778,6 +2781,19 @@ runDataProcessing <- function(
   duckdb_path <- normalizePath(duckdb_path)
   out_dir <- if (is.null(output_path)) dirname(duckdb_path) else normalizePath(output_path)
 
+  # Plain-text progress log, tailable while the pipeline runs (see the JSON
+  # manifest below for full provenance, which is less convenient to watch live)
+  log_path <- file.path(
+    out_dir,
+    paste0(tools::file_path_sans_ext(basename(duckdb_path)), "_processing.log")
+  )
+  progress <- function(...) {
+    msg <- paste0(...)
+    if (isTRUE(verbose)) message(msg)
+    .log_write(log_path, msg)
+  }
+  progress("runDataProcessing() started for ", duckdb_path)
+
   # Find the latest manifest
   manifest_path <- .manifest_find_latest(duckdb_path)
 
@@ -2800,6 +2816,7 @@ runDataProcessing <- function(
 
   on.exit(
     if (run_failed) {
+      progress("FAILED: runDataProcessing() exited before successful completion.")
       .manifest_finish(
         manifest,
         status = "failed",
@@ -2820,7 +2837,7 @@ runDataProcessing <- function(
   )
 
   # 1) Panaroo (run + optional merge) -> write Panaroo tables
-  if (isTRUE(verbose)) message("Running Panaroo and writing gene & struct tables to DuckDB.")
+  progress("Running Panaroo and writing gene & struct tables to DuckDB.")
 
   # Log!
   manifest <- .manifest_stage(
@@ -2885,9 +2902,10 @@ runDataProcessing <- function(
       docker_image = "staphb/panaroo:1.7.0"
     )
   )
+  progress("Finished Panaroo.")
 
   # 2) CD-HIT -> write `protein` tables
-  if (isTRUE(verbose)) message("Running CD-HIT and writing protein tables to DuckDB.")
+  progress("Running CD-HIT and writing protein tables to DuckDB.")
 
   # Log!
   manifest <- .manifest_stage(
@@ -2945,14 +2963,10 @@ runDataProcessing <- function(
       docker_image = "weizhongli1987/cdhit:4.8.1"
     )
   )
+  progress("Finished CD-HIT.")
 
   # 3) HMMER -> write HMM-based match tables for desired databases
-  if (isTRUE(verbose)) {
-    message(
-      "Running HMMER with databases: ",
-      paste(hmmer_databases, collapse = ", ")
-    )
-  }
+  progress("Running HMMER with databases: ", paste(hmmer_databases, collapse = ", "))
 
   hmmer_db_dir <- if (is.null(hmmer_db_dir)) {
     .defaultHmmerDbDir()
@@ -3101,12 +3115,13 @@ runDataProcessing <- function(
       docker_image = hmmer_docker_image
     )
   )
+  progress("Finished HMMER.")
 
   # 4) Clean metadata and export Parquet + Parquet-backed DuckDB
   if (is.null(ref_file_path) || !nzchar(ref_file_path)) {
     stop("`ref_file_path` (directory with reference TSVs) must be provided to cleanData().")
   }
-  if (isTRUE(verbose)) message("Cleaning metadata and exporting Parquet-backed views.")
+  progress("Cleaning metadata and exporting Parquet-backed views.")
   cleanMetaData(duckdb_path = duckdb_path, path = out_dir, ref_file_path = ref_file_path)
   cleanData(duckdb_path = duckdb_path, path = out_dir)
 
@@ -3153,6 +3168,8 @@ runDataProcessing <- function(
 
   run_failed <- FALSE
 
+  progress("Completed data-processing workflow successfully. Parquet-backed DuckDB: ", normalizePath(parquet_duckdb_path))
+
   .manifest_finish(
     manifest,
     status = "success"
@@ -3161,7 +3178,8 @@ runDataProcessing <- function(
   invisible(list(
     duckdb_path = duckdb_path,
     panaroo_output = pan_dir,
-    parquet_duckdb_path = normalizePath(parquet_duckdb_path)
+    parquet_duckdb_path = normalizePath(parquet_duckdb_path),
+    log_path = log_path
   ))
 }
 
