@@ -25,8 +25,6 @@ This corresponds to the attributes retrieved by the \code{p3-get-genome-drugs} t
 \item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 
 \item{verbose}{Logical. If TRUE, prints concise messages.}
-
-\item{path}{A string representing the file path to a directory where temporary files and data will be stored.}
 }
 \value{
 A character vector with the output data from \code{p3-get-genome-drugs}, typically in tabular format.
@@ -53,7 +51,7 @@ abx_filter <- "--required antibiotic"
 drug_attrs <- "antibiotic,resistance"
 temp_path <- "/tmp"
 
-result <- extractAMRtable(batch_ids, abx_filter, drug_attrs, temp_path)
+result <- .extractAMRtable(batch_ids, abx_filter, drug_attrs, temp_path)
 print(result)
 }
 

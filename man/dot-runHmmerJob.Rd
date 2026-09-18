@@ -8,7 +8,7 @@
   JOB_NAME,
   FASTA,
   DB,
-  Total_proteins,
+  total_proteins,
   output_path = NULL,
   db_paths,
   docker_image = "staphb/hmmer",
@@ -18,23 +18,32 @@
 )
 }
 \arguments{
-\item{JOB_NAME}{protein_chunk id}
+\item{JOB_NAME}{Character. Identifier used for the HMMER job and output
+filename.}
 
-\item{FASTA}{fasta sequences}
+\item{FASTA}{Character. File name of the protein FASTA chunk to search.}
 
-\item{DB}{HMM database}
+\item{DB}{Character. Name of the HMMER database to search against.}
 
-\item{Total_proteins}{protein sequence count}
+\item{total_proteins}{Integer. Total number of proteins in the full input
+dataset, used to set HMMER's \code{-Z} and \code{--domZ} values.}
 
-\item{output_path}{path for saving hmmer outputs}
+\item{output_path}{Character. Directory containing the FASTA input, HMMER
+output, and final Parquet result.}
 
-\item{db_paths}{path to HMM database}
+\item{db_paths}{List. Prepared HMMER database metadata indexed by database
+name.}
 
-\item{docker_image}{hmmer docker image (ideally from dockerhub)}
+\item{docker_image}{Character. Docker image containing HMMER. Default:
+\code{"staphb/hmmer"}.}
 
-\item{threads}{number of threads}
+\item{threads}{Integer. Total CPU budget used when calculating the number
+of threads allocated to this job. Default: \code{8}.}
 
-\item{n_workers}{number of parallel workers}
+\item{n_workers}{Integer. Number of HMMER jobs being run in parallel.
+Used to divide the CPU budget among jobs. Default: \code{8}.}
+
+\item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.}
 }
 \value{
 the filename of the parquet file with hmmer output post parsing

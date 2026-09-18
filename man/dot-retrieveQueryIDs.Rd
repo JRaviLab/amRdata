@@ -4,7 +4,7 @@
 \alias{.retrieveQueryIDs}
 \title{Retrieve genome IDs for each taxon via BV-BRC and DuckDB}
 \usage{
-.retrieveQueryIDs(base_dir = ".", user_bacs, overwrite = FALSE, verbose = TRUE)
+.retrieveQueryIDs(base_dir = ".", user_bacs, verbose = TRUE)
 }
 \value{
 A character vector of distinct \code{genome.genome_id}, or NULL if none found.

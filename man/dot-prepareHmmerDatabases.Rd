@@ -13,13 +13,21 @@
 )
 }
 \arguments{
-\item{hmmer_db_dir}{Directory to store HMMER databases}
+\item{hmmer_db_dir}{Character. Directory where HMMER databases are cached.}
 
-\item{databases}{List of databases to prepare (default: c("Pfam", "COG", "AMRFinder"))}
+\item{databases}{Character vector of database names to prepare. Supported
+built-in databases are \code{Pfam}, \code{COG}, and \code{AMRFinder}; \code{DefenseCas} is
+prepared separately by the DefenseFinder/CasFinder workflow.}
 
-\item{docker_image}{Docker image containing HMMER (default: "staphb/hmmer")}
+\item{docker_image}{Character. Docker image containing HMMER tools used to
+press the prepared databases. Default: \code{"staphb/hmmer"}.}
 
-\item{hmmer_db_url}{If the databases contain custom database(s), the url is required to download the database.}
+\item{hmmer_db_url}{NON-FUNCTIONAL. Character or \code{NULL}. URL used to download
+a custom HMMER database when \code{databases} contains names not covered by the
+built-in database definitions. This function is not currently active!}
+
+\item{verbose}{Logical. Print status messages while checking, downloading,
+combining, and pressing databases. Default: \code{TRUE}.}
 }
 \value{
 A list of paths to the database hmm files.
