@@ -70,10 +70,13 @@ remotes::install_github("JRaviLab/amRdata")
 
 library(amRdata)
 
-# Step 1: Check BV-BRC data availability for bacteria of your choice
+# Step 1a: Check BV-BRC data availability for bacteria of your choice
 checkDataAvailability(
   user_bacs = c("Shigella flexneri", "Shigella sonnei", "Helicobacter pylori")
 )
+
+# Step 1b: List of recommended bacteria for quick turnaround
+species_counts_named
 
 # Step 2: Download and prepare genomes with paired AST data from BV-BRC
 prepareGenomes(
