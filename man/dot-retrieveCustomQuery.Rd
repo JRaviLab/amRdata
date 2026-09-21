@@ -11,7 +11,7 @@
 }
 \arguments{
 \item{base_dir}{Character. Project root. BV-BRC cache is expected at
-\code{file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")}.}
+the default BiocFileCache data directory.}
 
 \item{user_bacs}{Character vector. Mixed inputs of taxon IDs and/or species strings.}
 }

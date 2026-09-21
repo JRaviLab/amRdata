@@ -117,8 +117,11 @@
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
 
-  message("FTPS pass 1 (45s timeout)")
-  future::plan(future::multisession, workers = max(1L, workers_first))
+  workers_first <- .resolve_workers(requested = workers_first, n_tasks = length(genome_ids))
+
+  message(sprintf("FTPS pass 1 (45s timeout; workers=%d)", workers_first))
+
+  .amr_set_future_plan(workers_first)
 
   res1 <- furrr::future_map(
     genome_ids,
@@ -148,8 +151,14 @@
     return(ok_ids_1)
   }
 
-  message("FTPS pass 2 (120s timeout) for failed genomes")
-  future::plan(future::multisession, workers = max(1L, workers_second))
+  workers_second <- .resolve_workers(
+    requested = workers_second,
+    n_tasks = length(fail_ids)
+  )
+
+  message(sprintf("FTPS pass 2 (120s timeout; workers=%d) for failed genomes", workers_second))
+
+  .amr_set_future_plan(workers_second)
 
   res2 <- furrr::future_map(
     fail_ids,
@@ -530,21 +539,23 @@
 .ensure_bvbrc_cache <- function(base_dir = ".",
                                 verbose = TRUE,
                                 max_age_days = 30L,
-                                cache_rel = file.path("data", "bvbrc", "bvbrcData.duckdb"),
                                 cache_table = "bvbrc_bac_data") {
-  base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  cache_db <- file.path(base_dir, cache_rel)
-
-  # Always delegate to .updateBVBRCdata() so its max_age_days staleness check
-  # actually runs
   .updateBVBRCdata(base_dir = base_dir, max_age_days = max_age_days, verbose = verbose)
 
-  if (!file.exists(cache_db)) stop("After .updateBVBRCdata(), cache DB still missing at: ", cache_db)
+  cache_db <- .amr_bfc_bvbrc_path(create = FALSE)
+
+  if (is.null(cache_db) || !file.exists(cache_db)) {
+    stop("After .updateBVBRCdata(), BFC cache DB could not be located.")
+  }
 
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
-  on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
+  on.exit(
+    try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE),
+    add = TRUE
+  )
+
   if (!(cache_table %in% DBI::dbListTables(con_cache))) {
-    stop("After .updateBVBRCdata(), table '", cache_table, "' still not found in ", cache_db)
+    stop("After .updateBVBRCdata(), table '", cache_table,"' was not found in BFC cache: ", cache_db)
   }
 
   invisible(cache_db)
@@ -553,12 +564,12 @@
 #' Update BV-BRC metadata in DuckDB
 #'
 #' Fetches bacterial genome metadata from BV-BRC using the BV-BRC CLI and stores
-#' it in a DuckDB database under `data/bvbrc/bvbrcData.duckdb` within `base_dir`.
+#' it in a BiocFileCache-managed DuckDB database.
 #' If the table exists and is older than `max_age_days`, it refreshes; otherwise,
 #' loads the existing table. BV-BRC column names are preserved exactly.
 #'
-#' @param base_dir Character. Project root. The DuckDB database is created at
-#'   `file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")`.
+#' @param base_dir Character. Project root. Retained for compatibility with the
+#'   overall amRdata workflow; the cache itself is managed by BiocFileCache.
 #' @param max_age_days Integer. Refresh the table if older than this many days. Default: 30.
 #' @param image Character. Docker image used by `.fetchBVBRCdata()`. Default: `"danylmb/bvbrc:5.3"`.
 #' @param verbose Logical. If TRUE, prints informative messages. Default: TRUE.
@@ -569,16 +580,13 @@
                              max_age_days = 30L,
                              image = "danylmb/bvbrc:5.3",
                              verbose = TRUE) {
-  # base_dir as project root
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
-  data_dir <- file.path(base_dir, "data")
-  bvbrc_dir <- file.path(data_dir, "bvbrc")
-  logs_dir <- file.path(data_dir, "logs")
 
-  dir.create(bvbrc_dir, recursive = TRUE, showWarnings = FALSE)
+  logs_dir <- file.path(base_dir, "data", "logs")
   dir.create(logs_dir, recursive = TRUE, showWarnings = FALSE)
 
-  db_path <- file.path(bvbrc_dir, "bvbrcData.duckdb")
+  # Creates the BiocFileCache-assisted home for BV-BRC data
+  db_path <- .amr_bfc_bvbrc_path(create = TRUE)
   table_name <- "bvbrc_bac_data"
   meta_table <- "__meta"
 
@@ -669,7 +677,7 @@
 #' case-insensitive substrings against `genome.species`.
 #'
 #' @param base_dir Character. Project root. BV-BRC cache is expected at
-#'   `file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")`.
+#'   the default BiocFileCache data directory.
 #' @param user_bacs Character vector. Mixed inputs of taxon IDs and/or species strings.
 #'
 #' @return A tibble with columns `genome.taxon_id` and `genome.species`, or NULL with a message.
@@ -828,10 +836,11 @@
   db_path <- paths$db_path
 
   # Got a cache? Use that, it's fast
-  cache_db <- file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")
-  if (!file.exists(cache_db)) {
-    stop("BV-BRC cache not found at: ", cache_db, ". Run .updateBVBRCdata() first.")
+  cache_db <- .amr_bfc_bvbrc_path(create = FALSE)
+  if (is.null(cache_db) || !file.exists(cache_db)) {
+    stop("BV-BRC cache not found in BiocFileCache. Run .updateBVBRCdata() first.")
   }
+
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
   on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
 
@@ -1074,6 +1083,9 @@
 #' @param abx Character or vector. Antibiotic filter. "All" for all antibiotics, else names.
 #' @param metadata_method Character. Download backend: `"api"` (default) or
 #'   `"cli"` (Dockerized `BV-BRC p3-* CLI`).
+#' @param num_workers Integer. Maximum number of parallel workers used for
+#'   metadata retrieval, for both the API and CLI backends. Automatically
+#'   capped to available CPUs and the number of metadata batches. Default: 8.
 #' @param image Character. Docker image. Default "danylmb/bvbrc:5.3".
 #' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
 #' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
@@ -1115,6 +1127,7 @@ retrieveMetadata <- function(user_bacs,
                              base_dir = ".",
                              abx = "All",
                              metadata_method = c("api", "cli"),
+                             num_workers = 8L,
                              image = "danylmb/bvbrc:5.3",
                              max_checkm_contam = 5,
                              min_checkm_complete = 95,
@@ -1143,6 +1156,7 @@ retrieveMetadata <- function(user_bacs,
     genome_ids <- .resolveGenomeIDsApi(
       base_dir = base_dir,
       user_bacs = user_bacs,
+      num_workers = num_workers,
       verbose = verbose
     )
   } else {
@@ -1235,25 +1249,28 @@ retrieveMetadata <- function(user_bacs,
   batch_size <- 500L
   genome_batches <- split(genome_ids, ceiling(seq_along(genome_ids) / batch_size))
 
-  # Set the future plan for the CLI path to run in parallel.
-  n_cores <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-  future::plan(future::multisession, workers = n_cores)
-
   if (identical(metadata_method, "api")) {
     # BV-BRC Data API path (Docker-free, resilient; see R/bvbrc_api.R, issue #30)
+    # Don't need to build a future pool for this branch either
     if (isTRUE(verbose)) message("Retrieving AMR phenotype data via BV-BRC API.")
     combined_drug_data_tbl <- .extractAMRtableApi(
-      genome_ids = genome_ids, abx = abx, verbose = verbose
-    )
+      genome_ids = genome_ids, abx = abx, num_workers = num_workers, verbose = verbose)
 
     if (isTRUE(verbose)) message("Retrieving genome metadata via BV-BRC API.")
     gfields <- if (identical(filter_type, "AMR")) amr_fields else microtrait_fields
     combined_genome_data_tbl <- .extractGenomeDataApi(
-      genome_ids = genome_ids, fields = gfields, verbose = verbose
-    )
+      genome_ids = genome_ids, fields = gfields, num_workers = num_workers, verbose = verbose
+)
   } else {
+    n_workers <- .resolve_workers(
+      requested = num_workers,
+      n_tasks = length(genome_batches)
+    )
+
+    old_plan <- future::plan()
+    on.exit(future::plan(old_plan), add = TRUE)
+
+    .amr_set_future_plan(n_workers)
     if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
     batch_drug_data <- furrr::future_map(
       genome_batches,
@@ -1476,9 +1493,9 @@ retrieveMetadata <- function(user_bacs,
 #' apply evidence & genome_quality filters.
 #'
 #' Fallback path: if "metadata" is missing and fallback_to_bvbrc_cache = TRUE,
-#' read BV-BRC cache at <base_dir>/data/bvbrc/bvbrcData.duckdb ("bvbrc_bac_data"),
-#' derive genome IDs from user_bacs (taxon IDs or species substring), and
-#' write a minimal "filtered" table (without AMR evidence filtering).
+#' read BV-BRC cache at default BiocFileCache data directory, derive genome IDs
+#' from user_bacs (taxon IDs or species substring), and write a minimal
+#' "filtered" table (without AMR evidence filtering).
 #'
 #' @param evidence_mode Character. One of:
 #'   "lab_only"   (default) -> only laboratory evidence
@@ -1581,12 +1598,14 @@ retrieveMetadata <- function(user_bacs,
     DBI::dbDisconnect(con, shutdown = TRUE)
     stop("No 'metadata' table found in ", db_path, ". Run retrieveMetadata() first.")
   }
-  if (isTRUE(verbose)) message("No 'metadata' in per-selection DB. Falling back to BV-BRC cache at data/bvbrc/.")
+  if (isTRUE(verbose)) {
+    message("No 'metadata' in per-selection DB. Falling back to BV-BRC cache in BiocFileCache.")
+  }
 
-  cache_db <- file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb")
-  if (!file.exists(cache_db)) {
+  cache_db <- .amr_bfc_bvbrc_path(create = FALSE)
+  if (is.null(cache_db) || !file.exists(cache_db)) {
     DBI::dbDisconnect(con, shutdown = TRUE)
-    stop("BV-BRC cache not found at: ", cache_db, ". Run .updateBVBRCdata() first.")
+    stop("BV-BRC cache not found in BiocFileCache. Run .updateBVBRCdata() first.")
   }
 
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
@@ -1941,9 +1960,13 @@ retrieveGenomes <- function(base_dir = ".",
   }
 
   run_chunk_phase <- function(vecs, tags, workers, fun) {
+    workers <- .resolve_workers(requested = workers, n_tasks = length(vecs))
+
     old_plan <- future::plan()
     on.exit(future::plan(old_plan), add = TRUE)
-    future::plan(future::multisession, workers = max(1L, workers))
+
+    .amr_set_future_plan(workers)
+
     furrr::future_map2(vecs, tags, fun, .options = furrr::furrr_options(seed = TRUE))
   }
 
@@ -2100,7 +2123,7 @@ genomeList <- function(base_dir = ".",
 #' @param evidence_mode Character. Sets what types of AMR evidence is acceptable.
 #'    Default `lab_only`. `any` will not require AMR data for downloads. This will
 #'    return very large download lists for many species!
-#' @param num_workers Integer. Parallel workers used for genome download.
+#' @param num_workers Integer. Parallel workers used for metadata and genome download.
 #'    Applied to both FTP and CLI download branches. Default: 8.
 #' @param chunk_size Integer. Size of each genome dataset chunk per download thread.
 #' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
@@ -2199,7 +2222,7 @@ prepareGenomes <- function(user_bacs,
       parameters = list(
         max_age_days = 30L
       ),
-      outputs = file.path(base_dir, "data", "bvbrc", "bvbrcData.duckdb"),
+      outputs = .amr_bfc_bvbrc_path(create = TRUE),
       tool = list(
         name = "BV-BRC",
         interface = "p3-all-genomes"
@@ -2252,6 +2275,7 @@ prepareGenomes <- function(user_bacs,
     base_dir = base_dir,
     abx = "All",
     metadata_method = metadata_method,
+    num_workers = num_workers,
     max_checkm_contam = max_checkm_contam,
     min_checkm_complete = min_checkm_complete,
     gc_deviations = gc_deviations,
@@ -2395,22 +2419,41 @@ prepareGenomes <- function(user_bacs,
     )
   }
 
-  if (isTRUE(load_tables)) {
-    return(list(
+  result <- if (isTRUE(load_tables)) {
+    list(
       duckdb_path = paths$db_path,
       table_name = "files",
       data = if (!is.null(export_res)) export_res$data else NULL
-    ))
+    )
+  } else {
+    out
   }
 
-  run_failed <- FALSE
-
-  .manifest_finish(
+  manifest <- .manifest_finish(
     manifest,
     status = "success"
   )
 
-  invisible(out)
+  run_failed <- FALSE
+
+  tryCatch(
+    {
+      .amr_bfc_register_local(
+        path = manifest$path,
+        rname = .amr_bfc_manifest_rname(manifest)
+      )
+    },
+    error = function(e) {
+      warning(
+        "Dataset completed successfully, but its manifest could not be registered ",
+        "with BiocFileCache: ",
+        conditionMessage(e),
+        call. = FALSE
+      )
+    }
+  )
+
+  invisible(result)
 }
 
 #' Export DuckDB tables and optionally load them into R

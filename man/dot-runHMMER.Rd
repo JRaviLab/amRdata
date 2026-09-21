@@ -8,7 +8,7 @@
   duckdb_path,
   output_path,
   threads = 8L,
-  hmmer_db_dir,
+  hmmer_db_dir = NULL,
   databases = c("Pfam", "COG", "AMRFinder"),
   docker_image = "staphb/hmmer",
   num_of_splits = 8L,
