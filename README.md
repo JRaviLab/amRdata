@@ -9,7 +9,7 @@
 experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 <!-- badges: end -->
 
-amRdata is the first package in the [amR
+**amRdata** is the first package in the [amR
 suite](https://github.com/JRaviLab/amR) for antimicrobial resistance
 (AMR) prediction. It takes a user‑provided species or taxon ID,
 downloads the corresponding genomes and AST data from BV‑BRC, constructs
@@ -21,14 +21,15 @@ The workflow is comprised of 6 primary processes:
 
 1.  BV‑BRC metadata (isolate metadata + AMR phenotypic labels) →
 2.  BV-BRC genomes (sequence data) →
-3.  Panaroo pangenome (genes, struct) →  
+3.  Panaroo pangenome (genes, struct) →
 4.  CD‑HIT protein clusters (proteins) →
-5.  Pfam domain extraction (domains) →
+5.  HMMER protein features (e.g., Pfam domains, COG membership, ARG
+    homologs) →
 6.  Database formatting
 
 ## Overview
 
-amRdata includes functions to:
+**amRdata** includes functions to:
 
 - Query and download bacterial genome data from BV-BRC
 - Acquire paired antimicrobial susceptibility testing (AST) results
@@ -59,7 +60,12 @@ remotes::install_github("JRaviLab/amRdata")
 
 library(amRdata)
 
-# Step 1: Download and prepare genomes with paired AST data from BV-BRC
+# Step 1: Check BV-BRC data availability for bacteria of your choice
+checkDataAvailability(
+  user_bacs = c("Shigella flexneri", "Shigella sonnei", "Helicobacter pylori")
+)
+
+# Step 2: Download and prepare genomes with paired AST data from BV-BRC
 prepareGenomes(
   user_bacs = c("Shigella flexneri"),
   base_dir  = "data/Shigella_flexneri",
@@ -67,47 +73,66 @@ prepareGenomes(
   verbose   = TRUE
 )
 
-# Step 2: Run full feature extraction (Panaroo → CD-HIT → InterProScan → metadata cleaning)
+# Step 3: Run full feature extraction (Panaroo → CD-HIT → HMMER → metadata cleaning)
 runDataProcessing(
   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
   output_path = "data/Shigella_flexneri",
-  threads     = 16,
-  ref_file_path = "data_raw/"
+  threads     = 16
 )
 
 # A final Parquet-backed DuckDB is created:
 #   data/Shigella_flexneri/Sfl_parquet.duckdb
 
-This contains data for feature presence/absence and counts across scales in genome by feature matrices, as well as all available sample metadata. 
+This contains data for feature presence/absence and counts across scales in 
+genome by feature matrices, as well as all available sample metadata. These are
+used in amRml, but can also be exported and used through:
+
+# Optional — Step 5: Export your data in tabular format
+### For basic stats and metadata
+exportTables(
+  duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
+  export_formats = "csv"
+)
+
+### For all features and phenotypes after data processing
+exportProcessedData(
+  duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
+  amr_phenotype_mode = "separate",
+  export_formats = c("csv", "parquet", "xlsx"),
+  export_sequences = TRUE
+)
 ```
 
 ## Package features
 
 ### Data curation
 
-1.  BV‑BRC data access amRdata uses the BV‑BRC CLI (via Docker) or FTP
-    server to access:
+1.  BV‑BRC data access **amRdata** calls the BV-BRC database through its
+    API and FTP server by default, but can also utilize the BV‑BRC CLI
+    (via Docker). It is an all-in-one method to fetch:
 
 - Genome metadata
 - AMR phenotype data
 - Genome assemblies (`.fna`, `.faa`, `.gff`)
 
-Functions involved:
+Users can query and fetch data through the functions:
 
-    .updateBVBRCdata()
-    .retrieveCustomQuery()
-    .retrieveQueryIDs()
-    retrieveGenomes()
-    .filterGenomes()
+    checkDataAvailability()
     prepareGenomes()
 
-After initial download, all BV-BRC metadata is cached automatically
-under: `data/bvbrc/bvbrcData.duckdb`
+`prepareGenomes()` is a wrapper for the functions:
+
+    retrieveMetadata()
+    retrieveGenomes()
+
+If the BV-BRC CLI is used instead of the default API, BV-BRC metadata is
+cached automatically using `BiocFileCache` to speed up subsequent
+CLI-based queries.
 
 The package interfaces with BV-BRC (Bacterial and Viral Bioinformatics
 Resource Center) to access bacterial genome sequences and antimicrobial
-susceptibility testing data either using FTP or the BV-BRC CLI wrapped
-in a Docker container for reproducible access:
+susceptibility testing data either using API/FTP or the BV-BRC CLI in a
+Docker container for accessibility:
 
 - Query isolate metadata with flexible filtering
 - Download genome files (`.fna`, `.faa`, `.gff`)
@@ -117,11 +142,13 @@ in a Docker container for reproducible access:
 
 ### Feature extraction
 
-Features are extracted at four complementary molecular scales:
+Through a single user-friendly runner function `runDataProcessing()`,
+features are extracted from downloaded genomes over multiple
+complementary molecular scales:
 
 #### 1. Gene clusters
 
-Panaroo is executed inside a container using `.runPanaroo()`.
+Panaroo is executed inside a Docker container using `.runPanaroo()`.
 
 Our pangenome creation approach:
 
@@ -133,29 +160,30 @@ Our pangenome creation approach:
 - Identifies structural variants (gene triplets indicating genome
   rearrangements)
 
-Outputs are written into the per-taxon DuckDB for efficient storage and
-querying.
-
 #### 2. Protein clusters
 
-CD-HIT is executed inside a container using `.runCDHIT()`.
+CD-HIT is executed inside a Docker container using `.runCDHIT()`.
 
 Our protein clustering approach:
 
-- Clusters proteins across all isolates from BV-BRC .faa files
+- Clusters proteins across all isolates from BV-BRC `.faa` files
 - Creates protein presence/absence and count matrices per isolate
 - Saves cluster names and annotations
 
-#### 3. Pfam domains
+#### 3. HMMER features
 
-InterProScan is executed inside a container using `domainFromIPR()`.
+HMMER is executed inside a Docker container using `.runHMMER`.
 
-Our Pfam domain extraction approach:
+Our protein feature annotation approach:
 
-- Automatically configures InterPro’s databases for use
-- Runs parallelized and containerized domain annotation
-- Maps domain presence/absence and counts to genomes and proteins
-- Provides another functional annotation layer
+- Automatically configures 4 HMMER databases for use
+  - Pfam domain homology
+  - Cluster of orthologous groups (COG) homology
+  - Antimicrobial resistance gene (ARG) homology
+  - Bacterial defense system homology
+- Runs parallelized and containerized annotation
+- Maps HMMER feature presence/absence and counts to genomes and proteins
+- Provides multiple functional annotation layers
 
 #### 4. Data cleaning and storage
 
@@ -169,50 +197,56 @@ Our final data storage script:
 - Writes all data into highly compressed data structures
   - **Parquet**: Binary, columnar storage for large matrices
     - These can be made human-readable by calling `arrow::read_parquet`
+      or by using `exportTables()` and `exportProcessedData()`
   - **DuckDB**: SQL-queryable database for rapid filtering of linked
     Parquets
 
 ## Workflow example
 
-An example of the process for downloading and processing all data and
-metadata for *Shigella flexneri* genomes with paired AST metadata.
+An example of the minimal commands needed to download and process all
+data and metadata for *Shigella flexneri* genomes with paired AST
+metadata.
 
     library(amRdata)
 
     # 1. Download & filter genomes
-    prepareGenomes(
-      user_bacs  = c("Shigella flexneri"),
-      base_dir   = "data/Shigella_flexneri",
-      method     = "ftp"
-    )
+    prepareGenomes(user_bacs = "Shigella flexneri")
 
     # 2. Run multi-scale feature extraction
+    runDataProcessing(duckdb_path = "data/Shigella_flexneri/Sfl.duckdb")
 
-    runDataProcessing(
-      duckdb_path    = "data/Shigella_flexneri.duckdb",
-      output_path    = "data/Shigella_flexneri",
-      threads        = 8, # Or whatever your system supports
-      ref_file_path  = "data_raw/"
-    )
+    # This completes an amRdata analysis! 
+    # Data are saved and ready for use or inspection.
+    # For example, to view final metadata and features in human-readable format: 
 
-    # 3. Load final data
+    exportProcessedData(duckdb_path = "data/Shigella_flexneri/Sfl.duckdb", 
+                        export_formats = c("tsv", "xlsx", "Parquet))
 
-    library(DBI)
+### A cautionary note about BV-BRC accession IDs
+
+When reading exported tables, remember that BV-BRC accession IDs are
+distinguished by trailing zeroes! This means 1280.10 and 1280.100 are
+different genomes, but many programs will automatically truncate
+trailing zeroes without warning a user.
+
+Parquet is a highly efficient, quick file format, and it also avoids
+this behavior! We recommend Parquet wherever possible, but as a
+compressed, binary format, they need special handling to be
+human-readable. See below.
+
+### Reading binary Parquet files
+
+    # To read Parquet files in R
     library(arrow)
 
-    # To view all attached data tables in the database
-
-    con <- DBI::dbConnect(duckdb::duckdb(), "Shigella_flexneri/Sfl_parquet.duckdb")
-    DBI::dbListTables(con)
-
-
-    # To load human-readable data tables into R
-
-    # e.g., Looking at gene cluster counts per isolate
-    Sfl_gene_counts <- arrow::read_parquet("data/Shigella_flexneri/gene_count.parquet")
+    # To read recorded gene cluster counts recorded per isolate
+    Sfl_gene_counts <- arrow::read_parquet("data/Shigella_flexneri/exported_data/gene_count.parquet")
       
-      # To connect gene cluster IDs to their annotated names
-      Sfl_gene_names <- arrow::read_parquet("data/Shigella_flexneri/gene_names.parquet")
+    # To connect gene cluster IDs to their annotated names
+    Sfl_gene_names <- arrow::read_parquet("data/Shigella_flexneri/exported_data/gene_names.parquet")
+
+Some newer IDEs like Positron support loading human-readable Parquet
+files by default.
 
 ## Data requirements
 
@@ -221,7 +255,7 @@ External dependencies (managed through Docker) <br>
 - BV‑BRC CLI
 - Panaroo
 - CD‑HIT
-- InterProScan
+- HMMER
 - DuckDB
 - Arrow (Parquet)
 
@@ -235,7 +269,9 @@ The package requires:
     require configuration
   - Make sure Docker is running before you start processing data!
 - Sufficient storage for databases, downloaded files, and processed
-  output (we recommend 20GB+)
+  output (we recommend 50GB+)
+  - These analyses can produce very large amounts of data
+  - For taxa with \>5,000 genomes, disk space can easily exceed 100GB!
 - Multicore processing and sufficient (16GB+) of RAM are highly
   recommended
   - Species with many isolates may run poorly or fail to complete on
@@ -249,16 +285,16 @@ Feature matrices dimensions depend on species:
 - Columns: Number of features (ballpark estimates)
   - Genes: 5,000-50,000
   - Proteins: 5,000-50,000
-  - Domains: 500-10,000
+  - Pfam domains: 500-10,000
   - Structural variants: 1,000-10,000
 
 ### External dependencies
 
 The package uses established bioinformatics tools:
 
-- **Panaroo** (≥1.3.0): Pangenome analysis
+- **Panaroo** (≥1.7.0): Pangenome analysis
 - **CD-HIT** (≥4.8.1): Protein clustering
-- **InterProScan** (≥5.0): Domain annotation
+- **HMMER** (≥3.4): Protein feature annotation
 - **Docker**: For BV-BRC CLI container
 
 These are automatically managed through the Docker container.
@@ -273,7 +309,7 @@ Processing times vary by species and isolate count:
 
 - Protein clustering: 0-3 hours
 
-- Domain annotation: 0-1 hours
+- Protein feature annotation: 0-2 hours
 
 - Total: 1-12 hours for a complete species analysis
 
@@ -283,41 +319,33 @@ Processing times vary by species and isolate count:
 - Parallelization significantly reduces processing time when multiple
   cores are available.
 
-- If a `future::multisession` error occurs mid-run (e.g. while testing
-  via `devtools::load_all()` before installing the package), restart
-  your R session fully before retrying. An orphaned background worker
-  process can leave a stale lock on the local DuckDB caches (e.g.
-  `data/bvbrc/bvbrcData.duckdb`), which can produce inconsistent
-  results on the next run that look like a data or QC bug but are
-  actually just leftover session state.
-
 - If a `furrr`/`future::multisession` worker fails with
-  `could not find function ".xxx"` for an internal amRdata helper,
-  your installed copy of amRdata is stale relative to the source
-  you're editing. `future::multisession` workers are fresh R
-  processes that resolve `amRdata` by loading the *installed* package
-  from `.libPaths()` — they do not see changes made only via
+  `could not find function ".xxx"` for an internal amRdata helper, your
+  installed copy of amRdata is stale relative to the source you’re
+  editing. `future::multisession` workers are fresh R processes that
+  resolve `amRdata` by loading the *installed* package from
+  `.libPaths()` — they do not see changes made only via
   `devtools::load_all()` in your interactive session. Run
-  `devtools::install()` before exercising any function that runs work
-  via `future`/`furrr`, or temporarily set
-  `future::plan(future::sequential)` while iterating with `load_all()`
-  alone.
+  `devtools::install()` (or
+  `pkgbuild::compile_dll(); devtools::document(); devtools::install()`)
+  before exercising any function that runs work via `future`/`furrr`, or
+  temporarily set `future::plan(future::sequential)` while iterating
+  with `load_all()` alone.
 
 - `runDataProcessing()`/`runPanaroo2Duckdb()` default
-  `panaroo_refind_mode` to `"off"` rather than Panaroo's own default.
+  `panaroo_refind_mode` to `"off"` rather than Panaroo’s own default.
   Refinding recovers gene calls that annotation tools missed, but its
   search can take substantially longer (or in rare cases fail to
-  complete within hours) when a genome carries a cluster of CDS with
+  complete within 6+ hours) when a genome carries a cluster of CDS with
   internal stop codons — a condition existing genome-quality metadata
-  (CheckM completeness/contamination, consistency scores, quality
-  flags) does not flag. This default trades some gene-recovery
-  accuracy for predictable runtime until a QC step upstream can screen
-  out affected genomes; set `panaroo_refind_mode = "default"` to
-  restore Panaroo's normal behavior.
+  (CheckM completeness/contamination, consistency scores, quality flags)
+  does not flag. This default trades some gene-recovery accuracy for
+  predictable runtime; set `panaroo_refind_mode = "default"` to restore
+  Panaroo’s normal behavior.
 
 ### Integration with amR suite
 
-amRdata is designed to work seamlessly with other amR packages:
+**amRdata** is designed to work seamlessly with other **amR** packages:
 
 ``` r
 library(amRdata)
@@ -378,6 +406,6 @@ BSD 3-Clause License. See [LICENSE](LICENSE) for details.
 
 ## Code of conduct
 
-Please note that `amRml` is released with a [Contributor Code of
+Please note that **amRdata** is released with a [Contributor Code of
 Conduct](https://contributor-covenant.org/version/2/1/CODE_OF_CONDUCT.html).
 By contributing to this project, you agree to abide by its terms.
