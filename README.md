@@ -71,8 +71,7 @@ prepareGenomes(
 runDataProcessing(
   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
   output_path = "data/Shigella_flexneri",
-  threads     = 16,
-  ref_file_path = "data_raw/"
+  threads     = 16
 )
 
 # A final Parquet-backed DuckDB is created:
@@ -191,8 +190,7 @@ metadata for *Shigella flexneri* genomes with paired AST metadata.
     runDataProcessing(
       duckdb_path    = "data/Shigella_flexneri.duckdb",
       output_path    = "data/Shigella_flexneri",
-      threads        = 8, # Or whatever your system supports
-      ref_file_path  = "data_raw/"
+      threads        = 8 # Or whatever your system supports
     )
 
     # 3. Load final data

@@ -127,8 +127,6 @@ runDataProcessing(
   ipr_dest_dir = "inst/extdata/interpro",
   ipr_platform = "linux/amd64",
   auto_prepare_data = TRUE,
-  # Metadata cleaning
-  ref_file_path = "../data_raw/",
   verbose = TRUE
 )
 ```
