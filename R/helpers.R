@@ -46,6 +46,23 @@
   max(1L, as.integer(workers))
 }
 
+#' Set the active future plan for a resolved worker count
+#'
+#' Sequential when there's only one worker (avoids multisession overhead
+#' for a single-threaded task), multisession otherwise. Callers are
+#' responsible for restoring the previous plan (e.g. via
+#' `old_plan <- future::plan(); on.exit(future::plan(old_plan), add = TRUE)`).
+#' @keywords internal
+.amr_set_future_plan <- function(n_workers) {
+  if (n_workers == 1L) {
+    future::plan(future::sequential)
+  } else {
+    future::plan(future::multisession, workers = n_workers)
+  }
+
+  invisible(NULL)
+}
+
 #' Run independent BV-BRC API requests with explicit future plan
 #' @keywords internal
 .bvbrcFutureMap <- function(.x, .f, num_workers = 8L, ...) {
@@ -61,14 +78,7 @@
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
 
-  if (n_workers == 1L) {
-    future::plan(future::sequential)
-  } else {
-    future::plan(
-      future::multisession,
-      workers = n_workers
-    )
-  }
+  .amr_set_future_plan(n_workers)
 
   furrr::future_map(
     .x,

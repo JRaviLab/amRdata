@@ -44,9 +44,9 @@ Default NULL.}
 \item{metadata_method}{Character. Download backend: \code{"api"} (default) or
 \code{"cli"} (Dockerized \verb{BV-BRC p3-* CLI}).}
 
-\item{num_workers}{Integer. Maximum number of parallel workers used by the
-CLI metadata backend. Automatically capped to available CPUs and the
-number of metadata batches. Default: 8.}
+\item{num_workers}{Integer. Maximum number of parallel workers used for
+metadata retrieval, for both the API and CLI backends. Automatically
+capped to available CPUs and the number of metadata batches. Default: 8.}
 
 \item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 

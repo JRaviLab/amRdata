@@ -345,11 +345,7 @@ clearHMMERdatabases <- function(
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
 
-  if (n_parallel_jobs == 1L) {
-    future::plan(future::sequential)
-  } else {
-    future::plan(future::multisession, workers = n_parallel_jobs)
-  }
+  .amr_set_future_plan(n_parallel_jobs)
 
   batch_panaroo_run <- furrr::future_map(
     panaroo_batches,
@@ -1654,11 +1650,7 @@ CDHIT2duckdb <- function(duckdb_path,
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
 
-  if (n_workers == 1L) {
-    future::plan(future::sequential)
-  } else {
-    future::plan(future::multisession, workers = n_workers)
-  }
+  .amr_set_future_plan(n_workers)
 
   if (verbose) message("Running HMMER jobs")
   parquet_files <- furrr::future_map_chr(
