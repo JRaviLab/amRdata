@@ -468,7 +468,7 @@ cat("\n--- Diagnostics for host + geo columns ---\n")
 print(diag_table, n = Inf)
 ```
 
-## Potential Species for amReh
+## Potential species for amReh
 ```{r priority-pathogens}
 species_counts_for_amreh <- bvbrc_clean |>
   dplyr::distinct(
