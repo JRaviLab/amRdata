@@ -31,7 +31,7 @@ The workflow is comprised of 6 primary processes:
 2. BV-BRC genomes (sequence data) →
 3. Panaroo pangenome (genes, struct) →
 4. CD‑HIT protein clusters (proteins) →
-5. HMMER protein features (e.g., Pfam domains, COG membership, ARG homologs) →
+5. HMMER protein features (e.g., Pfam domains, COG membership, ARG and defense system homologs) →
 6. Database formatting
 
 
@@ -43,9 +43,13 @@ The workflow is comprised of 6 primary processes:
 - Acquire paired antimicrobial susceptibility testing (AST) results
 - Extract molecular features across scales:
   - Gene clusters (Panaroo pangenome analysis)
+  - Structural variants (Panaroo pangenome rearrangements)
   - Protein clusters (CD-HIT sequence similarity)
   - Protein domains (Pfam annotations)
-  - Structural variants (Panaroo pangenome rearrangements)
+  - ARGs (AMRFinder annotations)
+  - Defense system homology (DefenseFinder and CasFinder annotations)
+
+  
 - Store all data in highly efficient Parquet and DuckDB formats
 
 See the [package vignette](https://jravilab.github.io/amRdata/articles/intro.html) for detailed usage.
@@ -91,7 +95,7 @@ runDataProcessing(
 
 This contains data for feature presence/absence and counts across scales in 
 genome by feature matrices, as well as all available sample metadata. These are
-used in amRml, but can also be exported and used through:
+used in **amRml**, but can also be exported and used through:
 
 # Optional — Step 5: Export your data in tabular format
 ### For basic stats and metadata
@@ -133,6 +137,7 @@ prepareGenomes()
 ```
 retrieveMetadata()
 retrieveGenomes()
+genomeList()
 ```
 
 If the BV-BRC CLI is used instead of the default API, BV-BRC metadata is cached 
@@ -187,7 +192,7 @@ Our protein feature annotation approach:
 - Provides multiple functional annotation layers
 
 #### 4. Data cleaning and storage
-Final data formatting and storage is executed using `cleanData()`.
+Final data formatting and storage are executed using `cleanMetaData()` and `cleanData()`.
 
 Our final data storage script:
 
@@ -224,7 +229,7 @@ exportProcessedData(duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
 ### A cautionary note about BV-BRC accession IDs
 When reading exported tables, remember that BV-BRC accession IDs are distinguished
 by trailing zeroes! This means 1280.10 and 1280.100 are different genomes, but
-many programs will automatically truncate trailing zeroes without warning a user.
+many programs will automatically truncate trailing zeroes without warning the user.
 
 Parquet is a highly efficient, quick file format, and it also avoids this behavior!
 We recommend Parquet wherever possible, but as a compressed, binary format, they
@@ -266,12 +271,12 @@ The package requires:
 - Sufficient storage for databases, downloaded files, and processed output (we recommend 50GB+)
   - These analyses can produce very large amounts of data
   - For taxa with >5,000 genomes, disk space can easily exceed 100GB!
-- Multicore processing and sufficient (16GB+) of RAM are highly recommended
+- Multicore processing and sufficient (16GB+) RAM are highly recommended
   - Species with many isolates may run poorly or fail to complete on older hardware
 
 ### Output
 
-Feature matrices dimensions depend on species:
+Feature matrices' dimensions depend on the species:
 
 - Rows: Number of isolates (typically <10,000)
 - Columns: Number of features (ballpark estimates)
