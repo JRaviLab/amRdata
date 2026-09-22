@@ -46,6 +46,23 @@
   max(1L, as.integer(workers))
 }
 
+#' Set the active future plan for a resolved worker count
+#'
+#' Sequential when there's only one worker (avoids multisession overhead
+#' for a single-threaded task), multisession otherwise. Callers are
+#' responsible for restoring the previous plan (e.g. via
+#' `old_plan <- future::plan(); on.exit(future::plan(old_plan), add = TRUE)`).
+#' @keywords internal
+.amr_set_future_plan <- function(n_workers) {
+  if (n_workers == 1L) {
+    future::plan(future::sequential)
+  } else {
+    future::plan(future::multisession, workers = n_workers)
+  }
+
+  invisible(NULL)
+}
+
 #' Run independent BV-BRC API requests with explicit future plan
 #' @keywords internal
 .bvbrcFutureMap <- function(.x, .f, num_workers = 8L, ...) {
@@ -61,14 +78,7 @@
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
 
-  if (n_workers == 1L) {
-    future::plan(future::sequential)
-  } else {
-    future::plan(
-      future::multisession,
-      workers = n_workers
-    )
-  }
+  .amr_set_future_plan(n_workers)
 
   furrr::future_map(
     .x,
@@ -1130,6 +1140,28 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   manifest_state
 }
 
+# Backfill fields added after a manifest may have been written, so manifests
+# from before manifest_type/manifest_id/artifacts existed can still resume.
+.manifest_migrate_legacy <- function(manifest, manifest_path) {
+  if (!is.list(manifest) || !identical(as.integer(manifest$schema_version %||% NA), 1L)) {
+    return(manifest)
+  }
+
+  if (is.null(manifest$manifest_type)) {
+    manifest$manifest_type <- "amR_dataset"
+  }
+
+  if (is.null(manifest$manifest_id)) {
+    manifest$manifest_id <- tools::file_path_sans_ext(basename(manifest_path))
+  }
+
+  if (is.null(manifest$artifacts)) {
+    manifest$artifacts <- list()
+  }
+
+  manifest
+}
+
 # Manifest schema validation helper
 .manifest_validate <- function(manifest) {
   if (!is.list(manifest)) {
@@ -1357,6 +1389,93 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   invisible(manifest_state)
 }
 
+
+#' Append a timestamped line to a plain-text progress log
+#'
+#' A lightweight, human-readable companion to the JSON provenance manifest.
+#' The manifest records complete provenance but is rewritten wholesale on
+#' every update, which makes it impractical to watch while a long-running
+#' pipeline executes. This appends single lines instead, so the file can be
+#' tailed (e.g. `tail -f`) to see what stage is currently running.
+#'
+#' @param log_path Character. Path to the log file. Created if it doesn't exist.
+#' @param ... Character fragments pasted together to form the log message.
+#'
+#' @return Invisibly returns `log_path`.
+#' @keywords internal
+.log_write <- function(log_path, ...) {
+  dir.create(dirname(log_path), recursive = TRUE, showWarnings = FALSE)
+
+  cat(
+    sprintf("[%s] %s\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), paste0(...)),
+    file = log_path,
+    append = TRUE
+  )
+
+  invisible(log_path)
+}
+
+
+#' Find the most recent recorded attempt of a named stage in a manifest run
+#'
+#' @param run A single run entry from a manifest's `runs` list, or `NULL`.
+#' @param name Character. Stage name to look up.
+#'
+#' @return The matching stage entry (a list), or `NULL` if not found.
+#' @keywords internal
+.manifest_prior_stage <- function(run, name) {
+  if (is.null(run) || !length(run$stages)) {
+    return(NULL)
+  }
+
+  stage_names <- purrr::map_chr(run$stages, "name")
+  idx <- which(stage_names == name)
+
+  if (!length(idx)) {
+    return(NULL)
+  }
+
+  run$stages[[idx[length(idx)]]]
+}
+
+
+#' Determine which pipeline stages can be safely skipped when resuming
+#'
+#' Looks at the most recent prior run recorded in a manifest and works out
+#' how far into `stage_order` it got before it can be trusted. A stage only
+#' counts as done if every earlier stage in `stage_order` also succeeded ---
+#' later stages depend on earlier ones' DuckDB writes, so a gap partway
+#' through can't be skipped around --- and its recorded output files are
+#' still present on disk.
+#'
+#' @param prev_run A single run entry from a manifest's `runs` list, or `NULL`.
+#' @param stage_order Character vector of stage names, in pipeline order.
+#'
+#' @return Named logical vector (named by `stage_order`) marking which
+#'   stages are safe to skip.
+#' @keywords internal
+.resume_plan <- function(prev_run, stage_order) {
+  completed <- stats::setNames(rep(FALSE, length(stage_order)), stage_order)
+
+  for (name in stage_order) {
+    stage <- .manifest_prior_stage(prev_run, name)
+
+    if (is.null(stage) || !identical(stage$status, "success")) {
+      break
+    }
+
+    out_paths <- purrr::map_chr(stage$outputs, "path")
+
+    if (length(out_paths) && !all(file.exists(out_paths))) {
+      break
+    }
+
+    completed[[name]] <- TRUE
+  }
+
+  completed
+}
+
 # To distinguish multiple manifests in the same bug directory
 .manifest_find_latest <- function(
     duckdb_path,
@@ -1434,6 +1553,11 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     manifest_path,
     simplifyVector = FALSE
   )
+
+  # Manifests written before manifest_type/manifest_id/artifacts existed are
+  # still valid amR dataset manifests; backfill so .manifest_validate() (and
+  # amRml's readiness check) don't treat them as foreign/corrupt.
+  manifest <- .manifest_migrate_legacy(manifest, manifest_path)
 
   # Is this manifest any good?
   .manifest_validate(manifest)

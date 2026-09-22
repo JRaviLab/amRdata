@@ -121,11 +121,7 @@
 
   message(sprintf("FTPS pass 1 (45s timeout; workers=%d)", workers_first))
 
-  if (workers_first == 1L) {
-    future::plan(future::sequential)
-  } else {
-    future::plan(future::multisession, workers = workers_first)
-  }
+  .amr_set_future_plan(workers_first)
 
   res1 <- furrr::future_map(
     genome_ids,
@@ -162,11 +158,7 @@
 
   message(sprintf("FTPS pass 2 (120s timeout; workers=%d) for failed genomes", workers_second))
 
-  if (workers_second == 1L) {
-    future::plan(future::sequential)
-  } else {
-    future::plan(future::multisession, workers = workers_second)
-  }
+  .amr_set_future_plan(workers_second)
 
   res2 <- furrr::future_map(
     fail_ids,
@@ -1091,9 +1083,9 @@
 #' @param abx Character or vector. Antibiotic filter. "All" for all antibiotics, else names.
 #' @param metadata_method Character. Download backend: `"api"` (default) or
 #'   `"cli"` (Dockerized `BV-BRC p3-* CLI`).
-#' @param num_workers Integer. Maximum number of parallel workers used by the
-#'   CLI metadata backend. Automatically capped to available CPUs and the
-#'   number of metadata batches. Default: 8.
+#' @param num_workers Integer. Maximum number of parallel workers used for
+#'   metadata retrieval, for both the API and CLI backends. Automatically
+#'   capped to available CPUs and the number of metadata batches. Default: 8.
 #' @param image Character. Docker image. Default "danylmb/bvbrc:5.3".
 #' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
 #' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
@@ -1278,14 +1270,7 @@ retrieveMetadata <- function(user_bacs,
     old_plan <- future::plan()
     on.exit(future::plan(old_plan), add = TRUE)
 
-    if (n_workers == 1L) {
-      future::plan(future::sequential)
-    } else {
-      future::plan(
-        future::multisession,
-        workers = n_workers
-      )
-    }
+    .amr_set_future_plan(n_workers)
     if (isTRUE(verbose)) message("Retrieving AMR phenotype data in batches.")
     batch_drug_data <- furrr::future_map(
       genome_batches,
@@ -1980,10 +1965,7 @@ retrieveGenomes <- function(base_dir = ".",
     old_plan <- future::plan()
     on.exit(future::plan(old_plan), add = TRUE)
 
-    if (workers == 1L) {
-      future::plan(future::sequential)
-    } else {
-      future::plan(future::multisession, workers = workers)}
+    .amr_set_future_plan(workers)
 
     furrr::future_map2(vecs, tags, fun, .options = furrr::furrr_options(seed = TRUE))
   }
@@ -2240,7 +2222,7 @@ prepareGenomes <- function(user_bacs,
       parameters = list(
         max_age_days = 30L
       ),
-      outputs = .amr_bfc_bvbrc_path(create = FALSE),
+      outputs = .amr_bfc_bvbrc_path(create = TRUE),
       tool = list(
         name = "BV-BRC",
         interface = "p3-all-genomes"

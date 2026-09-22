@@ -71,8 +71,7 @@ prepareGenomes(
 runDataProcessing(
   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
   output_path = "data/Shigella_flexneri",
-  threads     = 16,
-  ref_file_path = "data_raw/"
+  threads     = 16
 )
 
 # A final Parquet-backed DuckDB is created:
@@ -101,8 +100,10 @@ Functions involved:
     .filterGenomes()
     prepareGenomes()
 
-After initial download, all BV-BRC metadata is cached automatically
-under: `data/bvbrc/bvbrcData.duckdb`
+After initial download, all BV-BRC metadata is cached automatically in
+your [BiocFileCache](https://bioconductor.org/packages/BiocFileCache/)
+directory (run `BiocFileCache::bfccache()` to find its location on
+disk).
 
 The package interfaces with BV-BRC (Bacterial and Viral Bioinformatics
 Resource Center) to access bacterial genome sequences and antimicrobial
@@ -191,8 +192,7 @@ metadata for *Shigella flexneri* genomes with paired AST metadata.
     runDataProcessing(
       duckdb_path    = "data/Shigella_flexneri.duckdb",
       output_path    = "data/Shigella_flexneri",
-      threads        = 8, # Or whatever your system supports
-      ref_file_path  = "data_raw/"
+      threads        = 8 # Or whatever your system supports
     )
 
     # 3. Load final data
@@ -286,10 +286,11 @@ Processing times vary by species and isolate count:
 - If a `future::multisession` error occurs mid-run (e.g. while testing
   via `devtools::load_all()` before installing the package), restart
   your R session fully before retrying. An orphaned background worker
-  process can leave a stale lock on the local DuckDB caches (e.g.
-  `data/bvbrc/bvbrcData.duckdb`), which can produce inconsistent
-  results on the next run that look like a data or QC bug but are
-  actually just leftover session state.
+  process can leave a stale lock on the local DuckDB caches in your
+  [BiocFileCache](https://bioconductor.org/packages/BiocFileCache/)
+  directory (find it with `BiocFileCache::bfccache()`), which can
+  produce inconsistent results on the next run that look like a data
+  or QC bug but are actually just leftover session state.
 
 - If a `furrr`/`future::multisession` worker fails with
   `could not find function ".xxx"` for an internal amRdata helper,
