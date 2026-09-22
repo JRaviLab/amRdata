@@ -159,7 +159,7 @@ Through a single user-friendly runner function `runDataProcessing()`, features a
 extracted from downloaded genomes over multiple complementary molecular scales:
 
 #### 1. Gene clusters
-Panaroo is executed inside a Docker container using `.runPanaroo()`.
+Panaroo is executed inside a Docker container, [staphb/panaroo:1.7.0](https://hub.docker.com/r/staphb/panaroo/tags) using `.runPanaroo()`.
 
 Our pangenome creation approach:
 
@@ -170,7 +170,7 @@ Our pangenome creation approach:
 - Identifies structural variants (gene triplets indicating genome rearrangements)
 
 #### 2. Protein clusters
-CD-HIT is executed inside a Docker container using `.runCDHIT()`.
+CD-HIT is executed inside a Docker container, [weizhongli1987/cdhit:4.8.1](https://hub.docker.com/r/weizhongli1987/cdhit/tags) using `.runCDHIT()`.
 
 Our protein clustering approach:
 
@@ -179,7 +179,7 @@ Our protein clustering approach:
 - Saves cluster names and annotations
 
 #### 3. HMMER features
-HMMER is executed inside a Docker container using `.runHMMER`.
+HMMER is executed inside a Docker container, [staphb/hmmer](https://hub.docker.com/r/staphb/hmmer/tags)  using `.runHMMER`.
 
 Our protein feature annotation approach:
 
@@ -188,7 +188,7 @@ Our protein feature annotation approach:
   - Cluster of orthologous groups (COG) homology
   - Antimicrobial resistance gene (ARG) homology
   - Bacterial defense system homology
-- Runs parallelized and containerized annotation
+- Runs parallelized and containerized annotations  
 - Maps HMMER feature presence/absence and counts to genomes and proteins
 - Provides multiple functional annotation layers
 
@@ -220,7 +220,7 @@ prepareGenomes(user_bacs = "Shigella flexneri")
 runDataProcessing(duckdb_path = "data/Shigella_flexneri/Sfl.duckdb")
 
 # This completes an amRdata analysis! 
-# Data are saved and ready for use or inspection.
+# Data are saved and ready for use. 
 # For example, to view final metadata and features in human-readable format: 
 
 exportProcessedData(duckdb_path = "data/Shigella_flexneri/Sfl.duckdb", 
@@ -241,7 +241,7 @@ need special handling to be human-readable. See below.
 # To read Parquet files in R
 library(arrow)
 
-# To read recorded gene cluster counts recorded per isolate
+# To read gene cluster counts recorded per isolate
 Sfl_gene_counts <- arrow::read_parquet("data/Shigella_flexneri/exported_data/gene_count.parquet")
   
 # To connect gene cluster IDs to their annotated names
@@ -326,7 +326,7 @@ prepareGenomes("Shigella flexneri")
 runDataProcessing("amRdata/data/Shigella_flexneri/Sfl.duckdb")
 
 # 2. Train models
-runMLmodels("amRdata/data/Shigella_flexneri/Sfl_parquet.duckdb")
+runModelingPipeline()
 
 # 3. Visualize ### To add
 launch_dashboard()
