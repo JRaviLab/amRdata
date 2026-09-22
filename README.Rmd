@@ -21,13 +21,13 @@ knitr::opts_chunk$set(
 
 **amRdata** is the first package in the [amR suite](https://github.com/JRaviLab/amR) 
 for antimicrobial resistance (AMR) prediction. It takes a user‑provided species or 
-taxon ID, downloads the corresponding genomes and AST data from BV‑BRC, constructs 
+taxon ID, downloads the corresponding genomes and AST (antimicrobial susceptibility testing) data from BV‑BRC (Bacterial and Viral Bioinformatics Resource Center), constructs 
 pangenomes, extracts features at multiple molecular scales, and prepares a unified 
 Parquet‑backed DuckDB file for downstream ML modeling in **amRml**.
 
 The workflow is comprised of 6 primary processes:
 
-1. BV‑BRC metadata (isolate metadata + AMR phenotypic labels) →
+1. BV‑BRC metadata (isolate metadata + AMR phenotypic labels from AST data) →
 2. BV-BRC genomes (sequence data) →
 3. Panaroo pangenome (genes, struct) →
 4. CD‑HIT protein clusters (proteins) →
@@ -40,7 +40,7 @@ The workflow is comprised of 6 primary processes:
 **amRdata** includes functions to:
 
 - Query and download bacterial genome data from BV-BRC
-- Acquire paired antimicrobial susceptibility testing (AST) results
+- Acquire paired AST results
 - Extract molecular features across scales:
   - Gene clusters (Panaroo pangenome analysis)
   - Structural variants (Panaroo pangenome rearrangements)
@@ -75,7 +75,7 @@ checkDataAvailability(
   user_bacs = c("Shigella flexneri", "Shigella sonnei", "Helicobacter pylori")
 )
 
-# Step 1b: List of recommended bacteria for quick turnaround
+# Step 1b: List of recommended bacteria for quick turnaround by loading the data
 species_counts_named
 
 # Step 2: Download and prepare genomes with paired AST data from BV-BRC
@@ -96,9 +96,7 @@ runDataProcessing(
 # A final Parquet-backed DuckDB is created:
 #   data/Shigella_flexneri/Sfl_parquet.duckdb
 
-This contains data for feature presence/absence and counts across scales in 
-genome by feature matrices, as well as all available sample metadata. These are
-used in **amRml**, but can also be exported and used through:
+This DuckDB database contains data for feature presence/absence and counts across scales in genome-by-feature matrices, as well as all available sample metadata. These feature matrices are then used in **amRml** , or exported and used through:  
 
 # Optional — Step 5: Export your data in tabular format
 ### For basic stats and metadata
@@ -121,6 +119,7 @@ exportProcessedData(
 
 ### Data curation
 1. BV‑BRC data access
+
 **amRdata** calls the BV-BRC database through its API and FTP server by default,
 but can also utilize the BV‑BRC CLI (via Docker). It is an all-in-one method to
 fetch:
@@ -146,9 +145,8 @@ genomeList()
 If the BV-BRC CLI is used instead of the default API, BV-BRC metadata is cached 
 automatically using `BiocFileCache` to speed up subsequent CLI-based queries.
 
-The package interfaces with BV-BRC (Bacterial and Viral Bioinformatics Resource Center) 
-to access bacterial genome sequences and antimicrobial susceptibility testing data 
-either using API/FTP or the BV-BRC CLI in a Docker container for accessibility:
+The package interfaces with BV-BRC to access bacterial genome sequences and antimicrobial susceptibility testing data 
+either using API/FTP or the BV-BRC CLI in a Docker container [danylmb/bvbrc:5.3](https://hub.docker.com/r/danylmb/bvbrc/tags) for accessibility:
 
 - Query isolate metadata with flexible filtering
 - Download genome files (`.fna`, `.faa`, `.gff`)

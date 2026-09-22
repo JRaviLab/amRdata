@@ -12,10 +12,10 @@ experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](h
 **amRdata** is the first package in the [amR
 suite](https://github.com/JRaviLab/amR) for antimicrobial resistance
 (AMR) prediction. It takes a user‑provided species or taxon ID,
-downloads the corresponding genomes and AST data from BV‑BRC, constructs
-pangenomes, extracts features at multiple molecular scales, and prepares
-a unified Parquet‑backed DuckDB file for downstream ML modeling in
-**amRml**.
+downloads the corresponding genomes and AST data from BV‑BRC (Bacterial
+and Viral Bioinformatics Resource Center), constructs pangenomes,
+extracts features at multiple molecular scales, and prepares a unified
+Parquet‑backed DuckDB file for downstream ML modeling in **amRml**.
 
 The workflow is comprised of 6 primary processes:
 
@@ -23,8 +23,8 @@ The workflow is comprised of 6 primary processes:
 2.  BV-BRC genomes (sequence data) →
 3.  Panaroo pangenome (genes, struct) →
 4.  CD‑HIT protein clusters (proteins) →
-5.  HMMER protein features (e.g., Pfam domains, COG membership, ARG
-    homologs) →
+5.  HMMER protein features (e.g., Pfam domains, COG membership, ARG and
+    defense system homologs) →
 6.  Database formatting
 
 ## Overview
@@ -35,9 +35,11 @@ The workflow is comprised of 6 primary processes:
 - Acquire paired antimicrobial susceptibility testing (AST) results
 - Extract molecular features across scales:
   - Gene clusters (Panaroo pangenome analysis)
+  - Structural variants (Panaroo pangenome rearrangements)
   - Protein clusters (CD-HIT sequence similarity)
   - Protein domains (Pfam annotations)
-  - Structural variants (Panaroo pangenome rearrangements)
+  - ARGs (AMRFinder annotations)
+  - Defense system homology (DefenseFinder and CasFinder annotations)
 - Store all data in highly efficient Parquet and DuckDB formats
 
 See the [package
@@ -60,10 +62,13 @@ remotes::install_github("JRaviLab/amRdata")
 
 library(amRdata)
 
-# Step 1: Check BV-BRC data availability for bacteria of your choice
+# Step 1a: Check BV-BRC data availability for bacteria of your choice
 checkDataAvailability(
   user_bacs = c("Shigella flexneri", "Shigella sonnei", "Helicobacter pylori")
 )
+
+# Step 1b: List of recommended bacteria for quick turnaround by loading the data
+species_counts_named
 
 # Step 2: Download and prepare genomes with paired AST data from BV-BRC
 prepareGenomes(
@@ -83,9 +88,7 @@ runDataProcessing(
 # A final Parquet-backed DuckDB is created:
 #   data/Shigella_flexneri/Sfl_parquet.duckdb
 
-This contains data for feature presence/absence and counts across scales in 
-genome by feature matrices, as well as all available sample metadata. These are
-used in amRml, but can also be exported and used through:
+This DuckDB database contains data for feature presence/absence and counts across scales in genome-by-feature matrices, as well as all available sample metadata. These feature matrices are then used in **amRml** , or exported and used through:  
 
 # Optional — Step 5: Export your data in tabular format
 ### For basic stats and metadata
@@ -124,15 +127,15 @@ Users can query and fetch data through the functions:
 
     retrieveMetadata()
     retrieveGenomes()
+    genomeList()
 
 If the BV-BRC CLI is used instead of the default API, BV-BRC metadata is
 cached automatically using `BiocFileCache` to speed up subsequent
 CLI-based queries.
 
-The package interfaces with BV-BRC (Bacterial and Viral Bioinformatics
-Resource Center) to access bacterial genome sequences and antimicrobial
-susceptibility testing data either using API/FTP or the BV-BRC CLI in a
-Docker container for accessibility:
+The package interfaces with BV-BRC to access bacterial genome sequences
+and antimicrobial susceptibility testing data either using API/FTP or
+the BV-BRC CLI in a Docker container for accessibility:
 
 - Query isolate metadata with flexible filtering
 - Download genome files (`.fna`, `.faa`, `.gff`)
@@ -187,7 +190,8 @@ Our protein feature annotation approach:
 
 #### 4. Data cleaning and storage
 
-Final data formatting and storage is executed using `cleanData()`.
+Final data formatting and storage are executed using `cleanMetaData()`
+and `cleanData()`.
 
 Our final data storage script:
 
@@ -227,7 +231,7 @@ metadata.
 When reading exported tables, remember that BV-BRC accession IDs are
 distinguished by trailing zeroes! This means 1280.10 and 1280.100 are
 different genomes, but many programs will automatically truncate
-trailing zeroes without warning a user.
+trailing zeroes without warning the user.
 
 Parquet is a highly efficient, quick file format, and it also avoids
 this behavior! We recommend Parquet wherever possible, but as a
@@ -272,14 +276,13 @@ The package requires:
   output (we recommend 50GB+)
   - These analyses can produce very large amounts of data
   - For taxa with \>5,000 genomes, disk space can easily exceed 100GB!
-- Multicore processing and sufficient (16GB+) of RAM are highly
-  recommended
+- Multicore processing and sufficient (16GB+) RAM are highly recommended
   - Species with many isolates may run poorly or fail to complete on
     older hardware
 
 ### Output
 
-Feature matrices dimensions depend on species:
+Feature matrices’ dimensions depend on the species:
 
 - Rows: Number of isolates (typically \<10,000)
 - Columns: Number of features (ballpark estimates)
