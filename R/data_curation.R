@@ -1798,6 +1798,8 @@ retrieveMetadata <- function(user_bacs,
 #' @param cli_fasta_workers Parallel chunk containers for FASTA+GTO (default 8).
 #' @param cli_gff_workers Parallel chunk containers for GFF export (default 8).
 #' @param chunk_size Genomes per chunk container (default 50).
+#' @param evidence_mode Character. Which AMR evidence is acceptable when building
+#'   the download set: `"lab_only"` (default), `"lab_or_comp"`, `"comp_only"`, or `"any"`.
 #' @param verbose Verbose messages.
 #' @return Character vector of genome IDs with complete file sets on disk.
 #' @export
@@ -2126,11 +2128,18 @@ genomeList <- function(base_dir = ".",
 #' @param num_workers Integer. Parallel workers used for metadata and genome download.
 #'    Applied to both FTP and CLI download branches. Default: 8.
 #' @param chunk_size Integer. Size of each genome dataset chunk per download thread.
+#' @param image Character. Docker image used by the CLI metadata and download
+#'   paths, passed to `retrieveMetadata()` and `retrieveGenomes()`.
+#'   Default `"danylmb/bvbrc:5.3"`.
 #' @param max_checkm_contam Numeric scalar. Maximum allowed CheckM contamination (%).
 #' @param min_checkm_complete Numeric scalar. Minimum allowed CheckM completeness (%).
 #' @param gc_deviations Optional numeric scalar. Maximum SDs from the median GC content.
 #' @param length_deviations Optional numeric scalar. Maximum SDs from the median genome length.
 #' @param cds_deviations Optional numeric scalar. Maximum SDs from the median CDS count.
+#' @param export_tables Logical. If TRUE, export the per-selection DuckDB tables
+#'   via `exportTables()` after genome curation. Default FALSE.
+#' @param load_tables Logical. If TRUE, also load the exported tables into R and
+#'   return them in `data`. Default FALSE.
 #' @param debug Logical. If TRUE, keep QC columns in metadata tables.
 #' @param verbose Logical. Print progress messages. Default TRUE.
 #'
@@ -2147,6 +2156,7 @@ prepareGenomes <- function(user_bacs,
                            overwrite = FALSE,
                            num_workers = 8L,
                            chunk_size = 50L,
+                           image = "danylmb/bvbrc:5.3",
                            evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
                            max_checkm_contam = 5,
                            min_checkm_complete = 95,
@@ -2264,7 +2274,7 @@ prepareGenomes <- function(user_bacs,
     inputs = if (!is.null(genome_id_file)) genome_id_file else character(),
     tool = list(
       name = "BV-BRC",
-      docker_image = "danylmb/bvbrc:5.3"
+      docker_image = image
     )
   )
 
@@ -2276,6 +2286,7 @@ prepareGenomes <- function(user_bacs,
     abx = "All",
     metadata_method = metadata_method,
     num_workers = num_workers,
+    image = image,
     max_checkm_contam = max_checkm_contam,
     min_checkm_complete = min_checkm_complete,
     gc_deviations = gc_deviations,
@@ -2303,7 +2314,7 @@ prepareGenomes <- function(user_bacs,
     tool = if (identical(metadata_method, "api")) {
       list(name = "BV-BRC", interface = "Data API")
       } else {
-        list(name = "BV-BRC", interface = "BV-BRC CLI", docker_image = "danylmb/bvbrc:5.3")
+        list(name = "BV-BRC", interface = "BV-BRC CLI", docker_image = image)
       }
   )
 
@@ -2346,6 +2357,7 @@ prepareGenomes <- function(user_bacs,
     user_bacs = user_bacs,
     metadata_method = metadata_method,
     method = method,
+    image = image,
     skip_existing = !overwrite,
     ftp_workers = num_workers,
     cli_fasta_workers = num_workers,
