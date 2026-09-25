@@ -152,9 +152,9 @@ clearHMMERdatabases <- function(
   output_path <- .docker_path(output_path)
 
   # Fail fast if Docker is missing
-  if (!nzchar(Sys.which("docker"))) {
-    stop("Docker is not available on your PATH but is required to run Panaroo.")
-  }
+#   if (!nzchar(Sys.which("docker"))) {
+#     stop("Docker is not available on your PATH but is required to run Panaroo.")
+#   }
 
   # Host mount root = bug directory
   mount_host <- output_path
@@ -184,12 +184,10 @@ clearHMMERdatabases <- function(
 
   # Run Panaroo in Docker
   cmd_args <- c(
-    "run",
-    "--platform", "linux/amd64",
-    "--rm",
-    "-v", paste0(mount_host, ":", mount_cont),
-    "-w", mount_cont,
-    "staphb/panaroo:1.7.0",
+       "exec",
+    "-B", paste0(mount_host, ":", mount_cont),
+   # "-w", mount_cont,
+    "docker://staphb/panaroo:latest",
     "panaroo",
     "-i", genome_filepath_cont,
     "-o", output_dir_cont,
@@ -199,13 +197,15 @@ clearHMMERdatabases <- function(
     "--refind-mode", refind_mode,
     "--core_threshold", as.character(core_threshold),
     "--len_dif_percent", as.character(len_dif_percent),
-    "--threshold", as.character(cluster_threshold),
-    "-f", as.character(family_seq_identity),
-    "-t", as.character(panaroo_threads_per_job)
+    "--threshold",      as.character(cluster_threshold),
+    "-f",               as.character(family_seq_identity),
+    "-t",               as.character(panaroo_threads_per_job)
   )
 
   # Updating to try controlling Panaroo's print verbosity
-  res <- system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+#   res <- system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+     res <- system2("apptainer", args = cmd_args, stdout = TRUE, stderr = TRUE)
+                     
   status <- attr(res, "status")
 
   if (!is.null(status) && status != 0L) {
@@ -391,9 +391,9 @@ clearHMMERdatabases <- function(
   input_path <- .docker_path(input_path)
 
   # Fail fast if Docker is missing
-  if (!nzchar(Sys.which("docker"))) {
-    stop("Docker is not available on your PATH but is required to run panaroo-merge.")
-  }
+#   if (!nzchar(Sys.which("docker"))) {
+#     stop("Docker is not available on your PATH but is required to run panaroo-merge.")
+#   }
 
   threads <- .resolve_workers(requested = threads)
   merge_dir <- file.path(input_path, "merge_output")
@@ -412,24 +412,22 @@ clearHMMERdatabases <- function(
     dir_args <- as.vector(t(.to_container(valid_dirs, host_root = mount_host, container_root = mount_cont)))
 
     cmd_args <- c(
-      "run",
-      "--platform", "linux/amd64",
-      "--rm",
-      "-v", paste0(mount_host, ":", mount_cont),
-      "-w", mount_cont,
-      "staphb/panaroo:1.7.0",
+         "exec",
+      "-B", paste0(mount_host, ":", mount_cont),
+      "/scratch/alpine/aghosh5@xsede.org/software/panaroo_latest.sif",
       "panaroo-merge",
       "-d", dir_args,
       "-o", file.path(mount_cont, "merge_output"),
       "--merge_paralogs",
       "--core_threshold", as.character(core_threshold),
       "--len_dif_percent", as.character(len_dif_percent),
-      "--threshold", as.character(cluster_threshold),
-      "-f", as.character(family_seq_identity),
-      "-t", as.character(threads)
+      "--threshold",      as.character(cluster_threshold),
+      "-f",               as.character(family_seq_identity),
+      "-t",               as.character(threads)
     )
 
-    system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+#     system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+      system2("apptainer", args = cmd_args, stdout = TRUE, stderr = TRUE)
   } else {
     stop("No valid Panaroo batch directories found (need >= 2 with final_graph.gml).")
   }
@@ -612,9 +610,9 @@ clearHMMERdatabases <- function(
                       memory = 0,
                       extra_args = c("-g", "1")) {
   # Fail fast if Docker is missing
-  if (!nzchar(Sys.which("docker"))) {
-    stop("Docker is not available on your PATH but is required to run CD-HIT.")
-  }
+#   if (!nzchar(Sys.which("docker"))) {
+#     stop("Docker is not available on your PATH but is required to run CD-HIT.")
+#   }
 
   # CD-HIT sets theads = 0 to mean all CPUs, we limit to CPUs available to this R session
   if (identical(threads, 0L) || identical(threads, 0)) {
@@ -655,11 +653,9 @@ clearHMMERdatabases <- function(
   mount_cont <- "/work"
 
   cmd_args <- c(
-    "run", "--rm",
-    "--platform", "linux/amd64",
-    "-v", paste0(mount_host, ":", mount_cont),
-    "-w", mount_cont,
-    "weizhongli1987/cdhit:4.8.1",
+    "exec", 
+    "-B", paste0(mount_host, ":", mount_cont),
+    "docker://weizhongli1987/cdhit:4.8.1",
     "cd-hit",
     "-i", .to_container(cdhit_input_faa, mount_host, mount_cont),
     "-o", .to_container(clustered_faa, mount_host, mount_cont),
@@ -674,7 +670,7 @@ clearHMMERdatabases <- function(
   message("Running cd-hit via Docker...")
   output <- tryCatch(
     {
-      system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+      system2("apptainer", args = cmd_args, stdout = TRUE, stderr = TRUE)
     },
     error = function(e) {
       stop("cd-hit execution failed: ", e$message)
@@ -1100,7 +1096,7 @@ CDHIT2duckdb <- function(duckdb_path,
 .prepareHmmerDatabases <- function(
     hmmer_db_dir,
     databases = c("Pfam", "COG", "AMRFinder"),
-    docker_image = "staphb/hmmer",
+    docker_image = "docker://staphb/hmmer:latest",
     hmmer_db_url = NULL,
     verbose = TRUE
 ) {
@@ -1358,11 +1354,11 @@ CDHIT2duckdb <- function(duckdb_path,
       }
 
       output <- system2(
-        "docker",
+        "apptainer",
         args = c(
-          "run",
-          "--rm",
-          "-v",
+          "exec",
+#           "--rm",
+          "-B",
           paste0(dirname(hmm_file), ":/db"),
           docker_image,
           "hmmpress",
@@ -1438,7 +1434,8 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @keywords internal
 .runHmmerJob <- function(JOB_NAME, FASTA, DB, total_proteins,
                          output_path = NULL, db_paths,
-                         docker_image = "staphb/hmmer", threads = 8L,
+                         docker_image = "docker://staphb/hmmer:latest", 
+                         threads = 8L,
                          n_workers = 8L,
                          verbose = TRUE
 ) {
@@ -1462,9 +1459,10 @@ CDHIT2duckdb <- function(duckdb_path,
   )
 
   cmd_args <- c(
-    "run", "--rm",
-    "-v", paste0(mount_host, ":", mount_cont),
-    "-v", paste0(db_host_dir, ":", db_cont_dir),
+    "exec", 
+#       "--rm",
+    "-B", paste0(mount_host, ":", mount_cont),
+    "-B", paste0(db_host_dir, ":", db_cont_dir),
     docker_image,
     "hmmsearch",
     "--notextw",
@@ -1479,7 +1477,7 @@ CDHIT2duckdb <- function(duckdb_path,
   if(verbose) message("Running hmmsearch via Docker...")
   output <- tryCatch(
     {
-      system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+      system2("apptainer", args = cmd_args, stdout = TRUE, stderr = TRUE)
     },
     error = function(e) {
       stop("hmmsearch execution failed: ", e$message)
@@ -1541,30 +1539,30 @@ CDHIT2duckdb <- function(duckdb_path,
                       threads = 8L,
                       hmmer_db_dir = NULL,
                       databases = c("Pfam", "COG", "AMRFinder"),
-                      docker_image = "staphb/hmmer",
+                      docker_image = "docker://staphb/hmmer:latest",
                       num_of_splits = 8L,
                       n_workers = 8L,
                       verbose = TRUE
 ) {
   # Fail fast if Docker is missing
-  if (!nzchar(Sys.which("docker"))) {
-    stop("Docker is not available on your PATH but is required to run HMMER.")
-  }
+#   if (!nzchar(Sys.which("docker"))) {
+#     stop("Docker is not available on your PATH but is required to run HMMER.")
+#   }
 
   # But also check if Docker is on the PATH but isn't running
-  docker_ok <- system2(
-    "docker",
-    "info",
-    stdout = FALSE,
-    stderr = FALSE
-  ) == 0L
+#   docker_ok <- system2(
+#     "docker",
+#     "info",
+#     stdout = FALSE,
+#     stderr = FALSE
+#   ) == 0L
 
-  if (!docker_ok) {
-    stop(
-      "Docker is installed but is not running or cannot be reached. ",
-      "Please (re)start Docker Desktop and try again."
-    )
-  }
+#   if (!docker_ok) {
+#     stop(
+#       "Docker is installed but is not running or cannot be reached. ",
+#       "Please (re)start Docker Desktop and try again."
+#     )
+#   }
 
   threads <- .resolve_workers(requested = threads)
   duckdb_path <- .docker_path(duckdb_path)
@@ -1923,16 +1921,16 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @keywords internal
 .defenseHMMER <- function(
     defense_db_dir,
-    docker_image = "staphb/hmmer",
+    docker_image = "docker://staphb/hmmer:latest",
     duckdb_path = "inst/extdata/Sfl.duckdb",
     output_path = NULL,
     threads = 8L,
     verbose = TRUE
 ) {
 
-  if (!nzchar(Sys.which("docker"))) {
-    stop("Docker is required.")
-  }
+#   if (!nzchar(Sys.which("docker"))) {
+#     stop("Docker is required.")
+#   }
 
   threads <- .resolve_workers(requested = threads)
   defense_db_dir <- normalizePath(
@@ -2126,11 +2124,11 @@ CDHIT2duckdb <- function(duckdb_path,
       )
 
       output <- system2(
-        "docker",
+        "apptainer",
         args = c(
-          "run",
-          "--rm",
-          "-v",
+          "exec",
+#           "--rm",
+          "-B",
           paste0(
             dirname(combined_hmm),
             ":/db"
@@ -2261,13 +2259,13 @@ CDHIT2duckdb <- function(duckdb_path,
     )
 
     output <- system2(
-      "docker",
+      "apptainer",
       args = c(
-        "run",
-        "--rm",
-        "-v",
+        "exec",
+#         "--rm",
+        "-B",
         paste0(output_path, ":/work"),
-        "-v",
+        "-B",
         paste0(dirname(hmm_file), ":/db"),
         docker_image,
         "hmmsearch",
@@ -2384,6 +2382,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'
 #' @export
 cleanMetaData <- function(duckdb_path, path) {
+invisible(lapply(list.files("data", pattern = "\\.rda$", full.names = TRUE), load, envir = .GlobalEnv))
   duckdb_path <- normalizePath(duckdb_path)
   # If no explicit path is provided (or a generic one), choose results/<bug>/ when
   # the DuckDB lives under data/<bug>/, or else fall back to the DuckDB directory.
@@ -2962,7 +2961,7 @@ runDataProcessing <- function(
       "DefenseCas"
     ),
     hmmer_db_dir = NULL,
-    hmmer_docker_image = "staphb/hmmer",
+    hmmer_docker_image = "docker://staphb/hmmer:latest",
     hmmer_num_splits = 8L,
     hmmer_workers = 8L,
 
