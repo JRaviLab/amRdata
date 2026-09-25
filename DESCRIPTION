@@ -57,6 +57,7 @@ Imports:
 biocViews: GenomeAssembly, Annotation, Sequencing
 VignetteBuilder: knitr
 Suggests:
+    readxl,
     rmarkdown,
     writexl,
     testthat (>= 3.0.0)

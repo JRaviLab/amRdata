@@ -36,5 +36,10 @@ tetracyclines	TET
 thioamides	THD
 trimethoprim_derivatives	TMD
 trimethoprim-sulfonamides	TMD-SUL
-vitamin_b	VIT_B
+vitamin_b	VITB
 lipoglycopeptides	LGP
+nitroimidazoles	NIM
+diarylquinolines	DAQ
+orthosomycins	ORT
+penicillins-aminocoumarins	PEN-ACM
+spiropyrimidinetriones	SPY
