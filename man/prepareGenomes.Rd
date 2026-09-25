@@ -13,6 +13,7 @@ prepareGenomes(
   overwrite = FALSE,
   num_workers = 8L,
   chunk_size = 50L,
+  image = "danylmb/bvbrc:5.3",
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
   max_checkm_contam = 5,
   min_checkm_complete = 95,
@@ -50,6 +51,10 @@ Applied to both FTP and CLI download branches. Default: 8.}
 
 \item{chunk_size}{Integer. Size of each genome dataset chunk per download thread.}
 
+\item{image}{Character. Docker image used by the CLI metadata and download
+paths, passed to \code{retrieveMetadata()} and \code{retrieveGenomes()}.
+Default \code{"danylmb/bvbrc:5.3"}.}
+
 \item{evidence_mode}{Character. Sets what types of AMR evidence is acceptable.
 Default \code{lab_only}. \code{any} will not require AMR data for downloads. This will
 return very large download lists for many species!}
@@ -63,6 +68,12 @@ return very large download lists for many species!}
 \item{length_deviations}{Optional numeric scalar. Maximum SDs from the median genome length.}
 
 \item{cds_deviations}{Optional numeric scalar. Maximum SDs from the median CDS count.}
+
+\item{export_tables}{Logical. If TRUE, export the per-selection DuckDB tables
+via \code{exportTables()} after genome curation. Default FALSE.}
+
+\item{load_tables}{Logical. If TRUE, also load the exported tables into R and
+return them in \code{data}. Default FALSE.}
 
 \item{debug}{Logical. If TRUE, keep QC columns in metadata tables.}
 
