@@ -3301,6 +3301,8 @@ runDataProcessing <- function(
     )
   }
 
+  expected_tables <- paste0("protein_", hmmer_databases)
+
   missing_tables <- local({
     con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
 
