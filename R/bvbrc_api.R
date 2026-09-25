@@ -212,7 +212,7 @@
   # write bac_data (genome.* columns), mirroring .retrieveQueryIDs()
   paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
   bac <- .bvbrcPrefixFill(
     df,
     c("genome_id", "genome_name", "taxon_id", "species", "strain"),

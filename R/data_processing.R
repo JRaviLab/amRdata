@@ -270,8 +270,6 @@ clearHMMERdatabases <- function(
   refind_mode <- match.arg(refind_mode)
   threads <- .resolve_workers(requested = threads)
   duckdb_path <- normalizePath(duckdb_path)
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
 
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
     output_path <- dirname(duckdb_path)
@@ -279,7 +277,13 @@ clearHMMERdatabases <- function(
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- normalizePath(output_path)
 
-  genome_query_output <- DBI::dbGetQuery(con, "SELECT * FROM files ORDER BY genome_id")
+  # Avoiding keeping DuckDB connections live when playing with futures
+  genome_query_output <- local({con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+    DBI::dbGetQuery(con, "SELECT * FROM files ORDER BY genome_id")
+  })
 
   panaroo_input_files <- genome_query_output |>
     dplyr::pull(panaroo_input)
@@ -451,7 +455,7 @@ clearHMMERdatabases <- function(
   filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
   duckdb_path <- normalizePath(duckdb_path)
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   gene_count <- read.table(filepath, sep = ",", header = TRUE, fill = TRUE, quote = "") |>
     tibble::as_tibble() |>
@@ -481,7 +485,7 @@ clearHMMERdatabases <- function(
   filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
   duckdb_path <- normalizePath(duckdb_path)
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   gene_names <- read.table(filepath, sep = ",", header = TRUE, fill = TRUE, quote = "") |>
     tibble::as_tibble() |>
@@ -506,7 +510,7 @@ clearHMMERdatabases <- function(
   struct_filepath <- file.path(normalizePath(panaroo_output_path), "struct_presence_absence.Rtab")
   duckdb_path <- normalizePath(duckdb_path)
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   gene_struct <- read.table(struct_filepath, sep = "\t", header = TRUE, fill = TRUE, quote = "") |>
     tibble::as_tibble() |>
@@ -535,7 +539,7 @@ clearHMMERdatabases <- function(
   duckdb_path <- normalizePath(duckdb_path)
   fasta_filepath <- file.path(panaroo_output_path, "pan_genome_reference.fa")
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   gene_fasta <- Biostrings::readDNAStringSet(filepath = fasta_filepath)
   DBI::dbWriteTable(con, "gene_ref_seq",
@@ -629,10 +633,12 @@ clearHMMERdatabases <- function(
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- .docker_path(output_path)
 
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
+  genome_query_output <- local({
+    con <- DBI::dbConnect(duckdb::duckdb(),duckdb_path)
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  genome_query_output <- DBI::dbGetQuery(con, "SELECT * FROM files ORDER BY genome_id")
+    DBI::dbGetQuery(con, "SELECT * FROM files ORDER BY genome_id")
+  })
 
   cdhit_input_files <- genome_query_output |>
     dplyr::filter(dplyr::if_all(dplyr::everything(), ~ . != "NA")) |>
@@ -1037,8 +1043,6 @@ CDHIT2duckdb <- function(duckdb_path,
                          memory = 0,
                          extra_args = c("-g", "1")) {
   duckdb_path <- normalizePath(duckdb_path)
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
 
   if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
     output_path <- dirname(duckdb_path) # e.g., ./results/<bug>
@@ -1046,7 +1050,8 @@ CDHIT2duckdb <- function(duckdb_path,
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- normalizePath(output_path)
 
-  cdhit_outputs <- .runCDHIT(duckdb_path,
+  cdhit_outputs <- .runCDHIT(
+    duckdb_path,
     output_path,
     output_prefix = output_prefix,
     identity = identity,
@@ -1058,6 +1063,9 @@ CDHIT2duckdb <- function(duckdb_path,
 
   cluster_map <- .parseProteinClusters(cdhit_outputs$clustered_faa)
   cluster_count <- .buildProtMatrices(cluster_map)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   DBI::dbWriteTable(con, "protein_count", cluster_count, overwrite = TRUE)
 
@@ -1574,11 +1582,14 @@ CDHIT2duckdb <- function(duckdb_path,
   output_path <- .docker_path(output_path)
   if (!dir.exists(output_path)) dir.create(output_path, recursive = TRUE)
 
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
 
-  prot_seqs <- DBI::dbReadTable(con, "protein_cluster_seq") |>
-    tibble::as_tibble()
+  prot_seqs <- local({
+    con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+    DBI::dbReadTable(con, "protein_cluster_seq") |>
+      tibble::as_tibble()
+  })
 
   # Just in case CD-HIT failed to generate sequences somehow
   if (nrow(prot_seqs) == 0L) {
@@ -1653,82 +1664,89 @@ CDHIT2duckdb <- function(duckdb_path,
   .amr_set_future_plan(n_workers)
 
   if (verbose) message("Running HMMER jobs")
-  parquet_files <- furrr::future_map_chr(
-    seq_len(nrow(job_list)),
-    function(i) {
+  parquet_files <- local({
+    old_plan <- future::plan()
+    on.exit(future::plan(old_plan), add = TRUE)
 
-      .runHmmerJob(
-        JOB_NAME = job_list$JOB_NAME[i],
-        FASTA = job_list$FASTA[i],
-        DB = job_list$DB[i],
-        total_proteins = total_proteins,
-        output_path = output_path,
-        db_paths = db_paths,
-        docker_image = docker_image,
-        threads = threads,
-        n_workers = n_workers,
-        verbose = verbose
-      )
-    }
-  )
+    .amr_set_future_plan(n_workers)
+
+    if (isTRUE(verbose))
+      message("Running HMMER jobs")
+
+    furrr::future_map_chr(
+      seq_len(nrow(job_list)),
+      function(i) {
+        .runHmmerJob(
+          JOB_NAME = job_list$JOB_NAME[[i]],
+          FASTA = job_list$FASTA[[i]],
+          DB = job_list$DB[[i]],
+          total_proteins = total_proteins,
+          output_path = output_path,
+          db_paths = db_paths,
+          docker_image = docker_image,
+          threads = threads,
+          n_workers = n_workers,
+          verbose = verbose
+        )
+      },
+      .options = furrr::furrr_options(seed = TRUE)
+    )
+  })
 
   parquet_tbl <- tibble::tibble(
     parquet = parquet_files,
     db = job_list$DB
   )
 
-  final_parquets <- list()
-
-  for (database_name in databases) {
-
-    if(verbose) message("Combining ", database_name)
-
-    db_files <- parquet_tbl |>
-      dplyr::filter(
-        db == database_name
-      ) |>
-      dplyr::pull(parquet)
-
-    combined_tbl <- purrr::map(
-      db_files,
-      arrow::read_parquet
-    ) |>
-      dplyr::bind_rows() |>
-      dplyr::left_join(.parse_hmmer_profiles(db_paths[[database_name]]$hmm) |>
-                         dplyr::select(query_name = profile_name, description = profile_description),
-                       by = "query_name")
-
-    final_parquet <- file.path(
-      output_path,
-      paste0(
-        "protein_",
-        database_name,
-        ".parquet"
-      )
+  final_parquets <- local({
+    con <- DBI::dbConnect(
+      duckdb::duckdb(),
+      duckdb_path
     )
 
-    .write_compressed_parquet(
-      combined_tbl,
-      final_parquet
+    on.exit(
+      try(DBI::dbDisconnect(con), silent = TRUE),
+      add = TRUE
     )
 
-    DBI::dbWriteTable(
-      con,
-      name = paste0(
-        "protein_",
-        database_name
-      ),
-      value = combined_tbl,
-      overwrite = TRUE
-    )
+    purrr::set_names(databases) |>
+      purrr::map(function(database_name) {
 
-    final_parquets[[database_name]] <- final_parquet
+        if (isTRUE(verbose))
+          message("Combining ", database_name)
 
-    message(
-      "Created ",
-      basename(final_parquet)
-    )
-  }
+        db_files <- parquet_tbl |>
+          dplyr::filter(db == database_name) |>
+          dplyr::pull(parquet)
+
+        combined_tbl <- db_files |>
+          purrr::map(arrow::read_parquet) |>
+          dplyr::bind_rows() |>
+          dplyr::left_join(
+            .parse_hmmer_profiles(
+              db_paths[[database_name]]$hmm
+            ) |>
+              dplyr::select(
+                query_name = profile_name,
+                description = profile_description
+              ),
+            by = "query_name"
+          )
+
+        final_parquet <- file.path(output_path,
+                                   paste0("protein_", database_name, ".parquet"))
+
+        .write_compressed_parquet(combined_tbl, final_parquet)
+
+        DBI::dbWriteTable(con, name = paste0("protein_",database_name),
+                          value = combined_tbl, overwrite = TRUE)
+
+        if (isTRUE(verbose))
+          message("Created ",basename(final_parquet))
+
+        final_parquet
+      })
+  })
 
   unlink(
     list.files(
@@ -1786,16 +1804,7 @@ CDHIT2duckdb <- function(duckdb_path,
     duckdb_path
   )
 
-  on.exit(
-    try(
-      DBI::dbDisconnect(
-        con,
-        shutdown = FALSE
-      ),
-      silent = TRUE
-    ),
-    add = TRUE
-  )
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   protein_long <- DBI::dbReadTable(
     con,
@@ -2191,32 +2200,16 @@ CDHIT2duckdb <- function(duckdb_path,
   # load proteins
   ####################################################################
 
-  con <- DBI::dbConnect(
-    duckdb::duckdb(),
-    duckdb_path
-  )
+  prot_seqs <- local({
+    con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  on.exit(
-    try(
-      DBI::dbDisconnect(
-        con,
-        shutdown = FALSE
-      ),
-      silent = TRUE
-    ),
-    add = TRUE
-  )
+    DBI::dbReadTable(con, "protein_cluster_seq") |>
+      tibble::as_tibble()
+    }
+    )
 
-  prot_seqs <- DBI::dbReadTable(
-    con,
-    "protein_cluster_seq"
-  ) |>
-    tibble::as_tibble()
-
-  fasta_file <- file.path(
-    output_path,
-    "protein_DefenseCas.faa"
-  )
+  fasta_file <- file.path(output_path, "protein_DefenseCas.faa")
 
   # required to define the database size for hmmsearch --Z and --domZ parameters
   total_proteins <- nrow(prot_seqs)
@@ -2240,120 +2233,91 @@ CDHIT2duckdb <- function(duckdb_path,
     CasFinder = cas_hmm
   )
 
-  all_hits <- list()
+  combined_tbl <- purrr::imap_dfr(
+    databases, function(hmm_file, db_name) {
 
-  for (db_name in names(databases)) {
+      if (isTRUE(verbose))
+        message("Running ", db_name)
 
-    if(verbose) message(
-      "Running ",
-      db_name
-    )
-
-    hmm_file <- databases[[db_name]]
-
-    tbl_file <- file.path(
-      output_path,
-      paste0(
-        "protein_",
-        db_name,
-        ".tbl"
+      tbl_file <- file.path(output_path, paste0("protein_", db_name, ".tbl")
       )
-    )
 
-    output <- system2(
-      "docker",
-      args = c(
-        "run",
-        "--rm",
-        "-v",
-        paste0(output_path, ":/work"),
-        "-v",
-        paste0(dirname(hmm_file), ":/db"),
-        docker_image,
-        "hmmsearch",
-        "--notextw",
-        "--cpu",
-        as.character(threads),
-        "-Z", total_proteins,
-        "--domZ", total_proteins,
-        "--domtblout",
-        file.path(
-          "/work",
-          basename(tbl_file)
+      output <- system2(
+        "docker",
+        args = c(
+          "run",
+          "--rm",
+          "-v",
+          paste0(output_path, ":/work"),
+          "-v",
+          paste0(dirname(hmm_file), ":/db"),
+          docker_image,
+          "hmmsearch",
+          "--notextw",
+          "--cpu",
+          as.character(threads),
+          "-Z", total_proteins,
+          "--domZ", total_proteins,
+          "--domtblout",
+          file.path(
+            "/work",
+            basename(tbl_file)
+          ),
+          file.path(
+            "/db",
+            basename(hmm_file)
+          ),
+          "/work/protein_DefenseCas.faa"
         ),
-        file.path(
-          "/db",
-          basename(hmm_file)
-        ),
-        "/work/protein_DefenseCas.faa"
-      ),
-      stdout = TRUE,
-      stderr = TRUE
-    )
-
-    if (!file.exists(tbl_file)) {
-      stop(
-        "hmmsearch failed for ",
-        db_name,
-        "\n",
-        paste(output, collapse = "\n")
+        stdout = TRUE,
+        stderr = TRUE
       )
+
+      if (!file.exists(tbl_file)) {
+        stop(
+          "hmmsearch failed for ",
+          db_name,
+          "\n",
+          paste(output, collapse = "\n")
+        )
+      }
+
+      .parseHMMEROutput(tbl_file) |>
+        dplyr::select(
+          protein,
+          query_name
+        ) |>
+        dplyr::mutate(
+          database = db_name
+        ) |>
+        dplyr::left_join(
+          .parse_hmmer_profiles(hmm_file) |>
+            dplyr::select(
+              query_name = profile_name,
+              query_accession = profile_accession,
+              description = profile_description
+            ),
+          by = "query_name"
+        )
     }
-
-    hits <- .parseHMMEROutput(
-      tbl_file
-    ) |>
-      dplyr::select(
-        protein,
-        query_name
-      ) |>
-      dplyr::mutate(
-        database = db_name
-      )|>
-      dplyr::left_join(.parse_hmmer_profiles(hmm_file) |>
-                         dplyr::select(query_name = profile_name, query_accession = profile_accession, description = profile_description),
-                       by = "query_name")
-
-    all_hits[[db_name]] <- hits
-  }
-
-  ####################################################################
-  # merge at parquet stage
-  ####################################################################
-
-  combined_tbl <- dplyr::bind_rows(
-    all_hits
   )
 
-  parquet_file <- file.path(
-    output_path,
-    "protein_DefenseCas.parquet"
-  )
+  parquet_file <- file.path(output_path, "protein_DefenseCas.parquet")
 
-  .write_compressed_parquet(
-    combined_tbl,
-    parquet_file
-  )
+  .write_compressed_parquet(combined_tbl, parquet_file)
 
-  DBI::dbWriteTable(
-    con,
-    "protein_DefenseCas",
-    combined_tbl,
-    overwrite = TRUE
-  )
+  local({
+    con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
 
-  message(
-    "Created protein_DefenseCas"
-  )
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+    DBI::dbWriteTable(con, "protein_DefenseCas", combined_tbl, overwrite = TRUE)
+  })
+
+  message("Created protein_DefenseCas")
 
   unlink(
-    c(
-      fasta_file,
-      file.path(
-        output_path,
-        paste0("protein_", names(databases), ".tbl")
-      )
-    )
+    c(fasta_file, file.path(output_path, paste0("protein_", names(databases), ".tbl")))
   )
 
   invisible(list(
@@ -2402,7 +2366,7 @@ cleanMetaData <- function(duckdb_path, path) {
   if (!dir.exists(path)) dir.create(path, recursive = TRUE)
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
   clean_countries <- cleaned_bvbrc_countries |>
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
@@ -2500,7 +2464,7 @@ cleanMetaData <- function(duckdb_path, path) {
     stringr::str_split_i(".duckdb", i = 1) |>
     paste0("_parquet.duckdb")
   con_new <- DBI::dbConnect(duckdb::duckdb(), db_name)
-  on.exit(try(DBI::dbDisconnect(con_new, shutdown = FALSE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con_new), silent = TRUE), add = TRUE)
 
   # Views below reference parquet files by bare filename. Point DuckDB at the
   # parquet directory so schema inference at CREATE VIEW time can resolve them.
@@ -2598,14 +2562,15 @@ cleanData <- function(duckdb_path, path) {
     )
   }
 
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = FALSE), silent = TRUE), add = TRUE)
 
   .proteinAnnotations2Duckdb(
     duckdb_path = duckdb_path,
     databases = hmmer_databases,
     output_path = path
   )
+
+  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   # Parquet output paths
   genes_parquet <- file.path(path, "gene_count.parquet")
@@ -2635,7 +2600,7 @@ cleanData <- function(duckdb_path, path) {
     stringr::str_split_i(".duckdb", i = 1) |>
     paste0("_parquet.duckdb")
   con_new <- DBI::dbConnect(duckdb::duckdb(), db_name)
-  on.exit(try(DBI::dbDisconnect(con_new, shutdown = FALSE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con_new), silent = TRUE), add = TRUE)
 
   # Views below reference parquet files by bare filename. Point DuckDB at the
   # parquet directory so schema inference at CREATE VIEW time can resolve them.
@@ -3336,25 +3301,21 @@ runDataProcessing <- function(
     )
   }
 
-  con <- DBI::dbConnect(
-    duckdb::duckdb(),
-    duckdb_path
-  )
-  on.exit(
-    DBI::dbDisconnect(con, shutdown = FALSE),
-    add = TRUE
-  )
+  missing_tables <- local({
+    con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
 
-  expected_tables <- paste0("protein_", hmmer_databases)
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  missing_tables <- expected_tables[
-    !vapply(
-      expected_tables,
-      DBI::dbExistsTable,
-      logical(1),
-      conn = con
-    )
-  ]
+    expected_tables[
+      !vapply(
+        expected_tables,
+        function(tbl) {
+          DBI::dbExistsTable(con, tbl)
+        },
+        logical(1)
+      )
+    ]
+  })
 
   if (length(missing_tables)) {
     stop(
@@ -3637,7 +3598,7 @@ exportProcessedData <- function(duckdb_path,
       dirname(normalizePath(duckdb_path))
     )
   )
-  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   available_tables <- DBI::dbListTables(con)
   if (!length(available_tables)) {
