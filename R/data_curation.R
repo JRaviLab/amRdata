@@ -550,7 +550,7 @@
 
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
   on.exit(
-    try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE),
+    try(DBI::dbDisconnect(con_cache), silent = TRUE),
     add = TRUE
   )
 
@@ -666,7 +666,7 @@
     }
   }
 
-  DBI::dbDisconnect(con, shutdown = TRUE)
+  DBI::dbDisconnect(con)
   invisible(bvbrc_bacs)
 }
 
@@ -842,7 +842,7 @@
   }
 
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
-  on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con_cache), silent = TRUE), add = TRUE)
 
   taxon_ids <- unique(bac_input_data$genome.taxon_id)
   if (isTRUE(verbose)) message("Querying cache for ", length(taxon_ids), " taxon IDs.")
@@ -875,7 +875,7 @@
 
   # Write 'bac_data' from cache
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   bac_data_tbl <- data.frame(
     `genome.genome_id` = cache_rows$gid,
@@ -1118,7 +1118,7 @@
 #' strain-rank taxon ID, or supply `genome_id_file` directly.
 #'
 #' @return A list with:
-#'   - duckdbConnection: live DBI connection to the created DuckDB
+#'   - duckdb_path: path to the created DuckDB
 #'   - table_name: "metadata"
 #' @export
 retrieveMetadata <- function(user_bacs,
@@ -1366,7 +1366,7 @@ retrieveMetadata <- function(user_bacs,
   )
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   DBI::dbWriteTable(con, "amr_phenotype", combined_drug_data_tbl, overwrite = TRUE)
   DBI::dbWriteTable(con, "genome_data", combined_genome_data_tbl, overwrite = TRUE)
@@ -1478,13 +1478,13 @@ retrieveMetadata <- function(user_bacs,
 
   if (isTRUE(load_tables)) {
     return(list(
-      duckdbConnection = con,
+      duckdb_path = db_path,
       table_name = "metadata",
       data = if (!is.null(export_res)) export_res$data else NULL
     ))
   }
 
-  list(duckdbConnection = con, table_name = "metadata")
+  list(duckdb_path = db_path, table_name = "metadata")
 }
 
 #' Filter genomes by AMR phenotype and metadata, and store results in DuckDB
@@ -1502,7 +1502,7 @@ retrieveMetadata <- function(user_bacs,
 #'   "lab_or_comp"          -> laboratory OR computational evidence
 #'   "comp_only"            -> only computational evidence
 #'   "any"                  -> no AMR required (from genome_data; Good only)
-#' @return A list with a DuckDB connection and table_name = "filtered"
+#' @return A path to a DuckDB database and table_name = "filtered"
 .filterGenomes <- function(user_bacs,
                            base_dir = ".",
                            evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
@@ -1514,12 +1514,7 @@ retrieveMetadata <- function(user_bacs,
   db_path <- paths$db_path
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
-  on.exit(
-    {
-      NULL
-    },
-    add = TRUE
-  ) # keep open for caller
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   # The convenient "Metadata Exists" path
   if ("metadata" %in% DBI::dbListTables(con)) {
@@ -1529,7 +1524,6 @@ retrieveMetadata <- function(user_bacs,
     if (evidence_mode == "any") {
       gd <- DBI::dbReadTable(con, "genome_data")
       if (is.null(gd) || nrow(gd) == 0) {
-        DBI::dbDisconnect(con, shutdown = TRUE)
         stop("No data available in 'genome_data'.")
       }
       gd <- tibble::as_tibble(gd) |>
@@ -1541,13 +1535,12 @@ retrieveMetadata <- function(user_bacs,
         message("Post-filter distinct genomes (any): ", nrow(gd))
         message("Wrote table 'filtered' to: ", db_path)
       }
-      return(list(duckdbConnection = con, table_name = "filtered"))
+      return(list(duckdb_path = db_path, table_name = "filtered"))
     }
 
     # Otherwise, open up the metadata and start interrogating the AMR data
     md <- DBI::dbReadTable(con, "metadata")
     if (is.null(md) || nrow(md) == 0) {
-      DBI::dbDisconnect(con, shutdown = TRUE)
       message("No data available in 'metadata'.")
       return(NULL)
     }
@@ -1590,12 +1583,11 @@ retrieveMetadata <- function(user_bacs,
       message("Post-filter distinct genomes: ", nrow(md))
       message("Wrote table 'filtered' to: ", db_path)
     }
-    return(list(duckdbConnection = con, table_name = "filtered"))
+    return(list(duckdb_path = db_path, table_name = "filtered"))
   }
 
   # No metadata fallback
   if (!isTRUE(fallback_to_bvbrc_cache)) {
-    DBI::dbDisconnect(con, shutdown = TRUE)
     stop("No 'metadata' table found in ", db_path, ". Run retrieveMetadata() first.")
   }
   if (isTRUE(verbose)) {
@@ -1604,15 +1596,13 @@ retrieveMetadata <- function(user_bacs,
 
   cache_db <- .amr_bfc_bvbrc_path(create = FALSE)
   if (is.null(cache_db) || !file.exists(cache_db)) {
-    DBI::dbDisconnect(con, shutdown = TRUE)
     stop("BV-BRC cache not found in BiocFileCache. Run .updateBVBRCdata() first.")
   }
 
   con_cache <- DBI::dbConnect(duckdb::duckdb(), dbdir = cache_db, read_only = TRUE)
-  on.exit(try(DBI::dbDisconnect(con_cache, shutdown = TRUE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con_cache), silent = TRUE), add = TRUE)
 
   if (!"bvbrc_bac_data" %in% DBI::dbListTables(con_cache)) {
-    DBI::dbDisconnect(con, shutdown = TRUE)
     stop("Table 'bvbrc_bac_data' not found in BV-BRC cache: ", cache_db)
   }
 
@@ -1639,14 +1629,13 @@ retrieveMetadata <- function(user_bacs,
   sel <- dplyr::distinct(sel)
 
   if (nrow(sel) == 0L) {
-    DBI::dbDisconnect(con, shutdown = TRUE)
     stop("No genomes matched user_bacs in BV-BRC cache.")
   }
 
   DBI::dbWriteTable(con, "filtered", sel, overwrite = TRUE)
   if (isTRUE(verbose)) message("Wrote table 'filtered' to: ", db_path)
 
-  list(duckdbConnection = con, table_name = "filtered")
+  list(duckdb_path = db_path, table_name = "filtered")
 }
 
 #' Helps check if a complete set exists after DL (.fna + .PATRIC.faa + .PATRIC.gff)
@@ -1825,25 +1814,23 @@ retrieveGenomes <- function(base_dir = ".",
     message("Preparing download set (checking for existing 'filtered' table).")
   paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
   db_path <- paths$db_path
-  con0 <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
-  has_filtered <- "filtered" %in% DBI::dbListTables(con0)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
+  has_filtered <- "filtered" %in% DBI::dbListTables(con)
+
+  DBI::dbDisconnect(con)
+  rm(con)
 
   if (has_filtered) {
-    if (isTRUE(verbose))
-      message("Found existing 'filtered' table.")
-    con <- con0
-    tbl <- "filtered"
-    on.exit(try(DBI::dbDisconnect(con0, shutdown = TRUE), silent = TRUE), add = TRUE)
-  } else {
-    DBI::dbDisconnect(con0, shutdown = TRUE)
-
     if (isTRUE(verbose)) {
-      message(
-        "No 'filtered' table found; building metadata with metadata_method = \"",
-        metadata_method,
-        "\"."
-      )
+      message("Found existing 'filtered' table.")
     }
+  } else {
+    if (isTRUE(verbose)) {message(
+      "No 'filtered' table found; building metadata with metadata_method = \"",
+      metadata_method, "\"."
+    )
+      }
 
     meta_out <- retrieveMetadata(
       user_bacs = user_bacs,
@@ -1853,7 +1840,6 @@ retrieveGenomes <- function(base_dir = ".",
       verbose = verbose
     )
 
-    #
     if (is.null(meta_out)) {
       if (isTRUE(verbose)) {
         message("No genomes available after metadata retrieval. Re-check your input.")
@@ -1872,20 +1858,22 @@ retrieveGenomes <- function(base_dir = ".",
     if (is.null(f_out)) {
       return(character(0))
     }
-
-    con <- f_out$duckdbConnection
-    tbl <- f_out$table_name
-
-    on.exit(
-      try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE),
-      add = TRUE
-    )
   }
 
-  # What genomes need to be downloaded? Build set as `ids`
-  ids <- tibble::as_tibble(DBI::dbReadTable(con, tbl)) |>
+    con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path, read_only = TRUE)
+
+    filtered <- DBI::dbReadTable(con, "filtered")
+
+    DBI::dbDisconnect(con)
+    rm(con)
+
+  # What genomes need to be downloaded? Build set as `all_ids`
+  all_ids <- tibble::as_tibble(filtered) |>
     dplyr::distinct(`genome.genome_id`) |>
     dplyr::pull(`genome.genome_id`)
+
+  # This looks goofy but we're doing a diff check momentarily, bear with me
+  ids <- all_ids
 
   bug_dir <- dirname(db_path)
   genome_path <- file.path(bug_dir, "genomes")
@@ -1895,23 +1883,19 @@ retrieveGenomes <- function(base_dir = ".",
 
   # Checks what is already  downloaded vs. the full list needed; takes diff
   if (isTRUE(skip_existing)) {
-    already <- .list_complete(genome_path, ids)
+    already <- .list_complete(genome_path, all_ids)
     if (isTRUE(verbose))
       message(length(already), " genomes already completed; skipping.")
-    ids <- setdiff(ids, already)
+    ids <- setdiff(all_ids, already)
   }
 
-  # Is diff length 0? If so, all genomes ready to go, or we filtered them all out!
-  if (length(ids) == 0L) {
-    all_ids <- tibble::as_tibble(DBI::dbReadTable(con, tbl)) |>
-      dplyr::distinct(`genome.genome_id`) |>
-      dplyr::pull(`genome.genome_id`)
+    if (length(ids) == 0L) {
+      if (!length(all_ids)) {
+        if (isTRUE(verbose))
+          message("No genomes are available for download after filtering.")
 
-    if (!length(all_ids)) {
-      if (isTRUE(verbose))
-        message("No genomes are available for download after filtering.")
-      return(character(0))
-    }
+        return(character(0))
+      }
 
     if (isTRUE(verbose))
       message("Download of all selected genomes already complete.")
@@ -1949,7 +1933,7 @@ retrieveGenomes <- function(base_dir = ".",
         )
       }
     }
-    return(ok_ids)
+    return(.list_complete(genome_path, all_ids))
   }
 
   # CLI for FASTA, FAA, and GTO, then GFF from GTO
@@ -2009,7 +1993,7 @@ retrieveGenomes <- function(base_dir = ".",
             length(ok_ids),
             " genomes.")
   }
-  ok_ids
+  .list_complete(genome_path, all_ids)
 }
 
 #' Build a table of local genome file paths and write to DuckDB
@@ -2023,7 +2007,7 @@ retrieveGenomes <- function(base_dir = ".",
 #' @param user_bacs Character vector. Used to locate per-bug directories and DB.
 #' @param verbose Logical. If TRUE, prints messages.
 #'
-#' @return A list with duckdbConnection and table_name = "files".
+#' @return A path to a DuckDB database and table_name = "files".
 genomeList <- function(base_dir = ".",
                        user_bacs,
                        expected_ids = NULL,
@@ -2078,6 +2062,7 @@ genomeList <- function(base_dir = ".",
     dplyr::filter(!is.na(panaroo_input))
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
   DBI::dbWriteTable(con, "files", list_of_files, overwrite = TRUE)
 
   # Write Panaroo input next to the DB
@@ -2089,7 +2074,7 @@ genomeList <- function(base_dir = ".",
     message("Wrote table 'files' and Panaroo input to: ", bug_dir)
   }
 
-  list(duckdbConnection = con, table_name = "files")
+  list(duckdb_path = db_path, table_name = "files")
 }
 
 
@@ -2144,7 +2129,7 @@ genomeList <- function(base_dir = ".",
 #' @param verbose Logical. Print progress messages. Default TRUE.
 #'
 #' @return A list (the output of `genomeList()`), containing:
-#'   - `duckdbConnection`  Active DBI connection to the per-bug DuckDB
+#'   - `duckdb_path`  Path to the per-bug DuckDB
 #'   - `table_name`        `"files"`
 #'
 #' @export
@@ -2332,11 +2317,25 @@ prepareGenomes <- function(user_bacs,
   }
 
   paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
-  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path, read_only = TRUE)
-  n_filtered <- DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM filtered')$n
-  n_meta <- if ("genome_data" %in% DBI::dbListTables(con)) DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM genome_data')$n else NA
-  n_amr <- if ("amr_phenotype" %in% DBI::dbListTables(con)) DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype')$n else NA
-  DBI::dbDisconnect(con, shutdown = TRUE)
+  counts <- local({con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path, read_only = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  list(
+    n_filtered = DBI::dbGetQuery(con,'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM filtered')$n,
+    n_meta = if ("genome_data" %in% DBI::dbListTables(con)) {DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome.genome_id") AS n FROM genome_data')$n
+      } else {
+        NA
+      },
+      n_amr = if ("amr_phenotype" %in% DBI::dbListTables(con)) {DBI::dbGetQuery(con, 'SELECT COUNT(DISTINCT "genome_drug.genome_id") AS n FROM amr_phenotype')$n
+      } else {
+        NA
+      }
+    )
+  })
+
+  n_filtered <- counts$n_filtered
+  n_meta <- counts$n_meta
+  n_amr <- counts$n_amr
 
   if (isTRUE(verbose)) {
     message(sprintf(
@@ -2535,7 +2534,7 @@ exportTables <- function(duckdb_path,
   }
 
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   available_tables <- DBI::dbListTables(con)
   if (!length(available_tables)) {

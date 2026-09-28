@@ -452,7 +452,7 @@
       )
       on.exit(
         try(
-          DBI::dbDisconnect(con_cache, shutdown = TRUE),
+          DBI::dbDisconnect(con_cache),
           silent = TRUE
         ),
         add = TRUE
@@ -1877,7 +1877,7 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
   on.exit(
     {
-      try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)
+      try(DBI::dbDisconnect(con), silent = TRUE)
       unlink(
         duckdb_temp_dir,
         recursive = TRUE,
