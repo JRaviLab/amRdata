@@ -699,20 +699,38 @@
   if (!nrow(hits)) NULL else hits[1, , drop = FALSE]
 }
 
-# Return the cached local path for a named BV-BRC resource. When create = TRUE,
-# reserve a new path in BFC for the caller to populate
-.amr_bfc_bvbrc_path <- function(create = FALSE, rname = "amRdata_bvbrc_bacterial_metadata") {
+# Return the BFC-managed path for the shared BV-BRC CLI metadata DuckDB.
+#
+# If the resource has already been registered but the DuckDB has not yet been
+# created, create = TRUE returns the existing reserved path rather than replacing
+# the BFC record
+.amr_bfc_bvbrc_path <- function(create = FALSE, rname = .amr_bfc_bvbrc_rname()) {
   bfc <- .amr_bfc()
   hit <- .amr_bfc_find(bfc, rname)
 
   if (!is.null(hit)) {
-    path <- tryCatch(
-      BiocFileCache::bfcrpath(bfc, rids = hit$rid[[1]], exact = TRUE),
-      error = function(e) NA_character_
-    )
+    path <- as.character(hit$rpath[[1]])
 
-    if (length(path) == 1L && file.exists(path)) {
-      return(normalizePath(path, mustWork = TRUE))
+    if (length(path) == 1L &&
+        !is.na(path) &&
+        nzchar(path)) {
+      # BFC stores "relative" resources relative to its cache directory.
+      if (identical(as.character(hit$rtype[[1]]), "relative")) {
+        path <- file.path(BiocFileCache::bfccache(bfc), path)
+      }
+
+      path <- normalizePath(path, mustWork = FALSE)
+
+      if (file.exists(path)) {
+        return(normalizePath(path, mustWork = TRUE))
+      }
+
+      # The registry entry can exist before the DuckDB itself is written.
+      if (isTRUE(create)) {
+        return(path)
+      }
+
+      return(NULL)
     }
 
     if (isTRUE(create)) {
@@ -737,12 +755,65 @@
   normalizePath(path, mustWork = FALSE)
 }
 
+# Remove the shared BV-BRC CLI metadata DuckDB and its BFC registration
+.amr_bfc_remove_bvbrc <- function(rname = .amr_bfc_bvbrc_rname()) {
+  bfc <- .amr_bfc()
+
+  hit <- .amr_bfc_find(bfc, rname)
+
+  if (is.null(hit)) {
+    return(invisible(list(
+      registered = FALSE, path = NULL
+    )))
+  }
+
+  path <- as.character(hit$rpath[[1]])
+
+  if (length(path) == 1L &&
+      !is.na(path) &&
+      nzchar(path)) {
+    if (identical(as.character(hit$rtype[[1]]), "relative")) {
+      path <- file.path(BiocFileCache::bfccache(bfc), path)
+    }
+
+    path <- normalizePath(path, mustWork = FALSE)
+  } else {
+    path <- NULL
+  }
+
+  # Remove the resource from BiocFileCache
+  BiocFileCache::bfcremove(bfc, hit$rid[[1]])
+
+  if (!is.null(.amr_bfc_find(bfc, rname))) {
+    stop("BV-BRC metadata could not be removed from the BiocFileCache registry.",
+         call. = FALSE)
+  }
+
+  # Defensive cleanup in case anything remains on disk
+  if (!is.null(path)) {
+    leftovers <- c(path, paste0(path, ".wal"))
+
+    leftovers <- leftovers[file.exists(leftovers)]
+
+    if (length(leftovers)) {
+      unlink(leftovers, force = TRUE)
+    }
+  }
+
+  invisible(list(registered = TRUE, path = path))
+}
+
 # BFC name for a prepared HMMER database
 .amr_bfc_hmmer_rname <- function(database, component = NULL) {
   parts <- c("amR_hmmer", database, component)
   parts <- parts[!is.na(parts) & nzchar(parts)]
 
   paste(parts, collapse = "_")
+}
+
+# Stable BFC resource name for the shared BV-BRC CLI metadata DuckDB
+.amr_bfc_bvbrc_rname <- function() {
+  "amRdata_bvbrc_bacterial_metadata"
 }
 
 # Register a prepared HMMER database with BFC
@@ -1006,6 +1077,145 @@
     ) |>
     dplyr::distinct(
       duckdb_path,
+      .keep_all = TRUE
+    )
+}
+
+# Find amRdata datasets that are still eligible for cleanup, including datasets
+# whose mutable work/ directory has already been removed. Cleanup discovery is
+# based on the retained registered manifest rather than the working DuckDB.
+.amr_cleanup_datasets <- function() {
+  bfc <- .amr_bfc()
+
+  resources <- BiocFileCache::bfcquery(
+    bfc,
+    query = "^amR_dataset_manifest_",
+    field = "rname",
+    exact = FALSE
+  )
+
+  empty_result <- tibble::tibble(
+    label = character(),
+    dataset_id = character(),
+    dataset_path = character(),
+    manifest_path = character(),
+    modified = as.POSIXct(character())
+  )
+
+  if (!nrow(resources)) {
+    return(empty_result)
+  }
+
+  candidates <- purrr::map_dfr(
+    seq_len(nrow(resources)),
+    function(i) {
+      manifest_path <- as.character(
+        resources$rpath[[i]]
+      )
+
+      if (
+        is.na(manifest_path) ||
+        !nzchar(manifest_path) ||
+        !file.exists(manifest_path)
+      ) {
+        return(NULL)
+      }
+
+      manifest <- tryCatch(
+        jsonlite::read_json(
+          manifest_path,
+          simplifyVector = FALSE
+        ),
+        error = function(e) NULL
+      )
+
+      if (is.null(manifest)) {
+        return(NULL)
+      }
+
+      valid_manifest <- tryCatch(
+        {
+          .manifest_validate(manifest)
+          TRUE
+        },
+        error = function(e) FALSE
+      )
+
+      if (
+        !isTRUE(valid_manifest) ||
+        !identical(
+          manifest$manifest_type %||% "",
+          "amR_dataset"
+        )
+      ) {
+        return(NULL)
+      }
+
+      manifest_path <- normalizePath(
+        manifest_path,
+        mustWork = TRUE
+      )
+
+      orb_dir <- dirname(manifest_path)
+      dataset_path <- dirname(orb_dir)
+      data_dir <- dirname(dataset_path)
+
+      # Match the directory structure that removeLocalFiles() itself requires.
+      if (
+        !identical(basename(orb_dir), "orb") ||
+        !identical(basename(data_dir), "data") ||
+        !dir.exists(dataset_path)
+      ) {
+        return(NULL)
+      }
+
+      dataset_id <- as.character(
+        manifest$dataset_id %||% ""
+      )
+
+      if (!nzchar(dataset_id)) {
+        return(NULL)
+      }
+
+      user_bacs <- unlist(
+        manifest$dataset$selection$user_bacs %||% character(),
+        use.names = FALSE
+      )
+
+      label <- if (length(user_bacs)) {
+        paste(
+          user_bacs,
+          collapse = ", "
+        )
+      } else {
+        basename(dataset_path)
+      }
+
+      tibble::tibble(
+        label = label,
+        dataset_id = dataset_id,
+        dataset_path = normalizePath(
+          dataset_path,
+          mustWork = TRUE
+        ),
+        manifest_path = manifest_path,
+        modified = file.info(
+          manifest_path
+        )$mtime
+      )
+    }
+  )
+
+  if (!nrow(candidates)) {
+    return(empty_result)
+  }
+
+  candidates |>
+    dplyr::arrange(
+      dplyr::desc(modified)
+    ) |>
+    dplyr::distinct(
+      dataset_path,
       .keep_all = TRUE
     )
 }

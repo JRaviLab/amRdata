@@ -616,12 +616,21 @@
   invisible(n_removed)
 }
 
-#' Update BV-BRC metadata in DuckDB
+#' Update the cached BV-BRC CLI metadata database
 #'
 #' Fetches bacterial genome metadata from BV-BRC using the BV-BRC CLI and stores
-#' it in a BiocFileCache-managed DuckDB database.
-#' If the table exists and is older than `max_age_days`, it refreshes; otherwise,
-#' loads the existing table. BV-BRC column names are preserved exactly.
+#' it in a shared BiocFileCache-managed DuckDB database.
+#'
+#' If the metadata table exists and is older than `max_age_days`, it is refreshed;
+#' otherwise, the existing table is loaded. BV-BRC column names are preserved
+#' exactly.
+#'
+#' This cache is used only by the `"cli"` metadata backend. The `"api"` backend
+#' queries BV-BRC directly and does not use or need this DuckDB.
+#'
+#' The cached DuckDB can be removed with
+#' `removeLocalDatabases("BV-BRC")`. It will be recreated automatically the next
+#' time the CLI metadata backend is used.
 #'
 #' @param base_dir Character. Project root. Retained for compatibility with the
 #'   overall amRdata workflow; the cache itself is managed by BiocFileCache.

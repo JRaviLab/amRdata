@@ -1,36 +1,33 @@
 #' @importFrom data.table :=
 NULL
 
-#' Clear cached HMMER databases
+#' Remove locally cached databases
 #'
-#' Removes user-specified HMMER databases from the shared amRdata BFC registry
-#' and deletes their local databases. Databases will be downloaded and prepared
-#' again the next time they are requested. This can help resolve corrupt database
-#' issues that may arise from time to time, especially on certain environments
-#' with unstable network connections.
+#' Removes locally cached databases used by amRdata. HMMER databases are removed
+#' from the shared amRdata BiocFileCache registry and their local database
+#' directories are deleted. If BV-BRC CLI metadata DuckDB is created, it
+#' can also be removed through this mechanism.
 #'
-#' If specific `databases` are not supplied in an interactive R session, a menu
-#' allows the user to select a specific database, or remove all databases.
+#' Removed databases are downloaded or rebuilt automatically the next time they
+#' are requested.
 #'
-#' @param databases Character vector of HMMER databases to remove.
-#'   Supported values are `"Pfam"`, `"COG"`, `"AMRFinder"`, and `"DefenseCas"`.
+#' If `databases` is not supplied in an interactive R session, a menu allows the
+#' user to select a specific database or remove all supported databases.
+#'
+#' @param databases Character vector of databases to remove. Supported values are
+#'   `"Pfam"`, `"COG"`, `"AMRFinder"`, `"DefenseCas"`, and `"BV-BRC"`.
+#'   `"BV-BRC"` refers to the shared BV-BRC CLI metadata cache used to speed up
+#'   subsequent metadata searches. The BV-BRC API does not use this cache.
 #'   If `NULL` in an interactive session, the user is prompted to choose.
 #' @param verbose Logical. Print information about removed databases.
 #'   Default: `TRUE`.
 #'
-#' @return Invisibly returns the names of databases removed.
+#' @return Invisibly returns the names of databases requested for removal.
 #'
 #' @export
-clearHMMERdatabases <- function(
-    databases = NULL,
-    verbose = TRUE
-) {
-  supported <- c(
-    "Pfam",
-    "COG",
-    "AMRFinder",
-    "DefenseCas"
-  )
+removeLocalDatabases <- function(databases = NULL,
+                                 verbose = TRUE) {
+  supported <- c("Pfam", "COG", "AMRFinder", "DefenseCas", "BV-BRC")
 
   # Interactive selection if no database supplied
   if (is.null(databases)) {
@@ -41,15 +38,15 @@ clearHMMERdatabases <- function(
       )
     }
 
+
     selection <- utils::menu(
       choices = c(supported, "All"),
-      title = "Which HMMER database would you like to remove?"
+      title = "Which local database would you like to remove?"
     )
-
     # utils::menu() returns a 0 value when cancelled. Reassure user that
     # no damage was done to their precious databases
     if (selection == 0L) {
-      if (isTRUE(verbose)) message("No HMMER databases removed.")
+      if (isTRUE(verbose)) message("No local databases removed.")
 
       return(invisible(character(0)))
     }
@@ -65,7 +62,7 @@ clearHMMERdatabases <- function(
   databases <- unique(as.character(databases))
 
   if (!length(databases)) {
-    stop("At least one HMMER database must be specified.", call. = FALSE)
+    stop("At least one database must be specified.", call. = FALSE)
   }
 
   # For when you either have a typo or forget what databases there are
@@ -73,7 +70,7 @@ clearHMMERdatabases <- function(
 
   if (length(unknown)) {
     stop(
-      "Unknown HMMER database(s): ",
+      "Unknown database(s): ",
       paste(unknown, collapse = ", "),
       ". Supported databases are: ",
       paste(supported, collapse = ", "),
@@ -88,10 +85,26 @@ clearHMMERdatabases <- function(
   hmmer_dir <- .defaultHmmerDbDir()
 
   for (db in databases) {
+    # Chunky BV-BRC CLI metadata cache
+    if (identical(db, "BV-BRC")) {
+      removed <- .amr_bfc_remove_bvbrc()
+
+      if (isTRUE(verbose)) {
+        if (isTRUE(removed$registered)) {
+          message("Removed BV-BRC CLI metadata database.")
+        } else {
+          message("BV-BRC CLI metadata database was not present.")
+        }
+      }
+
+      next
+    }
+
+    # HMMER database resources
     prefix <- .amr_bfc_hmmer_rname(db)
 
-    # Match the database itself and any registered components
-    hits <- resources[resources$rname == prefix | startsWith(resources$rname, paste0(prefix, "_")),, drop = FALSE]
+    hits <- resources[resources$rname == prefix |
+                        startsWith(resources$rname, paste0(prefix, "_")), , drop = FALSE]
 
     if (nrow(hits)) {
       BiocFileCache::bfcremove(bfc, hits$rid)
@@ -105,7 +118,7 @@ clearHMMERdatabases <- function(
       unlink(db_dir, recursive = TRUE, force = TRUE)
     }
 
-    if (isTRUE(verbose)) message("Cleared HMMER database: ", db)
+    if (isTRUE(verbose)) message("Removed HMMER database: ", db)
   }
 
   invisible(databases)
@@ -4659,49 +4672,45 @@ removeLocalFiles <- function(
 ) {
 
   if (is.null(dataset_path)) {
-  candidates <- .amr_processing_datasets()
+    candidates <- .amr_cleanup_datasets()
 
-  if (!nrow(candidates)) {
-    stop(
-      "No prepared amRdata datasets were found.",
-      call. = FALSE
-    )
-  }
-
-  if (nrow(candidates) == 1L) {
-    duckdb_path <- candidates$duckdb_path[[1]]
-  } else {
-    if (!interactive()) {
+    if (!nrow(candidates)) {
       stop(
-        "`dataset_path` must be supplied when multiple datasets are available ",
-        "in a non-interactive session.",
+        "No amRdata datasets available for cleanup were found.",
         call. = FALSE
       )
     }
 
-    choices <- paste0(
-      candidates$label,
-      " [",
-      candidates$dataset_id,
-      "]"
-    )
+    if (nrow(candidates) == 1L) {
+      dataset_path <- candidates$dataset_path[[1]]
+    } else {
+      if (!interactive()) {
+        stop(
+          "`dataset_path` must be supplied when multiple datasets are available ",
+          "in a non-interactive session.",
+          call. = FALSE
+        )
+      }
 
-    selection <- utils::menu(
-      choices = choices,
-      title = "Select an amRdata dataset to clean:"
-    )
+      choices <- paste0(
+        candidates$label,
+        " [",
+        candidates$dataset_id,
+        "]"
+      )
 
-    if (selection == 0L) {
-      return(invisible(FALSE))
+      selection <- utils::menu(
+        choices = choices,
+        title = "Select an amRdata dataset to clean:"
+      )
+
+      if (selection == 0L) {
+        return(invisible(FALSE))
+      }
+
+      dataset_path <- candidates$dataset_path[[selection]]
     }
-
-    duckdb_path <- candidates$duckdb_path[[selection]]
   }
-
-  dataset_path <- dirname(
-    dirname(duckdb_path)
-  )
-}
 
   if (
     length(complete_remove) != 1L ||
@@ -5224,12 +5233,33 @@ removeLocalFiles <- function(
     full.names = TRUE
   )
 
-  if (length(parquet_duckdb) != 1L) {
+  if (!length(parquet_duckdb)) {
     stop(
-      "Expected exactly one '*_parquet.duckdb' file in: ",
+      "Local build files cannot be removed yet.\n\n",
+      "This dataset has been prepared with `prepareGenomes()`, but it has not ",
+      "yet completed `runDataProcessing()`. The final processed ORB ",
+      "(`*_parquet.duckdb`) does not exist yet.\n\n",
+      "The current genome and working files are still needed to complete data ",
+      "processing, so `removeLocalFiles()` will not remove them.\n\n",
+      "Next step:\n",
+      "  runDataProcessing(...)\n\n",
+      "After data processing completes successfully, run:\n",
+      "  removeLocalFiles()\n\n",
+      "If you instead want to permanently discard this dataset, use:\n",
+      "  removeLocalFiles(..., complete_remove = TRUE)",
+      call. = FALSE
+    )
+  }
+
+  if (length(parquet_duckdb) > 1L) {
+    stop(
+      "Local build files cannot be removed safely.\n\n",
+      "Expected one final '*_parquet.duckdb' file in:\n  ",
       orb_dir,
       "\nFound: ",
       length(parquet_duckdb),
+      "\n\nMultiple ORBs are unexpected. No files were removed.\n",
+      "You may have to delete this stuff manually.",
       call. = FALSE
     )
   }
@@ -5446,74 +5476,93 @@ removeLocalFiles <- function(
   )
 
   retained_bytes <- sum(
-  vapply(
-    c(
-      paths$orb,
-      paths$exports
-    ),
-    path_bytes,
-    numeric(1)
+    vapply(
+      c(
+        paths$orb,
+        paths$exports
+      ),
+      path_bytes,
+      numeric(1)
+    )
   )
-)
 
   if (!length(remove_paths)) {
-  if (isTRUE(verbose)) {
-    message("No local build files found to remove.")
-  }
+    if (isTRUE(verbose)) {
+      message(
+        "No local build files found to remove.\n",
+        "The retained ORB and exports are still present.\n",
+        "To remove the entire dataset, please use:\n",
+        "  removeLocalFiles(complete_remove = TRUE)"
+      )
+    }
 
-  return(
-    invisible(character())
-  )
-}
-
-if (!interactive()) {
-  stop(
-    "Local file cleanup requires an interactive R session so deletion ",
-    "can be explicitly confirmed.",
-    call. = FALSE
-  )
-}
-
-cat(
-  "\n",
-  "LOCAL FILE CLEANUP\n",
-  "==================\n",
-  "This will remove disposable build files for:\n",
-  dataset_path,
-  "\n\n",
-  "Disk space to reclaim: ",
-  format_bytes(reclaimed_bytes),
-  "\n",
-  "ORB and exports will be retained.\n\n",
-  sep = ""
-)
-
-confirmation <- readline(
-  "Continue? [y/N]: "
-)
-
-if (!tolower(trimws(confirmation)) %in% c("y", "yes")) {
-  if (isTRUE(verbose)) {
-    message(
-      "Local file cleanup cancelled. Nothing was deleted."
+    return(
+      invisible(character())
     )
   }
 
-  return(
-    invisible(FALSE)
-  )
-}
-
-if (length(remove_paths)) {
-  purrr::walk(
-    remove_paths,
-    ~ unlink(
-      .x,
-      recursive = TRUE,
-      force = TRUE
+  if (!interactive()) {
+    stop(
+      "Local file cleanup requires an interactive R session so deletion ",
+      "can be explicitly confirmed.",
+      call. = FALSE
     )
+  }
+
+  cat(
+    "\n",
+    "LOCAL FILE CLEANUP\n",
+    "==================\n",
+    "The following amRdata working directories will be permanently removed:\n\n",
+    paste0(
+      "  - ",
+      basename(remove_paths),
+      "/",
+      collapse = "\n"
+    ),
+    "\n\n",
+    "Dataset:\n  ",
+    dataset_path,
+    "\n\n",
+    "Disk space to reclaim: ",
+    format_bytes(reclaimed_bytes),
+    "\n\n",
+    "Retained:\n",
+    "  - orb/     final processed amRdata/ML-ready data\n",
+    "  - exports/ user-exported files (e.g., TSVs or Parquets) \n\n",
+    "Note: these directories may contain useful tool-specific outputs such as\n",
+    "Panaroo pangenomes. Copy anything you want to retain before continuing.\n\n",
+    "To remove the entire dataset instead, use:\n",
+    "  removeLocalFiles(..., complete_remove = TRUE)\n\n",
+    sep = ""
   )
-}
+
+  confirmation <- readline(
+    "Continue? [y/N]: "
+  )
+
+  if (!tolower(trimws(confirmation)) %in% c("y", "yes", "you betcha")) {
+    if (isTRUE(verbose)) {
+      message(
+        "Local file cleanup cancelled. Nothing was deleted."
+      )
+    }
+
+    return(
+      invisible(FALSE)
+    )
+  }
+
+  if (length(remove_paths)) {
+    purrr::walk(
+      remove_paths,
+      ~ unlink(
+        .x,
+        recursive = TRUE,
+        force = TRUE
+      )
+    )
+  }
 
   remaining <- remove_paths[
     dir.exists(remove_paths)
@@ -5537,7 +5586,9 @@ if (length(remove_paths)) {
       " of disk space.\n",
       "ORB and exports retained (",
       format_bytes(retained_bytes),
-      ")."
+      ").\n",
+      "To remove the entire dataset later, use:\n",
+      "  removeLocalFiles(complete_remove = TRUE)"
     )
   }
 
