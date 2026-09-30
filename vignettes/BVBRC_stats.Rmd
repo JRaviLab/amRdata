@@ -354,7 +354,7 @@ bvbrc_clean <- clean_all_char_cols(bvbrc)
 list_cols <- names(bvbrc_clean)[sapply(bvbrc_clean, is.list)]
 bvbrc_clean <- bvbrc_clean |>
   dplyr::mutate(
-    across(all_of(list_cols), clean_list_col)
+    dplyr::across(dplyr::all_of(list_cols), clean_list_col)
   )
 
 # Save the table to parquet
@@ -468,7 +468,7 @@ cat("\n--- Diagnostics for host + geo columns ---\n")
 print(diag_table, n = Inf)
 ```
 
-## Potential Species for Exploring the Package
+## Potential species for exploring the package
 
 Candidate species were selected using the following criteria:
 
@@ -476,9 +476,9 @@ Candidate species were selected using the following criteria:
 - `genome_quality` = "Good"
 - `genome_status` = "WGS" or "Complete"
 - `checkm_completeness` > 98
-- `genome_count` between 20 and 1,000
+- `genome_count` > 20 and < 1,000
 
-```{r priority-pathogens}
+```{r bvbrc-amr-species}
 species_count_summary <- bvbrc_clean |>
   dplyr::distinct(
     species,
@@ -514,11 +514,6 @@ save(
   species_counts_named,
   file = "data/species_count_summary.rda"
 )
-
-
-
-species_for_amreh <- species_count_summary |>
-  dplyr::pull(species)
 
 cat(
   "The recommended list of bacteria to be included in Zenodo are:\n",
