@@ -51,6 +51,7 @@ Imports:
     purrr,
     readr,
     reshape2,
+    R.utils,
     stringr,
     tibble,
     tidyr
