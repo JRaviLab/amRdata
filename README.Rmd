@@ -31,7 +31,7 @@ The workflow is comprised of 6 primary processes:
 2. BV-BRC genomes (sequence data) →
 3. Panaroo pangenome (genes, struct) →
 4. CD‑HIT protein clusters (proteins) →
-5. HMMER protein features (e.g., Pfam domains, COG membership, ARG and defense system homologs) →
+5. HMMER protein features (e.g., Pfam domains, COG membership, ARG, and defense system homologs) →
 6. Database formatting
 
 
@@ -70,18 +70,14 @@ remotes::install_github("JRaviLab/amRdata")
 
 library(amRdata)
 
-# Step 1a: Check BV-BRC data availability for bacteria of your choice
+# Step 1: Check BV-BRC data availability for bacteria of your choice
 checkDataAvailability(
   user_bacs = c("Shigella flexneri", "Shigella sonnei", "Helicobacter pylori")
 )
 
-# Step 1b: List of recommended bacteria for quick turnaround by loading the data
-species_counts_named
-
 # Step 2: Download and prepare genomes with paired AST data from BV-BRC
 prepareGenomes(
   user_bacs = c("Shigella flexneri"),
-  base_dir  = "data/Shigella_flexneri",
   method    = "ftp",   # or "cli"
   verbose   = TRUE
 )
@@ -95,17 +91,19 @@ runDataProcessing(
 
 # A final Parquet-backed DuckDB is created:
 #   data/Shigella_flexneri/Sfl_parquet.duckdb
+```
 
-This DuckDB database contains data for feature presence/absence and counts across scales in genome-by-feature matrices, as well as all available sample metadata. These feature matrices are then used in **amRml** , or exported and used through:  
+This DuckDB database contains data for feature presence/absence and counts across scales in genome-by-feature matrices, as well as all available sample metadata. These feature matrices are then used in **amRml**, or exported and used through:
 
-# Optional — Step 5: Export your data in tabular format
-### For basic stats and metadata
+```r
+# Optional — Step 4: Export your data in tabular format
+# For basic stats and metadata
 exportTables(
   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
   export_formats = "csv"
 )
 
-### For all features and phenotypes after data processing
+# For all features and phenotypes after data processing
 exportProcessedData(
   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
   amr_phenotype_mode = "separate",
@@ -179,7 +177,7 @@ Our protein clustering approach:
 - Saves cluster names and annotations
 
 #### 3. HMMER features
-HMMER is executed inside a Docker container, [staphb/hmmer](https://hub.docker.com/r/staphb/hmmer/tags)  using `.runHMMER`.
+HMMER is executed inside a Docker container, [staphb/hmmer](https://hub.docker.com/r/staphb/hmmer/tags)  using `.runHMMER()`.
 
 Our protein feature annotation approach:
 
@@ -224,7 +222,7 @@ runDataProcessing(duckdb_path = "data/Shigella_flexneri/Sfl.duckdb")
 # For example, to view final metadata and features in human-readable format: 
 
 exportProcessedData(duckdb_path = "data/Shigella_flexneri/Sfl.duckdb", 
-                    export_formats = c("tsv", "xlsx", "Parquet))
+                    export_formats = c("tsv", "xlsx", "parquet"))
 ```
 
 ### A cautionary note about BV-BRC accession IDs
@@ -355,7 +353,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 
 ## Reporting issues
 
-Report bugs and request features at: https://github.com/JRaviLab/amRml/issues
+Report bugs and request features at: https://github.com/JRaviLab/amRdata/issues
 
 ## License
 
