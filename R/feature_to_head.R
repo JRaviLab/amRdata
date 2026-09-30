@@ -43,13 +43,13 @@
 #' protein|gene --> struct:STRUCTURE
 #' }
 #'
-#' The type prefix on each target keeps feature namespaces separate, so a
+#' The type prefix on each feature keeps feature namespaces separate, so a
 #' generic feature name cannot collide across scales downstream.
 #'
 #' The output edge list contains two columns:
 #' \describe{
-#'   \item{source}{Protein-gene dyad identifier.}
-#'   \item{target}{Feature node identifier prefixed by feature type.}
+#'   \item{dyad}{Protein-gene dyad identifier.}
+#'   \item{feature}{Feature node identifier prefixed by feature type.}
 #' }
 #'
 #' @return Invisibly returns the path to the generated
@@ -273,7 +273,7 @@ buildDyadFeatureMap <- function(
   # =========================
 
   # Collapse each protein/gene pair into a single "protein|gene" dyad id; this
-  # is the source node for every edge in the output network.
+  # is the dyad node for every edge in the output network.
   DBI::dbExecute(
     con,
     "
@@ -452,20 +452,20 @@ buildDyadFeatureMap <- function(
   # Build network edge queries
   # =========================
 
-  # Each entry is a SELECT returning (source, target) rows that are UNIONed into
+  # Each entry is a SELECT returning (dyad, feature) rows that are UNIONed into
   # the final edge list. In the joined queries below `pgd` aliases the
   # `protein_gene_dyad` view, so `pgd.dyad` is the "protein|gene" dyad id.
   edge_queries <- c(
     "
     SELECT DISTINCT
-      dyad AS source,
-      CONCAT('protein:', protein) AS target
+      dyad AS dyad,
+      CONCAT('protein:', protein) AS feature
     FROM protein_gene_dyad
     ",
     "
     SELECT DISTINCT
-      dyad AS source,
-      CONCAT('gene:', gene) AS target
+      dyad AS dyad,
+      CONCAT('gene:', gene) AS feature
     FROM protein_gene_dyad
     "
   )
@@ -480,8 +480,8 @@ buildDyadFeatureMap <- function(
       edge_queries,
       "
       SELECT DISTINCT
-        pgd.dyad AS source,
-        CONCAT('struct:', sg.struct) AS target
+        pgd.dyad AS dyad,
+        CONCAT('struct:', sg.struct) AS feature
       FROM protein_gene_dyad pgd
       JOIN v_struct_genes sg
         ON pgd.gene = sg.gene
@@ -499,8 +499,8 @@ buildDyadFeatureMap <- function(
       edge_queries,
       "
       SELECT DISTINCT
-        pgd.dyad AS source,
-        CONCAT('pfam:', pf.feature) AS target
+        pgd.dyad AS dyad,
+        CONCAT('pfam:', pf.feature) AS feature
       FROM protein_gene_dyad pgd
       JOIN v_pfam pf
         ON pgd.protein = pf.protein
@@ -518,8 +518,8 @@ buildDyadFeatureMap <- function(
       edge_queries,
       "
       SELECT DISTINCT
-        pgd.dyad AS source,
-        CONCAT('cog:', cf.feature) AS target
+        pgd.dyad AS dyad,
+        CONCAT('cog:', cf.feature) AS feature
       FROM protein_gene_dyad pgd
       JOIN v_cog cf
         ON pgd.protein = cf.protein
@@ -537,8 +537,8 @@ buildDyadFeatureMap <- function(
       edge_queries,
       "
       SELECT DISTINCT
-        pgd.dyad AS source,
-        CONCAT('amr:', af.feature) AS target
+        pgd.dyad AS dyad,
+        CONCAT('amr:', af.feature) AS feature
       FROM protein_gene_dyad pgd
       JOIN v_amrfinder af
         ON pgd.protein = af.protein
@@ -556,8 +556,8 @@ buildDyadFeatureMap <- function(
       edge_queries,
       "
       SELECT DISTINCT
-        pgd.dyad AS source,
-        CONCAT('defense:', df.feature) AS target
+        pgd.dyad AS dyad,
+        CONCAT('defense:', df.feature) AS feature
       FROM protein_gene_dyad pgd
       JOIN v_defensecas df
         ON pgd.protein = df.protein

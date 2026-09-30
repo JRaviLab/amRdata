@@ -11,7 +11,7 @@ A data frame
 Internal reference data
 }
 \usage{
-data(cleaned_bvbrc_countries)
+cleaned_bvbrc_countries
 }
 \description{
 A dataset mapping raw country entries to cleaned and standardized names.

@@ -8,6 +8,7 @@ runDataProcessing(
   duckdb_path,
   output_path = NULL,
   threads = 8,
+  resume = FALSE,
   export_tabular_data = FALSE,
   panaroo_split_jobs = FALSE,
   panaroo_core_threshold = 0.9,
@@ -28,7 +29,6 @@ runDataProcessing(
   hmmer_docker_image = "staphb/hmmer",
   hmmer_num_splits = 8L,
   hmmer_workers = 8L,
-  ref_file_path = "data_raw/",
   verbose = TRUE
 )
 }
@@ -44,6 +44,15 @@ CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
 
 \item{threads}{Integer. Shared concurrency budget used across Panaroo, CD-HIT,
 and HMMER. Defaults to \code{8}.}
+
+\item{resume}{Logical. If \code{TRUE}, checks the dataset manifest for the most
+recent prior \code{runDataProcessing()} attempt and skips Panaroo, CD-HIT,
+and/or HMMER if they already completed successfully and their recorded
+output files are still present on disk. Only a contiguous run of
+successes from the start of the pipeline is honored (e.g. if CD-HIT
+failed, HMMER is always re-run even if it previously succeeded, since it
+depends on CD-HIT's output). Metadata cleaning and Parquet export always
+run, since they're fast and idempotent. Default: \code{FALSE}.}
 
 \item{export_tabular_data}{Logical. If TRUE, automatically call
 \code{\link[=exportProcessedData]{exportProcessedData()}} after the processing pipeline completes to create
@@ -91,8 +100,9 @@ Default: \code{"cdhit_out"}.}
 \item{hmmer_databases}{Character vector. HMMER annotation databases to run.
 Default: \code{c("Pfam", "COG", "AMRFinder", "DefenseCas")}.}
 
-\item{hmmer_db_dir}{Character or \code{NULL}. Directory containing the shared HMMER
-database cache. If \code{NULL}, uses the amRdata user cache.}
+\item{hmmer_db_dir}{Character. Directory containing the prepared HMMER
+databases. If \code{NULL}, the default BiocFileCache-managed HMMER directory
+is used.}
 
 \item{hmmer_docker_image}{Character. Docker image containing HMMER.
 Default: \code{"staphb/hmmer"}.}
@@ -102,10 +112,6 @@ Default: \code{8}.}
 
 \item{hmmer_workers}{Integer. Number of parallel HMMER workers. Default: \code{8}.}
 
-\item{ref_file_path}{Character. Directory containing reference TSVs used by
-\code{\link[=cleanMetaData]{cleanMetaData()}} and \code{\link[=cleanData]{cleanData()}} for metadata harmonization.
-Default: \code{"data_raw/"}.}
-
 \item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.}
 }
 \value{
@@ -114,6 +120,9 @@ Invisibly returns a list with:
 \item \code{duckdb_path} - input DuckDB path
 \item \code{panaroo_output} - path to the selected Panaroo output directory used for import
 \item \code{parquet_duckdb_path} - absolute path to the created Parquet-backed DuckDB
+\item \code{log_path} - path to a plain-text progress log, appended to as each
+stage starts and finishes. Tail it (e.g. \verb{tail -f <log_path>}) to watch
+progress without parsing the full JSON provenance manifest.
 }
 }
 \description{
@@ -170,6 +179,16 @@ after \code{runDataProcessing()} completes.
 \item Panaroo, CD-HIT, and HMMER allocate that budget according to their respective
 stage parameters.
 }
+
+\strong{Resuming a Failed Run}
+\itemize{
+\item Set \code{resume = TRUE} to avoid re-running stages that already completed
+successfully in the most recent prior attempt (per the dataset manifest).
+\item Resuming is driven entirely by the manifest plus a check that the
+previously recorded output files still exist --- it does not re-validate
+the contents of those outputs, so don't rely on it if files may have
+been altered or deleted since the failed run.
+}
 }
 \section{Pipeline Steps}{
 
@@ -208,8 +227,7 @@ protein-gene dyad feature network used for downstream graph analysis.
 runDataProcessing(
   duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
   output_path   = "data/Shigella_flexneri",
-  threads       = 8,
-  ref_file_path = "data_raw/"
+  threads       = 8
 )
 
 # After completion:

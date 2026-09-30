@@ -40,6 +40,9 @@ retrieveGenomes(
 
 \item{chunk_size}{Genomes per chunk container (default 50).}
 
+\item{evidence_mode}{Character. Which AMR evidence is acceptable when building
+the download set: \code{"lab_only"} (default), \code{"lab_or_comp"}, \code{"comp_only"}, or \code{"any"}.}
+
 \item{verbose}{Verbose messages.}
 }
 \value{

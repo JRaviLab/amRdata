@@ -11,7 +11,7 @@ A data frame
 Internal reference data
 }
 \usage{
-data(class_abbr)
+class_abbr
 }
 \description{
 A dataset mapping drug classes to their abbreviations.
