@@ -117,7 +117,7 @@
 #'
 #' Downloads genome file sets in parallel using a short first-pass timeout.
 #' Genomes that fail the first pass are retried with a longer timeout before
-#' being excluded as real failures. Optional progress reports completed genome 
+#' being excluded as real failures. Optional progress reports completed genome
 #' attempts rather than individual file transfers.
 #'
 #' @param genome_ids Character vector of BV-BRC genome IDs.
@@ -2815,7 +2815,7 @@ exportTables <- function(duckdb_path,
 #'   length. Optional. Default `NULL`.
 #' @param cds_deviations Numeric. Maximum SDs from the median CDS count.
 #'   Optional. Default `NULL`.
-#' @param verbose Logical. If TRUE, print progress messages. Default `TRUE`.
+#' @param verbose Logical. If TRUE, print progress messages. Default `FALSE`.
 #'
 #' @return A tibble with one row per requested taxon containing summary
 #'   statistics describing genome availability, sequencing status, AMR data
@@ -2843,7 +2843,7 @@ checkDataAvailability <- function(
     gc_deviations = NULL,
     length_deviations = NULL,
     cds_deviations = NULL,
-    verbose = TRUE
+    verbose = FALSE
 ) {
   metadata_method <- match.arg(metadata_method)
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
