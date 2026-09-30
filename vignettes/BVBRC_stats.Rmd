@@ -505,13 +505,13 @@ species_count_summary <- bvbrc_clean |>
   ) |>
   dplyr::arrange(genome_count)
 
-species_counts_named <- stats::setNames(
+species_count_summary <- stats::setNames(
   species_count_summary$genome_count,
   species_count_summary$species
 )
 
 save(
-  species_counts_named,
+  species_count_summary,
   file = "data/species_count_summary.rda"
 )
 
