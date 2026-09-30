@@ -5,8 +5,7 @@
 \title{Run the full amRdata processing pipeline (Panaroo -> CD-HIT -> HMMER -> Parquet)}
 \usage{
 runDataProcessing(
-  duckdb_path,
-  output_path = NULL,
+  duckdb_path = NULL,
   threads = 8,
   resume = FALSE,
   export_tabular_data = FALSE,
@@ -29,7 +28,8 @@ runDataProcessing(
   hmmer_docker_image = "staphb/hmmer",
   hmmer_num_splits = 8L,
   hmmer_workers = 8L,
-  verbose = TRUE
+  verbose = FALSE,
+  progress = getOption("amRdata.progress", TRUE)
 )
 }
 \arguments{
@@ -37,10 +37,6 @@ runDataProcessing(
 \code{\link[=prepareGenomes]{prepareGenomes()}} (e.g., \code{"data/<Bug>/<Abbrev>.duckdb"}). This DB must
 already contain the tables written by \code{\link[=prepareGenomes]{prepareGenomes()}} and the upstream
 genome-processing steps.}
-
-\item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo,
-CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
-\code{dirname(duckdb_path)}.}
 
 \item{threads}{Integer. Shared concurrency budget used across Panaroo, CD-HIT,
 and HMMER. Defaults to \code{8}.}
@@ -112,7 +108,17 @@ Default: \code{8}.}
 
 \item{hmmer_workers}{Integer. Number of parallel HMMER workers. Default: \code{8}.}
 
-\item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.}
+\item{verbose}{Logical. Print persistent status and diagnostic messages.
+Routine workflow output is suppressed when \code{FALSE}; warnings and errors are
+still reported. Default: \code{FALSE}.}
+
+\item{progress}{Logical. Show temporary progress for long-running operations.
+This is independent of \code{verbose}. Defaults to \code{TRUE}, unless overridden by
+the \code{amRdata.progress} option.}
+
+\item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo,
+CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
+\code{dirname(duckdb_path)}.}
 }
 \value{
 Invisibly returns a list with:

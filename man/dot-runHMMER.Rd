@@ -2,18 +2,20 @@
 % Please edit documentation in R/data_processing.R
 \name{.runHMMER}
 \alias{.runHMMER}
-\title{Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.}
+\title{Run HMMER against prepared protein reference databases}
 \usage{
 .runHMMER(
   duckdb_path,
-  output_path,
+  output_path = NULL,
   threads = 8L,
   hmmer_db_dir = NULL,
   databases = c("Pfam", "COG", "AMRFinder"),
   docker_image = "staphb/hmmer",
   num_of_splits = 8L,
   n_workers = 8L,
-  verbose = TRUE
+  verbose = TRUE,
+  log_path = NULL,
+  progress = TRUE
 )
 }
 \arguments{
@@ -38,14 +40,31 @@ sequences should be divided. Must be a positive integer. The requested
 value is automatically reduced when fewer protein sequences are available.
 Default: \code{8}.}
 
-\item{n_workers}{Integer. Number of parallel HMMER jobs to run. Default: \code{8}.}
+\item{n_workers}{Integer. Maximum number of HMMER chunk jobs to run in
+parallel. Automatically reduced when fewer chunks are available.
+Default: \code{8}.}
 
-\item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.#'}
+\item{verbose}{Logical. Print persistent HMMER status and diagnostic
+messages. Default: \code{TRUE}.}
+
+\item{log_path}{Character or \code{NULL}. Optional path for HMMER and external
+tool output logging.}
+
+\item{progress}{Logical. Show temporary completed-chunk progress.
+Default: \code{TRUE}.}
 }
 \value{
-Invisibily returns completed HMMER Parquet files per requested database.
+Invisibly returns a list containing the prepared database paths and
+final HMMER output Parquet files.
 }
 \description{
-Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.
+Splits representative protein-cluster sequences into FASTA chunks and runs
+HMMER searches against each requested reference database. Chunks for each
+database are processed in parallel, then combined into database-specific
+Parquet files and DuckDB tables.
+}
+\details{
+HMM databases are prepared automatically when needed. Progress reports the
+number of completed chunks for the database currently being processed.
 }
 \keyword{internal}

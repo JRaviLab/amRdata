@@ -2,7 +2,7 @@
 % Please edit documentation in R/data_processing.R
 \name{.runHmmerJob}
 \alias{.runHmmerJob}
-\title{The function to run HMMER with docker}
+\title{Run one HMMER chunk job}
 \usage{
 .runHmmerJob(
   JOB_NAME,
@@ -14,41 +14,43 @@
   docker_image = "staphb/hmmer",
   threads = 8L,
   n_workers = 8L,
-  verbose = TRUE
+  log_path = NULL
 )
 }
 \arguments{
-\item{JOB_NAME}{Character. Identifier used for the HMMER job and output
-filename.}
+\item{JOB_NAME}{Character. Unique name for this HMMER job, used to name
+intermediate and output files.}
 
-\item{FASTA}{Character. File name of the protein FASTA chunk to search.}
+\item{FASTA}{Character. Filename of the protein FASTA chunk to search.}
 
-\item{DB}{Character. Name of the HMMER database to search against.}
+\item{DB}{Character. Name of the prepared HMM database to search.}
 
-\item{total_proteins}{Integer. Total number of proteins in the full input
-dataset, used to set HMMER's \code{-Z} and \code{--domZ} values.}
+\item{total_proteins}{Integer. Total number of representative proteins in the
+dataset, used to set HMMER's \code{-Z} and \code{--domZ} search-space values.}
 
-\item{output_path}{Character. Directory containing the FASTA input, HMMER
-output, and final Parquet result.}
+\item{output_path}{Character. Directory containing the FASTA input and where
+HMMER intermediate and Parquet outputs should be written.}
 
-\item{db_paths}{List. Prepared HMMER database metadata indexed by database
-name.}
+\item{db_paths}{List. Prepared HMM database metadata indexed by database name.}
 
-\item{docker_image}{Character. Docker image containing HMMER. Default:
-\code{"staphb/hmmer"}.}
+\item{docker_image}{Character. Docker image containing HMMER.
+Default: \code{"staphb/hmmer"}.}
 
-\item{threads}{Integer. Total CPU budget used when calculating the number
-of threads allocated to this job. Default: \code{8}.}
+\item{threads}{Integer. Total CPU budget available to HMMER. Default: \code{8}.}
 
-\item{n_workers}{Integer. Number of HMMER jobs being run in parallel.
-Used to divide the CPU budget among jobs. Default: \code{8}.}
+\item{n_workers}{Integer. Number of HMMER jobs running concurrently. Used to
+divide the CPU budget among jobs. Default: \code{8}.}
 
-\item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.}
+\item{log_path}{Character or \code{NULL}. Optional path for HMMER command output
+logging.}
 }
 \value{
-the filename of the parquet file with hmmer output post parsing
+Character path to the parsed Parquet output for this HMMER job.
 }
 \description{
-The function to run HMMER with docker
+Runs \code{hmmsearch} for one protein FASTA chunk against one prepared HMM
+database. The available CPU budget is divided across concurrently running
+HMMER workers. Raw HMMER output is parsed and written to a Parquet file for
+later combination by \code{\link[=.runHMMER]{.runHMMER()}}.
 }
 \keyword{internal}
