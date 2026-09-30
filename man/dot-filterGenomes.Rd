@@ -28,7 +28,7 @@ apply evidence & genome_quality filters.
 }
 \details{
 Fallback path: if "metadata" is missing and fallback_to_bvbrc_cache = TRUE,
-read BV-BRC cache at <base_dir>/data/bvbrc/bvbrcData.duckdb ("bvbrc_bac_data"),
-derive genome IDs from user_bacs (taxon IDs or species substring), and
-write a minimal "filtered" table (without AMR evidence filtering).
+read BV-BRC cache at default BiocFileCache data directory, derive genome IDs
+from user_bacs (taxon IDs or species substring), and write a minimal
+"filtered" table (without AMR evidence filtering).
 }

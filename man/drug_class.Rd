@@ -11,7 +11,7 @@ A data frame
 Internal reference data
 }
 \usage{
-data(drug_class)
+drug_class
 }
 \description{
 A dataset mapping drugs to their drug classes.

@@ -45,9 +45,10 @@ The workflow is comprised of 6 primary processes:
   - Gene clusters (Panaroo pangenome analysis)
   - Structural variants (Panaroo pangenome rearrangements)
   - Protein clusters (CD-HIT sequence similarity)
-  - Protein domains (Pfam annotations)
-  - ARGs (AMRFinder annotations)
-  - Defense system homology (DefenseFinder and CasFinder annotations)
+  - Protein domains (Pfam HMMs)
+  - Orthologous groups (COG HMMs)
+  - ARGs (NCBIfam-AMRFinder HMMs)
+  - Defense system homology (DefenseFinder and CasFinder HMMs)
 
   
 - Store all data in highly efficient Parquet and DuckDB formats
@@ -141,7 +142,9 @@ genomeList()
 ```
 
 If the BV-BRC CLI is used instead of the default API, BV-BRC metadata is cached 
-automatically using `BiocFileCache` to speed up subsequent CLI-based queries.
+automatically using [BiocFileCache](https://bioconductor.org/packages/BiocFileCache/)
+to speed up subsequent CLI-based queries (run `BiocFileCache::bfccache()` to find
+its location on disk).
 
 The package interfaces with BV-BRC to access bacterial genome sequences and antimicrobial susceptibility testing data 
 either using API/FTP or the BV-BRC CLI in a Docker container [danylmb/bvbrc:5.3](https://hub.docker.com/r/danylmb/bvbrc/tags) for accessibility:
@@ -184,8 +187,8 @@ Our protein feature annotation approach:
 - Automatically configures 4 HMMER databases for use
   - Pfam domain homology
   - Cluster of orthologous groups (COG) homology
-  - Antimicrobial resistance gene (ARG) homology
-  - Bacterial defense system homology
+  - Antimicrobial resistance gene (ARG) homology (NCBIfam-AMRFinder)
+  - Bacterial defense system homology (DefenseFinder and CasFinder models)
 - Runs parallelized and containerized annotations  
 - Maps HMMER feature presence/absence and counts to genomes and proteins
 - Provides multiple functional annotation layers
@@ -250,16 +253,19 @@ Some newer IDEs like Positron support loading human-readable Parquet files by de
 
 ## Data requirements
 
-External dependencies (managed through Docker) <br>
+### External dependencies
 
-- BV‑BRC CLI
-- Panaroo
-- CD‑HIT
-- HMMER
-- DuckDB
-- Arrow (Parquet)
+The package uses established bioinformatics tools, each run inside a Docker
+container that is pulled automatically. You do not need to install these manually:
 
-The user does not need to install these manually.
+- **Panaroo** (≥1.7.0): Pangenome analysis
+- **CD-HIT** (≥4.8.1): Protein clustering
+- **HMMER** (≥3.4): Protein feature annotation
+- **BV‑BRC CLI**: Optional alternative to the default API/FTP data access
+
+DuckDB and Arrow (Parquet) are installed automatically as R package dependencies.
+
+### System requirements
 
 The package requires:
 
@@ -284,17 +290,6 @@ Feature matrices' dimensions depend on the species:
   - Pfam domains: 500-10,000
   - Structural variants: 1,000-10,000
 
-### External dependencies
-
-The package uses established bioinformatics tools:
-
-- **Panaroo** (≥1.7.0): Pangenome analysis
-- **CD-HIT** (≥4.8.1): Protein clustering
-- **HMMER** (≥3.4): Protein feature annotation
-- **Docker**: For BV-BRC CLI container
-
-These are automatically managed through the Docker container.
-
 ## Performance
 
 Processing times vary by species and isolate count:
@@ -307,7 +302,7 @@ Processing times vary by species and isolate count:
 
 - These numbers will all vary greatly based on isolate number, genome complexity, and available hardware.
 - Parallelization significantly reduces processing time when multiple cores are available.
-- If a `furrr`/`future::multisession` worker fails with `could not find function ".xxx"` for an internal amRdata helper, your installed copy of amRdata is stale relative to the source you're editing. `future::multisession` workers are fresh R processes that resolve `amRdata` by loading the *installed* package from `.libPaths()` — they do not see changes made only via `devtools::load_all()` in your interactive session. Run `devtools::install()` (or `pkgbuild::compile_dll(); devtools::document(); devtools::install()`) before exercising any function that runs work via `future`/`furrr`, or temporarily set `future::plan(future::sequential)` while iterating with `load_all()` alone.
+- If a `future::multisession` error occurs mid-run (e.g. while testing via `devtools::load_all()` before installing the package), restart your R session fully before retrying. An orphaned background worker process can leave a stale lock on the local DuckDB caches in your [BiocFileCache](https://bioconductor.org/packages/BiocFileCache/) directory (find it with `BiocFileCache::bfccache()`), which can produce inconsistent results on the next run that look like a data or QC bug but are actually just leftover session state.
 - `runDataProcessing()`/`runPanaroo2Duckdb()` default `panaroo_refind_mode` to `"off"` rather than Panaroo's own default. Refinding recovers gene calls that annotation tools missed, but its search can take substantially longer (or in rare cases fail to complete within 6+ hours) when a genome carries a cluster of CDS with internal stop codons — a condition existing genome-quality metadata (CheckM completeness/contamination, consistency scores, quality flags) does not flag. This default trades some gene-recovery accuracy for predictable runtime; set `panaroo_refind_mode = "default"` to restore Panaroo's normal behavior.
 
 ### Integration with amR suite
@@ -349,7 +344,7 @@ If you use `amRdata` in your research, please cite:
 
 ## Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions! Please see [CONTRIBUTING.md](.github/CONTRIBUTING.md) for guidelines.
 
 ## Reporting issues
 

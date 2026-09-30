@@ -4,7 +4,7 @@
 \alias{cleanMetaData}
 \title{Clean BV-BRC metadata, then save as Parquet files}
 \usage{
-cleanMetaData(duckdb_path, path, ref_file_path = "data_raw/")
+cleanMetaData(duckdb_path, path)
 }
 \arguments{
 \item{duckdb_path}{Path to the \strong{per-selection DuckDB} produced by
@@ -13,10 +13,6 @@ already contain the tables written by \code{\link[=prepareGenomes]{prepareGenome
 genome-processing steps.}
 
 \item{path}{the path to working directory}
-
-\item{ref_file_path}{Directory containing reference TSVs used by
-\code{\link[=cleanMetaData]{cleanMetaData()}} and \code{\link[=cleanData]{cleanData()}} for metadata harmonization.
-Default: \code{"data_raw/"}.}
 }
 \description{
 Clean BV-BRC metadata, then save as Parquet files
