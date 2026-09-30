@@ -498,7 +498,6 @@
   # Fetch genome metadata
   genome_fields <- paste(
     c(
-      "genome_id",
       "genome_name",
       "species",
       "taxon_id",
@@ -582,7 +581,6 @@
   } else {
     drug_fields <- paste(
       c(
-        "genome_id",
         "antibiotic",
         "evidence",
         "laboratory_typing_method",
