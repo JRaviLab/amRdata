@@ -311,7 +311,7 @@ if (!is.null(status) && status != 0L) {
   threads <- .resolve_workers(requested = threads)
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
   paths <- .amr_paths_from_duckdb(duckdb_path)
-  
+
   if (is.null(output_path)) {
     output_path <- paths$panaroo
   }
@@ -1785,138 +1785,119 @@ CDHIT2duckdb <- function(duckdb_path,
   n_workers <- .resolve_workers(requested = n_workers, n_tasks = min(actual_chunk_count, threads))
 
   parquet_files <- local({
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
+    old_plan <- future::plan()
 
-  .amr_set_future_plan(n_workers)
+    on.exit(
+      .amr_progress_step(
+        "Closing HMMER workers",
+        future::plan(old_plan),
+        progress = progress,
+        verbose = verbose,
+        log_path = log_path
+      ),
+      add = TRUE
+    )
+
+    .amr_set_future_plan(n_workers)
 
   .log_or_message(log_path, verbose, "Running ", nrow(job_list), " HMMER jobs.")
 
-  purrr::map(
-    seq_along(databases),
-    function(db_i) {
-      db <- databases[[db_i]]
-      db_rows <- which(job_list$DB == db)
+  purrr::map(seq_along(databases), function(db_i) {
+    db <- databases[[db_i]]
+    db_rows <- which(job_list$DB == db)
 
-      progress_message <- sprintf(
-        "HMMER %d/%d: %s chunk",
-        db_i,
-        length(databases),
-        db
-      )
+    progress_message <- sprintf("HMMER %d/%d: %s chunk", db_i, length(databases), db)
 
-      .amr_with_progress(
-        {
-          p <- .amr_progressor(
-            steps = length(db_rows),
-            progress = progress,
-            label = db,
-            message = progress_message
-          )
-
-          p(
-            amount = 0,
-            message = progress_message
-          )
-
-          furrr::future_map_chr(
-            db_rows,
-            function(i) {
-              result <- .runHmmerJob(
-                JOB_NAME = job_list$JOB_NAME[[i]],
-                FASTA = job_list$FASTA[[i]],
-                DB = db,
-                total_proteins = total_proteins,
-                output_path = output_path,
-                db_paths = db_paths,
-                docker_image = docker_image,
-                threads = threads,
-                n_workers = n_workers,
-                log_path = log_path
-              )
-
-              p(
-                message = progress_message
-              )
-
-              result
-            },
-            .options = furrr::furrr_options(seed = TRUE)
-          )
-        },
+    .amr_with_progress({
+      p <- .amr_progressor(
+        steps = length(db_rows),
         progress = progress,
-        type = "steps"
+        label = db,
+        message = progress_message
       )
-    }
-  ) |>
+
+      p(amount = 0, message = progress_message)
+
+      furrr::future_map_chr(db_rows, function(i) {
+        result <- .runHmmerJob(
+          JOB_NAME = job_list$JOB_NAME[[i]],
+          FASTA = job_list$FASTA[[i]],
+          DB = db,
+          total_proteins = total_proteins,
+          output_path = output_path,
+          db_paths = db_paths,
+          docker_image = docker_image,
+          threads = threads,
+          n_workers = n_workers,
+          log_path = log_path
+        )
+
+        p(message = progress_message)
+
+        result
+      }, .options = furrr::furrr_options(seed = TRUE))
+    }, progress = progress, type = "steps")}) |>
     unlist(use.names = FALSE)
-})
+  })
 
   parquet_tbl <- tibble::tibble(parquet = parquet_files, db = job_list$DB)
 
-  final_parquets <- local({
-    con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+  final_parquets <- .amr_with_progress(
+    {
+      p <- .amr_progressor(steps = length(databases),
+                           progress = progress,
+                           message = "Finalizing HMMER annotations")
 
-    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+      con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
 
-    purrr::set_names(databases) |>
-      purrr::map(function(database_name) {
+      on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-        .log_or_message(log_path, verbose, "Combining ", database_name)
+      purrr::set_names(databases) |>
+        purrr::map(function(database_name) {
 
-        db_files <- parquet_tbl |>
-          dplyr::filter(db == database_name) |>
-          dplyr::pull(parquet)
+          progress_message <- paste0("Finalizing HMMER annotations: ", database_name)
 
-        combined_tbl <- db_files |>
-          purrr::map(arrow::read_parquet) |>
-          dplyr::bind_rows() |>
-          dplyr::left_join(
-            .parse_hmmer_profiles(
-              db_paths[[database_name]]$hmm
-            ) |>
-              dplyr::select(
-                query_name = profile_name,
-                description = profile_description
-              ),
-            by = "query_name"
+          p(amount = 0, message = progress_message)
+
+          .log_or_message(log_path, verbose, "Combining ", database_name)
+
+          db_files <- parquet_tbl |>
+            dplyr::filter(db == database_name) |>
+            dplyr::pull(parquet)
+
+          combined_tbl <- db_files |>
+            purrr::map(arrow::read_parquet) |>
+            dplyr::bind_rows() |>
+            dplyr::left_join(
+              .parse_hmmer_profiles(db_paths[[database_name]]$hmm) |>
+                dplyr::select(query_name = profile_name, description = profile_description),
+              by = "query_name"
+            )
+
+          final_parquet <- file.path(output_path, paste0("protein_", database_name, ".parquet"))
+
+          .write_compressed_parquet(combined_tbl, final_parquet)
+
+          DBI::dbWriteTable(
+            con,
+            name = paste0("protein_", database_name),
+            value = combined_tbl,
+            overwrite = TRUE
           )
-
-        final_parquet <- file.path(output_path,
-                                   paste0("protein_", database_name, ".parquet"))
-
-        .write_compressed_parquet(combined_tbl, final_parquet)
-
-        DBI::dbWriteTable(con, name = paste0("protein_",database_name),
-                          value = combined_tbl, overwrite = TRUE)
 
           .log_or_message(log_path, verbose, "Created ", basename(final_parquet))
 
-        final_parquet
-      })
-  })
+          p(message = paste0("Finalized ", database_name))
+
+          final_parquet
+        })
+    }, progress = progress, type = "steps")
 
   unlink(
-    list.files(
-      output_path,
-      pattern = "^protein_chunk_.*\\.(fasta|tbl|parquet)$",
-      full.names = TRUE
-    )
+    list.files(output_path, pattern = "^protein_chunk_.*\\.(fasta|tbl|parquet)$", full.names = TRUE)
   )
 
-  invisible(list(
-    databases = db_paths,
-    outputs = final_parquets
-  ))
-
-  # purrr::map(parquet_files, arrow::read_parquet) |>
-  #   dplyr::bind_rows() |>
-  #   .write_compressed_parquet(final_parquet)
-
-  # message("Combined parquet written.")
-
-  # arrow::read_parquet(final_parquet) |>
-  #   DBI::dbWriteTable(conn = con, name = tools::file_path_sans_ext(basename(final_parquet)), overwrite = TRUE)
+  invisible(list(databases = db_paths, outputs = final_parquets))
 }
 
 #' Map HMMER protein annotations to genome-level count matrix and load into DuckDB
@@ -5474,7 +5455,7 @@ removeLocalFiles <- function(
     numeric(1)
   )
 )
-  
+
   if (!length(remove_paths)) {
   if (isTRUE(verbose)) {
     message("No local build files found to remove.")
