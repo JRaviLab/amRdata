@@ -13,40 +13,55 @@
   gc_deviations = NULL,
   length_deviations = NULL,
   cds_deviations = NULL,
-  verbose = TRUE
+  verbose = TRUE,
+  write_bac_data = FALSE
 )
 }
 \arguments{
-\item{user_bac}{Character scalar. Taxon ID or species name.}
+\item{user_bac}{Character scalar. Taxon ID or species name to summarize.}
 
-\item{base_dir}{Character. Project root. Used by the legacy CLI path.
-Default \code{"."}.}
+\item{base_dir}{Character. Project root. Default: \code{"."}.}
 
-\item{metadata_method}{Character. Metadata backend: \code{"api"} (default) or
+\item{metadata_method}{Character. Metadata backend, either \code{"api"} or
 \code{"cli"}.}
 
 \item{max_checkm_contam}{Numeric. Maximum allowed CheckM contamination
-(\%) for the QC summary. Default \code{5}.}
+percentage. Default: \code{5}.}
 
 \item{min_checkm_complete}{Numeric. Minimum allowed CheckM completeness
-(\%) for the QC summary. Default \code{95}.}
+percentage. Default: \code{95}.}
 
-\item{gc_deviations}{Numeric. Maximum SDs from the median GC content.
-Optional. Default \code{NULL}.}
+\item{gc_deviations}{Numeric or \code{NULL}. Optional maximum standard deviations
+from median GC content.}
 
-\item{length_deviations}{Numeric. Maximum SDs from the median genome
-length. Optional. Default \code{NULL}.}
+\item{length_deviations}{Numeric or \code{NULL}. Optional maximum standard
+deviations from median genome length.}
 
-\item{cds_deviations}{Numeric. Maximum SDs from the median CDS count.
-Optional. Default \code{NULL}.}
+\item{cds_deviations}{Numeric or \code{NULL}. Optional maximum standard deviations
+from median CDS count.}
 
-\item{verbose}{Logical. If TRUE, print progress messages. Default \code{TRUE}.}
+\item{verbose}{Logical. Print persistent metadata-query messages.
+Default: \code{TRUE}.}
+
+\item{write_bac_data}{Logical. If TRUE, allow resolved metadata to be written
+to the per-selection \code{bac_data} table. Default: \code{FALSE}.}
 }
 \value{
-A one-row tibble containing genome and AMR availability statistics.
+A one-row tibble summarizing genome, AMR, QC, and collection metadata
+availability for the requested taxon.
 }
 \description{
 Internal worker used by \code{checkDataAvailability()}. Each call resolves and
 summarizes a taxon independently.
+}
+\details{
+Summarize BV-BRC data availability for one taxon
+
+Resolves one taxon to available BV-BRC genomes and summarizes genome
+metadata, AMR phenotype availability, collection years, genome statistics,
+and the number of genomes passing the requested metadata QC thresholds.
+
+Metadata can be retrieved through the BV-BRC Data API or the legacy CLI/cache
+workflow.
 }
 \keyword{internal}
