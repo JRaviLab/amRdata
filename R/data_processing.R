@@ -963,129 +963,179 @@ runPanaroo2Duckdb <- function(duckdb_path,
 }
 
 
-#' Parse CD-HIT `.clstr` output into a long-format mapping
+#' Stream CD-HIT `.clstr` output to staging file
 #'
-#' Reads a CD-HIT `.clstr` file and constructs a mapping of clusters to genome IDs.
+#' Reads CD-HIT cluster file in bounded chunks so Big Data (tm) never needs to be
+#' materialized as one R object. The staging file is consumed immediately by
+#' DuckDB and neatly deleted by [CDHIT2duckdb()].
 #'
-#' @param clustered_faa Base path to CD-HIT output (without `.clstr` extension).
+#' @param clustered_faa Base path to CD-HIT output (without `.clstr`).
+#' @param stage_path Temporary TSV path.
+#' @param chunk_lines Number of input lines read per chunk.
 #'
-#' @return A data.table with columns `cluster` and `genome_id`.
-#'
+#' @return Invisibly returns the number of parsed member records.
 #' @keywords internal
-.parseProteinClusters <- function(clustered_faa) {
+.streamProteinClusters <- function(clustered_faa, stage_path, chunk_lines = 250000L) {
   clstr <- paste0(clustered_faa, ".clstr")
   if (!file.exists(clstr)) {
-    stop(
-      "CD-HIT cluster file not found: ", clstr,
-      "\nEnsure .runCDHIT() completed successfully and produced the .clstr file."
-    )
+    stop("CD-HIT cluster file not found: ", clstr, call. = FALSE)
   }
 
-  lines <- data.table::fread(clstr, sep = "\n", header = FALSE)$V1
-  cluster_ids <- grep("^>Cluster", lines)
-  cluster_map <- data.table::data.table()
+  if (file.exists(stage_path)) unlink(stage_path, force = TRUE)
 
-  for (i in seq_along(cluster_ids)) {
-    start <- cluster_ids[i] + 1
-    end <- if (i < length(cluster_ids)) cluster_ids[i + 1] - 1 else length(lines)
-    cluster_lines <- lines[start:end]
+  input <- file(clstr, open = "r")
+  on.exit(close(input), add = TRUE)
 
-    # This finds the reference cluster ID and names the cluster with it
-    ref_line <- grep("\\*$", cluster_lines, value = TRUE)
-    ref_id <- if (length(ref_line) > 0) {
-      stringr::str_extract(ref_line, "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+")
+  current_cluster <- NA_integer_
+  row_index <- 0L
+  first_write <- TRUE
+
+  repeat {
+    lines <- readLines(input, n = chunk_lines, warn = FALSE)
+    if (!length(lines)) break
+
+    is_header <- startsWith(lines, ">Cluster ")
+    cluster_index <- rep.int(NA_integer_, length(lines))
+
+    if (any(is_header)) {
+      cluster_index[is_header] <- suppressWarnings(
+        as.integer(sub("^>Cluster\\s+", "", lines[is_header]))
+      )
+    }
+
+    if (!is.na(current_cluster)) {
+      cluster_index <- data.table::nafill(
+        c(current_cluster, cluster_index),
+        type = "locf"
+      )[-1L]
     } else {
-      paste0("Cluster_", i - 1)
+      cluster_index <- data.table::nafill(cluster_index, type = "locf")
     }
 
-    # Pull genome IDs
-    genome_matches <- stringr::str_match(
-      cluster_lines,
-      "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+"
-    )[, 2]
-    genome_matches <- genome_matches[!is.na(genome_matches)]
+    known <- cluster_index[!is.na(cluster_index)]
+    if (length(known)) current_cluster <- known[[length(known)]]
 
-    if (length(genome_matches) > 0) {
-      cluster_map <- data.table::rbindlist(list(
-        cluster_map,
-        data.table::data.table(cluster = ref_id, genome_id = genome_matches)
-      ), use.names = TRUE)
-    }
-  }
+    member_idx <- which(!is_header & !is.na(cluster_index))
+    if (!length(member_idx)) next
 
-  cluster_map
-}
-
-#' Parse CD-HIT `.clstr` output into a long-format mapping
-#'
-#' Reads a CD-HIT `.clstr` file and constructs a mapping of clusters to member feature ids.
-#'
-#' @param clustered_faa Base path to CD-HIT output (without `.clstr` extension).
-#'
-#' @return A tibble with columns `cluster` and `member`.
-#'
-#' @keywords internal
-.extractMembersInClusters <- function(clustered_faa) {
-  clstr <- paste0(clustered_faa, ".clstr")
-  if (!file.exists(clstr)) {
-    stop(
-      "CD-HIT cluster file not found: ", clstr,
-      "\nEnsure .runCDHIT() completed successfully and produced the .clstr file."
+    member_lines <- lines[member_idx]
+    member <- stringr::str_extract(
+      member_lines,
+      "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+"
     )
+    keep <- !is.na(member)
+    if (!any(keep)) next
+
+    member <- member[keep]
+    member_lines <- member_lines[keep]
+    member_cluster <- cluster_index[member_idx][keep]
+    n <- length(member)
+
+    out <- data.table::data.table(
+      row_index = seq.int(row_index + 1L, row_index + n),
+      cluster_index = member_cluster,
+      member = member,
+      genome_id = stringr::str_match(
+        member,
+        "^fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+$"
+      )[, 2L],
+      is_representative = grepl("\\*\\s*$", member_lines)
+    )
+
+    row_index <- row_index + n
+
+    data.table::fwrite(
+      out,
+      file = stage_path,
+      sep = "\t",
+      append = !first_write,
+      col.names = first_write,
+      quote = FALSE,
+      na = ""
+    )
+    first_write <- FALSE
   }
 
-  lines <- data.table::fread(clstr, sep = "\n", header = FALSE)$V1
-  cluster_ids <- grep("^>Cluster", lines)
-  cluster_member <- data.table::data.table()
-
-  for (i in seq_along(cluster_ids)) {
-    start <- cluster_ids[i] + 1
-    end <- if (i < length(cluster_ids)) cluster_ids[i + 1] - 1 else length(lines)
-    cluster_lines <- lines[start:end]
-
-    # This finds the reference cluster ID and names the cluster with it
-    ref_line <- grep("\\*$", cluster_lines, value = TRUE)
-    ref_id <- if (length(ref_line) > 0) {
-      stringr::str_extract(ref_line, "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+")
-    } else {
-      paste0("Cluster_", i - 1)
-    }
-
-    # Pull genome IDs
-    members <- stringr::str_match(
-      cluster_lines,
-      "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+"
-    )[, 1]
-    members <- members[!is.na(members)]
-
-    if (length(members) > 0) {
-      cluster_member <- data.table::rbindlist(list(
-        cluster_member,
-        data.table::data.table(cluster = ref_id, member = members)
-      ), use.names = TRUE)
-    }
+  if (first_write) {
+    stop("No CD-HIT member records were parsed from: ", clstr, call. = FALSE)
   }
 
-  tibble::as_tibble(cluster_member)
+  invisible(row_index)
 }
 
-#' Build genome-by-protein-cluster count matrix
+#' Import streamed CD-HIT members into DuckDB
 #'
-#' Converts a long-format cluster mapping from `.parseProteinClusters()`
-#' into a genome-by-cluster count matrix.
+#' Resolves representative proteins in DuckDB and writes the two working tables
+#' needed downstream.
 #'
-#' @param cluster_map A data.table with `cluster` and `genome_id`.
+#' @param con Open DuckDB connection.
+#' @param stage_path TSV produced by [.streamProteinClusters()].
 #'
-#' @return A wide-format matrix as a data.frame.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
-.buildProtMatrices <- function(cluster_map) {
-  cluster_map[, count := 1]
-  reshape2::dcast(cluster_map, genome_id ~ cluster, value.var = "count", fun.aggregate = sum, fill = 0)
-}
-# Back-compat wrapper (older external name)
-buildMatrices <- function(cluster_map) .buildProtMatrices(cluster_map)
+.importProteinClusters <- function(con, stage_path) {
+  stage_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(stage_path, winslash = "/", mustWork = TRUE)
+  )
 
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TEMP TABLE cdhit_raw AS ",
+      "SELECT * FROM read_csv(", stage_sql, ", delim='\\t', header=true, columns={",
+      "'row_index':'BIGINT',",
+      "'cluster_index':'BIGINT',",
+      "'member':'VARCHAR',",
+      "'genome_id':'VARCHAR',",
+      "'is_representative':'BOOLEAN'})"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TEMP TABLE cdhit_membership AS
+     WITH refs AS (
+       SELECT
+         cluster_index,
+         max(CASE WHEN is_representative THEN member END) AS cluster
+       FROM cdhit_raw
+       GROUP BY cluster_index
+     )
+     SELECT
+       m.row_index,
+       COALESCE(
+         r.cluster,
+         'Cluster_' || CAST(m.cluster_index AS VARCHAR)
+       ) AS cluster,
+       m.member,
+       m.genome_id
+     FROM cdhit_raw m
+     LEFT JOIN refs r USING (cluster_index)"
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TABLE protein_members AS
+     SELECT cluster, member
+     FROM cdhit_membership
+     ORDER BY row_index"
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TABLE protein_count AS
+     SELECT
+       CAST(genome_id AS VARCHAR) AS genome_id,
+       CAST(cluster AS VARCHAR) AS protein,
+       CAST(count(*) AS INTEGER) AS value
+     FROM cdhit_membership
+     WHERE genome_id IS NOT NULL
+     GROUP BY genome_id, cluster"
+  )
+
+  invisible(TRUE)
+}
 
 #' Extract per-cluster protein names from CD-HIT cluster FASTA
 #'
@@ -1149,13 +1199,25 @@ CDHIT2duckdb <- function(duckdb_path,
     log_path = log_path
   )
 
-  cluster_map <- .parseProteinClusters(cdhit_outputs$clustered_faa)
-  cluster_count <- .buildProtMatrices(cluster_map)
-
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  DBI::dbWriteTable(con, "protein_count", cluster_count, overwrite = TRUE)
+  stage_path <- tempfile(
+    pattern = paste0(output_prefix, "_membership_"),
+    tmpdir = output_path,
+    fileext = ".tsv"
+  )
+  on.exit(
+    if (file.exists(stage_path)) unlink(stage_path, force = TRUE),
+    add = TRUE
+  )
+
+  .streamProteinClusters(
+    cdhit_outputs$clustered_faa,
+    stage_path = stage_path
+  )
+  .importProteinClusters(con, stage_path)
+  unlink(stage_path, force = TRUE)
 
   cluster_fasta <- cdhit_outputs$cdhit_input_faa
   cluster_name <- .clusterNames(cluster_fasta)
@@ -1169,9 +1231,6 @@ CDHIT2duckdb <- function(duckdb_path,
     ),
     overwrite = TRUE
   )
-
-  cluster_member <- .extractMembersInClusters(cdhit_outputs$clustered_faa)
-  DBI::dbWriteTable(con, "protein_members", cluster_member, overwrite = TRUE)
 
   invisible(TRUE)
 }
@@ -1941,89 +2000,53 @@ CDHIT2duckdb <- function(duckdb_path,
 ) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
   paths <- .amr_paths_from_duckdb(duckdb_path)
+
   if (is.null(output_path)) {
     output_path <- paths$orb
   }
 
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- normalizePath(output_path, mustWork = TRUE)
-  duckdb_path <- .docker_path(duckdb_path)
+
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  protein_long <- DBI::dbReadTable(
-    con,
-    "protein_count"
-  ) |>
-    tibble::as_tibble() |>
-    tidyr::pivot_longer(
-      cols = -genome_id,
-      names_to = "protein",
-      values_to = "count"
-    ) |>
-    dplyr::filter(count > 0) |>
-    dplyr::mutate(
-      protein = stringr::str_replace(
-        protein,
-        "^fig\\.",
-        "fig|"
-      )
-    )
 
   count_paths <- list()
 
   for (database in databases) {
-
-    annotation_table <- paste0(
-      "protein_",
-      database
-    )
+    annotation_table <- paste0("protein_", database)
 
     if (!DBI::dbExistsTable(con, annotation_table)) {
-
-      warning(
-        annotation_table,
-        " not found in DuckDB. Skipping."
-      )
-
+      warning(annotation_table, " not found in DuckDB. Skipping.")
       next
     }
 
     if (isTRUE(verbose)) {
-      message(
-        "Processing ",
-        annotation_table
-      )
+      message("Processing ", annotation_table)
     }
 
-    annotation <- DBI::dbReadTable(
+    annotation_sql <- DBI::dbQuoteIdentifier(
       con,
       annotation_table
-    ) |>
-      tibble::as_tibble() |>
-      dplyr::distinct(
-        protein,
-        query_name
-      )
+    )
 
-    genome_annot_matrix <- protein_long |>
-      dplyr::inner_join(
-        annotation |>
-          dplyr::select(
-            protein,
-            query_name
-          ),
-        by = "protein",
-        relationship = "many-to-many"
-      ) |>
-      dplyr::group_by(
-        genome_id,
-        query_name
-      ) |>
-      dplyr::summarise(
-        count = sum(count),
-        .groups = "drop"
-      ) |>
+    genome_annot_matrix <- DBI::dbGetQuery(
+      con,
+      paste0(
+        "SELECT ",
+        "pc.genome_id, ",
+        "a.query_name, ",
+        "CAST(sum(pc.value) AS INTEGER) AS count ",
+        "FROM protein_count pc ",
+        "JOIN (",
+        "  SELECT DISTINCT protein, query_name ",
+        "  FROM ", annotation_sql,
+        ") a ON pc.protein = a.protein ",
+        "WHERE pc.value > 0 ",
+        "  AND a.query_name IS NOT NULL ",
+        "GROUP BY pc.genome_id, a.query_name"
+      )
+    ) |>
       tidyr::pivot_wider(
         names_from = query_name,
         values_from = count,
@@ -2037,10 +2060,7 @@ CDHIT2duckdb <- function(duckdb_path,
 
     count_path <- file.path(
       output_path,
-      paste0(
-        count_table,
-        ".parquet"
-      )
+      paste0(count_table, ".parquet")
     )
 
     arrow::write_parquet(
@@ -2058,10 +2078,7 @@ CDHIT2duckdb <- function(duckdb_path,
     count_paths[[database]] <- count_path
 
     if (isTRUE(verbose)) {
-      message(
-        "Created ",
-        count_table
-      )
+      message("Created ", count_table)
     }
   }
 
@@ -2890,6 +2907,21 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
     )
   }
 
+  writeDuckDBParquet <- function(sql, path) {
+    path_sql <- DBI::dbQuoteString(
+      con,
+      normalizePath(path, winslash = "/", mustWork = FALSE)
+    )
+
+    DBI::dbExecute(
+      con,
+      paste0(
+        "COPY (", sql, ") TO ", path_sql,
+        " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9)"
+      )
+    )
+  }
+
   db_name <- file.path(
     path,
     paste0(
@@ -2912,11 +2944,43 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_count AS SELECT * FROM read_parquet('%s')", basename(genes_parquet)))
 
   # protein_count -> long parquet + view
-  DBI::dbReadTable(con, "protein_count") |>
-    tidyr::pivot_longer(-genome_id, names_to = "protein", values_to = "value") |>
-    dplyr::filter(!is.na(value) & value != "") |>
-    dplyr::mutate(value = as.integer(value)) |>
-    writeCompressedParquet(proteins_parquet)
+  writeDuckDBParquet(
+    paste0(
+      "WITH ",
+      "genomes AS (",
+      "  SELECT DISTINCT genome_id FROM protein_count",
+      "), ",
+      "proteins AS (",
+      "  SELECT DISTINCT protein FROM protein_count",
+      ") ",
+      "SELECT ",
+      "CAST(g.genome_id AS VARCHAR) AS genome_id, ",
+      "CAST(",
+      "  CASE ",
+      "    WHEN starts_with(p.protein, 'fig|') ",
+      "    THEN 'fig.' || substr(p.protein, 5) ",
+      "    ELSE p.protein ",
+      "  END AS VARCHAR",
+      ") AS protein, ",
+      "CAST(COALESCE(c.value, 0) AS INTEGER) AS value ",
+      "FROM genomes g ",
+      "CROSS JOIN proteins p ",
+      "LEFT JOIN protein_count c ",
+      "  ON c.genome_id = g.genome_id ",
+      " AND c.protein = p.protein"
+    ),
+    proteins_parquet
+  )
+
+  DBI::dbExecute(
+    con_new,
+    sprintf(
+      "CREATE OR REPLACE VIEW protein_count AS ",
+      "SELECT * FROM read_parquet('%s')",
+      basename(proteins_parquet)
+    )
+  )
+
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_count AS SELECT * FROM read_parquet('%s')", basename(proteins_parquet)))
 
   # HMMER annotation counts -> long Parquet + views per database in manifest
@@ -3003,7 +3067,10 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
   DBI::dbReadTable(con, "protein_cluster_seq") |> writeCompressedParquet(protein_cluster_seq_parquet)
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_seqs AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_seq_parquet)))
 
-  DBI::dbReadTable(con, "protein_members") |> writeCompressedParquet(protein_cluster_member_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(cluster AS VARCHAR) AS cluster, CAST(member AS VARCHAR) AS member FROM protein_members",
+    protein_cluster_member_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_members AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_member_parquet)))
 
   DBI::dbReadTable(con, "genome_gene_protein") |> writeCompressedParquet(genome_gene_protein_parquet)
