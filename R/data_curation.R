@@ -245,7 +245,7 @@
     quote = "", check.names = FALSE, comment.char = "", colClasses = "character"
   )
   df <- tibble::as_tibble(df) |>
-    dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
+    dplyr::mutate(dplyr::across(dplyr::everything(), .toUtf8))
 
   if (isTRUE(verbose)) {
     message(glue::glue("Retrieved {nrow(df)} rows x {ncol(df)} columns."))
@@ -1311,14 +1311,14 @@ retrieveMetadata <- function(user_bacs,
 
   # Normalize to UTF-8 for both methods (parity with the Docker parser).
   combined_drug_data_tbl <- combined_drug_data_tbl |>
-    dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
+    dplyr::mutate(dplyr::across(dplyr::everything(), .toUtf8))
   if (nrow(combined_drug_data_tbl) == 0L) {
     message("No drug data returned.")
     return(NULL)
   }
 
   combined_genome_data_tbl <- combined_genome_data_tbl |>
-    dplyr::mutate(dplyr::across(dplyr::everything(), ~ iconv(.x, from = "", to = "UTF-8", sub = "")))
+    dplyr::mutate(dplyr::across(dplyr::everything(), .toUtf8))
   if (nrow(combined_genome_data_tbl) == 0L) {
     message("No genome data returned.")
     return(NULL)

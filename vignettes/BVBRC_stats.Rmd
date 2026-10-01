@@ -9,315 +9,24 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-This vignette summarizes the completeness of the bacterial metadata table served by BV-BRC. It pulls the full bacterial-genome metadata dump from BV-BRC via the project's CLI Docker image, normalizes character columns (UTF-8 fixes, whitespace trimming, mapping placeholder strings like `"NA"`, `"unknown"`, and `"not reported"` to actual `NA`s), and reports per-column missingness plus block-level presence/absence for host and geographic fields. The goal is to help decide which BV-BRC columns are worth featurizing downstream.
-
-```{r setup, include=FALSE}
-library(dplyr)
-library(stringr)
-library(purrr)
-library(tibble)
-```
+This vignette summarizes the completeness of the bacterial metadata table served by BV-BRC. It uses the full bacterial-genome metadata table from the BV-BRC REST API (downloaded with the package's internal helpers and cached in the BiocFileCache), normalizes character columns (UTF-8 fixes, whitespace trimming, mapping placeholder strings like `"NA"`, `"unknown"`, and `"not reported"` to actual `NA`s), and reports per-column missingness plus block-level presence/absence for host and geographic fields. The goal is to help decide which BV-BRC columns are worth featurizing downstream.
 
 ## Helper functions
 
-The chunk below defines all helpers used in the rest of the vignette:
+The download and cleaning helpers (`.fetchAllBVBRCmetadataApi()`, `.cleanBVBRCmetadata()` and `.loadBVBRCmetadata()`) are internal functions in `R/bvbrc_metadata.R`. They page through the BV-BRC genome API (`superkingdom = Bacteria`) and normalize text columns (UTF-8, whitespace, placeholder strings such as `"NA"`, `"unknown"`, `"not reported"` → `NA`). The cleaned table is cached as parquet in the BiocFileCache (`.loadBVBRCmetadata()`). The download takes a while, so the completeness sections below run only when that cache exists or the environment variable `AMRDATA_FETCH_BVBRC` is set to `true`. Only the block-summary helper is defined here:
 
-- `fetchCompleteBVBRCMetadata()` — calls `docker run --rm danylmb/bvbrc:5.3 p3-all-genomes` twice: once to enumerate the available attributes, then again to pull the full bacterial-genome metadata table with those attributes selected. Returns a tibble with all character columns coerced to UTF-8.
-- `is_placeholder_na()` and `clean_all_char_cols()` — normalize text columns by trimming whitespace, fixing UTF-8 glitches, and treating sentinel strings (`"NA"`, `"unknown"`, `"not reported"`, etc.) as `NA` rather than valid values.
 - `summarize_block()` — computes per-row presence/absence summaries across a group of related columns (e.g. all host columns or all geographic columns).
 
 ```{r functions, echo=FALSE}
-# function to download BVBRC metadata for all Bacteria
-fetchCompleteBVBRCMetadata <- function(
-  image = "danylmb/bvbrc:5.3",
-  verbose = TRUE
-) {
-  if (isTRUE(verbose)) {
-    message("Building attribute list from BV-BRC...")
-  }
-
-  # Step 1: get cleaned attribute list
- docker_path <- Sys.which("docker")
-
-  attr_raw <- tryCatch(
-    system2(
-      docker_path,
-      args = c(
-        "run", "--rm", image,
-        "p3-all-genomes", "-f"
-      ),
-      stdout = TRUE,
-      stderr = TRUE
-    ),
-    error = function(e) {
-      stop("Failed to retrieve attribute list.\n", conditionMessage(e))
-    }
-  )
-
-  if (length(attr_raw) < 2L) {
-    stop("Attribute list is empty.")
-  }
-
-  ATTRS <- attr_raw[-1]
-  
-  ATTRS <- gsub(
-    " \\((multi|related|derived)\\)$",
-    "",
-    ATTRS
-  )
-  ATTRS <- paste(ATTRS, collapse = ",")
-
-    if (length(ATTRS) == 0L) {
-      stop("Attribute list is empty.")
-    }
-
-    if (isTRUE(verbose)) {
-      message("Fetching BV-BRC bacterial genome metadata (this may take time)...")
-    }
-
-  # Step 2: use ATTRS in main query
-  cmd <- glue::glue(
-    "docker run --rm {image} p3-all-genomes ",
-    "--in superkingdom,Bacteria ",
-    "--attr \"{ATTRS}\""
-  )
-
-  raw_data <- tryCatch(
-    system(cmd, intern = TRUE, ignore.stderr = TRUE),
-    error = function(e) {
-      stop("BV-BRC CLI call failed.\n", conditionMessage(e))
-    }
-  )
-
-  if (length(raw_data) == 0L) {
-    stop("BV-BRC returned no data. The service may be unavailable.")
-  }
-
-  # Step 3: parse safely
-  df <- utils::read.table(
-    text = raw_data,
-    sep = "\t",
-    header = TRUE,
-    fill = TRUE,
-    quote = "",
-    check.names = FALSE,
-    comment.char = "",
-    colClasses = "character"
-  )
-
-  df <- tibble::as_tibble(df) |>
-    dplyr::mutate(dplyr::across(
-      dplyr::everything(),
-      ~ iconv(.x, from = "", to = "UTF-8", sub = "")
-    ))
-
-  if (isTRUE(verbose)) {
-    message(glue::glue("Retrieved {nrow(df)} rows x {ncol(df)} columns."))
-  }
-
-  return(df)
-}
-
-# using API
-
-fetchCompleteBVBRCMetadataAPI <- function(
-    batch_size = 25000,
-    verbose = TRUE
-) {
-
-    base_url <- "https://www.bv-brc.org/api/genome/?superkingdom=Bacteria"
-
-    if (isTRUE(verbose)) {
-        message("Fetching field definitions...")
-    }
-
-    # ------------------------------------------------------------------
-    # Discover available fields
-    # ------------------------------------------------------------------
-
-    resp <- httr2::request(base_url) |>
-        httr2::req_headers(
-            Range = "items=0-1"
-        ) |>
-        httr2::req_perform()
-
-    sample_rec <- jsonlite::fromJSON(
-        httr2::resp_body_string(resp)
-    )
-
-    attrs <- names(sample_rec)
-
-    if (length(attrs) == 0) {
-        stop("Unable to determine genome attributes.")
-    }
-
-    if (isTRUE(verbose)) {
-        message(sprintf("Found %s attributes.", length(attrs)))
-    }
-
-    total_records <- as.numeric(
-        sub(
-            ".*/",
-            "",
-            httr2::resp_headers(resp)[["content-range"]]
-        )
-    )
-
-    if (isTRUE(verbose)) {
-        message(sprintf(
-            "Server reports %s total records.",
-            format(total_records, big.mark = ",")
-        ))
-    }
-
-    # ------------------------------------------------------------------
-    # Download in chunks
-    # ------------------------------------------------------------------
-
-    start <- 0
-    chunk_list <- list()
-    i <- 1
-
-    repeat {
-
-        end <- start + batch_size
-
-        if (isTRUE(verbose)) {
-            message(
-                sprintf(
-                    "Downloading records %s-%s",
-                    format(start, big.mark = ","),
-                    format(end, big.mark = ",")
-                )
-            )
-        }
-
-        resp <- httr2::request(base_url) |>
-            httr2::req_headers(
-                Range = sprintf(
-                    "items=%s-%s",
-                    start,
-                    end
-                )
-            ) |>
-            httr2::req_perform()
-
-        chunk <- jsonlite::fromJSON(
-            httr2::resp_body_string(resp),
-            simplifyDataFrame = TRUE
-        )
-
-        n_chunk <- nrow(chunk)
-
-        if (is.null(n_chunk) || n_chunk == 0) {
-            break
-        }
-
-        chunk_list[[i]] <- chunk
-
-        if (isTRUE(verbose)) {
-            message(
-                sprintf(
-                    "Retrieved %s rows.",
-                    format(n_chunk, big.mark = ",")
-                )
-            )
-        }
-
-        start <- start + n_chunk
-        i <- i + 1
-
-        if (start >= total_records) {
-            break
-        }
-    }
-
-    df <- dplyr::bind_rows(chunk_list) |>
-        tibble::as_tibble() |>
-        dplyr::mutate(
-            dplyr::across(
-                where(is.character),
-                ~ iconv(
-                    .x,
-                    from = "",
-                    to = "UTF-8",
-                    sub = ""
-                )
-            )
-        )
-
-    if (isTRUE(verbose)) {
-        message(
-            sprintf(
-                "Retrieved %s rows x %s columns.",
-                format(nrow(df), big.mark = ","),
-                ncol(df)
-            )
-        )
-    }
-
-    df
-}
-
-# Use your fix_utf8() if defined; otherwise a no-op fallback
-if (!exists("fix_utf8")) {
-  fix_utf8 <- function(x) x
-}
-
-# Tokens that should count as missing for text fields
-missing_tokens <- c(
-  "", " ", "NA", "N/A", "n/a", "na", "null", "Null", "NULL",
-  "unknown", "Unknown", "UNKNOWN",
-  "not provided", "Not provided", "NOT PROVIDED",
-  "not reported", "Not reported", "NOT REPORTED",
-  "unavailable", "Unspecified", "unspecified", "missing"
+# The full BV-BRC table is large: use the BiocFileCache copy when present, and
+# only download it on request:
+#   Sys.setenv(AMRDATA_FETCH_BVBRC = "true")
+have_cache <- tryCatch(
+  !is.na(amRdata:::.bvbrcCachedPath()),
+  error = function(e) FALSE
 )
-
-is_placeholder_na <- function(x) {
-  if (!is.character(x)) {
-    return(rep(FALSE, length(x)))
-  }
-  stringr::str_trim(x) %in% missing_tokens
-}
-
-# Clean ALL character/factor columns in the data frame
-clean_all_char_cols <- function(df) {
-  df |>
-    dplyr::mutate(dplyr::across(
-      tidyselect::where(~ is.character(.x) || is.factor(.x)),
-      ~ {
-        x <- .
-        if (is.factor(x)) x <- as.character(x)
-        if (is.character(x)) {
-          x <- fix_utf8(x)
-          x <- stringr::str_squish(x) # trim + collapse internal spaces
-          x[is_placeholder_na(x)] <- NA # "", "N/A", "unknown", etc. -> NA
-        }
-        x
-      }
-    ))
-}
-
-# Clean ALL List columns in the data frame
-clean_list_col <- function(x) {
-  purrr::map(
-    x,
-    \(z) {
-      if (is.null(z) || length(z) == 0)
-        return(NA_character_)
-
-      z <- as.character(unlist(z))
-      z <- stringr::str_squish(z)
-
-      z[is_placeholder_na(z)] <- NA_character_
-
-      if (all(is.na(z)))
-        return(NA_character_)
-
-      z
-    }
-  )
-}
+fetch_bvbrc <- identical(Sys.getenv("AMRDATA_FETCH_BVBRC"), "true")
+knitr::opts_chunk$set(eval = have_cache || fetch_bvbrc)
 
 # --- Block-level summaries ---------------------------------------------------
 summarize_block <- function(df, cols, block_name) {
@@ -350,47 +59,10 @@ summarize_block <- function(df, cols, block_name) {
 
 ## Compute statistics
 
-Here we fetch the BV-BRC bacterial metadata table, clean it, and compute four artifacts that drive the rest of the vignette: `col_stats` (one row per column with totals, missing counts, and distinct non-missing values), `host_block_stats` and `geo_block_stats` (per-block presence summaries across host and geographic columns respectively), and `diag_table` (a focused per-column view of just the host + geo columns).
+Here we download and clean the BV-BRC bacterial metadata table (from the BiocFileCache, or downloaded when `AMRDATA_FETCH_BVBRC=true`) and compute four artifacts that drive the rest of the vignette: `col_stats` (one row per column with totals, missing counts, and distinct non-missing values), `host_block_stats` and `geo_block_stats` (per-block presence summaries across host and geographic columns respectively), and `diag_table` (a focused per-column view of just the host + geo columns).
 
 ```{r stats}
-# download the bvbrc table
-bvbrc <- fetchCompleteBVBRCMetadataAPI()
-
-# Apply to your table
-bvbrc_clean <- clean_all_char_cols(bvbrc)
-list_cols <- names(bvbrc_clean)[sapply(bvbrc_clean, is.list)]
-bvbrc_clean <- bvbrc_clean |>
-  mutate(
-    across(all_of(list_cols), clean_list_col)
-  )
-
-# Save the table to parquet
-
-flatten_list <- function(x) {
-  purrr::map_chr(
-    x,
-    \(z) {
-      if (is.null(z) || length(z) == 0)
-        return(NA_character_)
-
-      paste(as.character(unlist(z)), collapse = ";")
-    }
-  )
-}
-
-bvbrc_clean <- bvbrc_clean |>
-  dplyr::mutate(
-    dplyr::across(
-      dplyr::all_of(list_cols),
-      flatten_list
-    )
-  )
-
-arrow::write_parquet(
-  bvbrc_clean,
-  "data/bvbrc_clean.parquet",
-  compression = "zstd"
-)
+bvbrc_clean <- amRdata:::.loadBVBRCmetadata()
 
 # --- Per-column stats --------------------------------------------------------
 col_stats <- tibble::tibble(column = colnames(bvbrc_clean)) |>
@@ -405,24 +77,24 @@ col_stats <- tibble::tibble(column = colnames(bvbrc_clean)) |>
 
 # --- Define blocks -----------------------------------------------------------
 host_cols <- c(
-  "genome.host_common_name",
-  "genome.host_group",
-  "genome.host_name"
+  "host_common_name",
+  "host_group",
+  "host_name"
 )
 
 geo_cols <- c(
-  "genome.isolation_source",
-  "genome.geographic_location",
-  "genome.isolation_country",
-  "genome.state_province",
-  "genome.city",
-  "genome.county",
-  "genome.latitude",
-  "genome.longitude"
+  "isolation_source",
+  "geographic_location",
+  "isolation_country",
+  "state_province",
+  "city",
+  "county",
+  "latitude",
+  "longitude"
 )
 
-host_cols <- intersect(host_cols, colnames(bvbrc))
-geo_cols <- intersect(geo_cols, colnames(bvbrc))
+host_cols <- intersect(host_cols, colnames(bvbrc_clean))
+geo_cols <- intersect(geo_cols, colnames(bvbrc_clean))
 
 host_block_stats <- summarize_block(bvbrc_clean, host_cols, "host")
 geo_block_stats <- summarize_block(bvbrc_clean, geo_cols, "geographic")
@@ -473,4 +145,24 @@ Column-by-column missingness for just the host and geographic fields, so you can
 ```{r diag_output}
 cat("\n--- Diagnostics for host + geo columns ---\n")
 print(diag_table, n = Inf)
+```
+
+## Potential species for exploring the package
+
+Candidate species were selected using the following criteria (built by `data_raw/species_count_summary.R` and shipped as the `species_count_summary` dataset):
+
+- `antimicrobial_resistance_evidence` = "AMR Panel"
+- `genome_quality` = "Good"
+- `genome_status` = "WGS" or "Complete"
+- `checkm_completeness` >= 98
+- `genome_count` between 20 and 1,000 (inclusive)
+- `antimicrobial_resistance` is not missing
+
+```{r bvbrc-amr-species, eval=TRUE}
+data("species_count_summary", package = "amRdata")
+
+knitr::kable(
+  species_count_summary,
+  caption = "Recommended bacteria to include in Zenodo, with qualifying genome counts."
+)
 ```
