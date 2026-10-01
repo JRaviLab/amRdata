@@ -67,7 +67,7 @@ capped to available CPUs and the number of metadata batches. Default: 8.}
 \value{
 A list with:
 \itemize{
-\item duckdbConnection: live DBI connection to the created DuckDB
+\item duckdb_path: path to the created DuckDB
 \item table_name: "metadata"
 }
 }
