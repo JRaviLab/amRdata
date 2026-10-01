@@ -24,7 +24,6 @@ Config/testthat/edition: 3
 License: BSD_3_clause + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-LazyData: true
 Depends:
     R (>= 4.5.0)
 URL: https://github.com/JRaviLab/amRdata
@@ -52,7 +51,8 @@ Imports:
     reshape2,
     stringr,
     tibble,
-    tidyr
+    tidyr,
+    tidyselect
 biocViews: GenomeAssembly, Annotation, Sequencing
 VignetteBuilder: knitr
 Suggests:

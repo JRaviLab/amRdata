@@ -91,7 +91,7 @@
   )
 }
 
-# Collapse a list column to ';'-separated strings
+# Collapse a list column to ';'-separated strings, dropping NAs (all-NA -> NA)
 .flattenListCol <- function(x) {
   purrr::map_chr(
     x,
@@ -99,7 +99,12 @@
       if (is.null(z) || length(z) == 0) {
         return(NA_character_)
       }
-      paste(as.character(unlist(z)), collapse = ";")
+      z <- as.character(unlist(z))
+      z <- z[!is.na(z)]
+      if (length(z) == 0) {
+        return(NA_character_)
+      }
+      paste(z, collapse = ";")
     }
   )
 }
