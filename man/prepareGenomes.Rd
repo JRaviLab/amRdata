@@ -82,7 +82,7 @@ return them in \code{data}. Default FALSE.}
 \value{
 A list (the output of \code{genomeList()}), containing:
 \itemize{
-\item \code{duckdbConnection}  Active DBI connection to the per-bug DuckDB
+\item \code{duckdb_path}  Path to the per-bug DuckDB
 \item \code{table_name}        \code{"files"}
 }
 }
