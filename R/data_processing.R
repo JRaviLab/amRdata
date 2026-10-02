@@ -512,150 +512,210 @@ if (!is.null(status) && status != 0L) {
 
 #' Load Panaroo gene presence/absence table into DuckDB
 #'
-#' Reads `gene_presence_absence.csv` and constructs a genome-by-gene count
-#' table, writing it into the DuckDB database as `gene_count`.
+#' Reads Panaroo's gene presence/absence and structural presence/absence files
+#' directly with DuckDB. Only occupied cells are retained to minimize size of
+#' pangenomes as dense genome-by-feature matrices in R or DuckDB.
 #'
 #' @param panaroo_output_path Path to a Panaroo result directory.
-#' @param duckdb_path Path to a DuckDB database file.
+#' @param duckdb_path Path to the per-selection DuckDB database.
 #'
-#' @return A tibble containing the gene count matrix.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
-.panaroo2geneTable <- function(panaroo_output_path, duckdb_path) {
-  filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
-  duckdb_path <- normalizePath(duckdb_path)
+.importPanarooTables <- function(panaroo_output_path, duckdb_path) {
+  panaroo_output_path <- normalizePath(panaroo_output_path, mustWork = TRUE)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+
+  gpa_path <- file.path(panaroo_output_path, "gene_presence_absence.csv")
+  struct_path <- file.path(panaroo_output_path, "struct_presence_absence.Rtab")
+
+  if (!file.exists(gpa_path)) {
+    stop("Panaroo gene presence/absence file not found: ", gpa_path, call. = FALSE)
+  }
+  if (!file.exists(struct_path)) {
+    stop("Panaroo structural presence/absence file not found: ", struct_path, call. = FALSE)
+  }
+
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  gene_count <- read.table(filepath, sep = ",", header = TRUE, fill = TRUE, quote = "") |>
-    tibble::as_tibble() |>
-    dplyr::select(-c(Non.unique.Gene.name, Annotation)) |>
-    tidyr::pivot_longer(cols = -1) |>
-    tidyr::pivot_wider(names_from = Gene, values_from = value) |>
-    dplyr::rename("genome_id" = "name") |>
-    dplyr::mutate(genome_id = stringr::str_replace_all(genome_id, c("^X" = "", "\\.PATRIC$" = ""))) |>
-    dplyr::mutate(across(-genome_id, ~ ifelse(. == "", 0, stringr::str_count(., ";") + 1)))
+  DBI::dbExecute(con, "SET preserve_insertion_order = false")
 
-  DBI::dbWriteTable(con, "gene_count", gene_count, overwrite = TRUE)
-  gene_count
+  gpa_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(gpa_path, winslash = "/", mustWork = TRUE)
+  )
+  struct_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(struct_path, winslash = "/", mustWork = TRUE)
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TEMP VIEW panaroo_gpa AS ",
+      "SELECT * FROM read_csv(", gpa_sql, ", ",
+      "header=true, delim=',', quote='\"', escape='\"', ",
+      "all_varchar=true, nullstr='', parallel=true)"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TEMP VIEW panaroo_struct AS ",
+      "SELECT * FROM read_csv(", struct_sql, ", ",
+      "header=true, delim='\\t', quote='\"', escape='\"', ",
+      "all_varchar=true, nullstr='', parallel=true)"
+    )
+  )
+
+  # Creating a single temp scan of the CSV from which we can hoover up
+  # gene counts, names, and protein mappings efficiently
+  gene_stage <- tempfile(
+    pattern = "panaroo_gene_cells_",
+    tmpdir = dirname(duckdb_path),
+    fileext = ".parquet"
+  )
+  on.exit(
+    if (file.exists(gene_stage)) unlink(gene_stage, force = TRUE),
+    add = TRUE
+  )
+
+  gene_stage_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(gene_stage, winslash = "/", mustWork = FALSE)
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "COPY (",
+      "SELECT Gene, Annotation, genome_raw, protein_ids ",
+      "FROM (",
+      "  UNPIVOT panaroo_gpa ",
+      "  ON COLUMNS(* EXCLUDE (\"Gene\", \"Non-unique Gene name\", \"Annotation\")) ",
+      "  INTO NAME genome_raw VALUE protein_ids",
+      ") ",
+      "WHERE protein_ids IS NOT NULL AND protein_ids <> ''",
+      ") TO ", gene_stage_sql, " ",
+      "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 1, PRESERVE_ORDER false)"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TABLE gene_names AS ",
+      "SELECT DISTINCT CAST(Gene AS VARCHAR) AS Gene, ",
+      "CAST(Annotation AS VARCHAR) AS Annotation ",
+      "FROM read_parquet(", gene_stage_sql, ")"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TABLE gene_count AS ",
+      "SELECT ",
+      "CAST(regexp_replace(regexp_replace(genome_raw, '^X', ''), '\\.PATRIC$', '') AS VARCHAR) AS genome_id, ",
+      "CAST(Gene AS VARCHAR) AS gene, ",
+      "CAST(length(protein_ids) - length(replace(protein_ids, ';', '')) + 1 AS INTEGER) AS value ",
+      "FROM read_parquet(", gene_stage_sql, ")"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TABLE genome_gene_protein AS ",
+      "WITH cells AS (",
+      "  SELECT DISTINCT ",
+      "    regexp_replace(genome_raw, '\\.PATRIC\\.\\..*$', '') AS genome_ids, ",
+      "    Gene, protein_ids ",
+      "  FROM read_parquet(", gene_stage_sql, ")",
+      ") ",
+      "SELECT CAST(genome_ids AS VARCHAR) AS genome_ids, ",
+      "CAST(Gene AS VARCHAR) AS Gene, ",
+      "CAST(replace(replace(protein_id, '_pseudo', ''), '_len', '') AS VARCHAR) AS protein_ids ",
+      "FROM cells, UNNEST(string_split(protein_ids, ';')) AS split_protein(protein_id)"
+    )
+  )
+
+  unlink(gene_stage, force = TRUE)
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TABLE gene_struct AS
+     SELECT
+       CAST(
+         regexp_replace(
+           regexp_replace(genome_raw, '^X', ''),
+           '\\.PATRIC$',
+           ''
+         ) AS VARCHAR
+       ) AS genome_id,
+       CAST(Gene AS VARCHAR) AS struct,
+       CAST(value AS INTEGER) AS value
+     FROM (
+       UNPIVOT panaroo_struct
+       ON COLUMNS(* EXCLUDE (\"Gene\"))
+       INTO NAME genome_raw VALUE value
+     )
+     WHERE value IS NOT NULL
+       AND value <> ''
+       AND CAST(value AS INTEGER) <> 0"
+  )
+
+  invisible(TRUE)
 }
 
 
-#' Extract gene names and annotations from Panaroo outputs
+#' Import Panaroo reference sequences into DuckDB
 #'
-#' Reads Panaroo's `gene_presence_absence.csv` to extract gene identifiers
-#' and gene annotations, then writes them into the DuckDB table `gene_names`.
+#' @inheritParams .importPanarooTables
 #'
-#' @inheritParams .panaroo2geneTable
-#'
-#' @return A tibble with `Gene` and `Annotation` columns.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
-.panaroo2geneNames <- function(panaroo_output_path, duckdb_path) {
-  filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
-  duckdb_path <- normalizePath(duckdb_path)
+.importPanarooReference <- function(panaroo_output_path, duckdb_path) {
+  panaroo_output_path <- normalizePath(panaroo_output_path, mustWork = TRUE)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  fasta_path <- file.path(panaroo_output_path, "pan_genome_reference.fa")
+
+  if (!file.exists(fasta_path)) {
+    stop("Panaroo reference FASTA not found: ", fasta_path, call. = FALSE)
+  }
+
+  gene_fasta <- Biostrings::readDNAStringSet(filepath = fasta_path)
+
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  gene_names <- read.table(filepath, sep = ",", header = TRUE, fill = TRUE, quote = "") |>
-    tibble::as_tibble() |>
-    dplyr::select(c(Gene, Annotation))
-
-  DBI::dbWriteTable(con, "gene_names", gene_names, overwrite = TRUE)
-  gene_names
-}
-
-
-#' Create structural variant presence/absence table from Panaroo outputs
-#'
-#' Reads `struct_presence_absence.Rtab` and constructs a genome-by-struct
-#' presence/absence matrix, writing the result to `gene_struct` in DuckDB.
-#'
-#' @inheritParams .panaroo2geneTable
-#'
-#' @return A tibble containing the struct matrix.
-#'
-#' @keywords internal
-.panaroo2StructTable <- function(panaroo_output_path, duckdb_path) {
-  struct_filepath <- file.path(normalizePath(panaroo_output_path), "struct_presence_absence.Rtab")
-  duckdb_path <- normalizePath(duckdb_path)
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  gene_struct <- read.table(struct_filepath, sep = "\t", header = TRUE, fill = TRUE, quote = "") |>
-    tibble::as_tibble() |>
-    tidyr::pivot_longer(cols = -1) |>
-    tidyr::pivot_wider(names_from = Gene, values_from = value) |>
-    dplyr::rename("genome_id" = "name") |>
-    dplyr::mutate(genome_id = stringr::str_replace_all(genome_id, c("^X" = "", "\\.PATRIC$" = "")))
-
-  DBI::dbWriteTable(con, "gene_struct", gene_struct, overwrite = TRUE)
-  gene_struct
-}
-
-
-#' Import additional Panaroo reference outputs into DuckDB
-#'
-#' Loads reference sequences and long-format gene–protein mappings from
-#' Panaroo outputs and stores them into DuckDB (`gene_ref_seq`, `genome_gene_protein`).
-#'
-#' @inheritParams .panaroo2geneTable
-#'
-#' @return Invisibly returns TRUE.
-#'
-#' @keywords internal
-.panaroo2OtherTables <- function(panaroo_output_path, duckdb_path) {
-  panaroo_output_path <- normalizePath(panaroo_output_path)
-  duckdb_path <- normalizePath(duckdb_path)
-  fasta_filepath <- file.path(panaroo_output_path, "pan_genome_reference.fa")
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  gene_fasta <- Biostrings::readDNAStringSet(filepath = fasta_filepath)
-  DBI::dbWriteTable(con, "gene_ref_seq",
+  DBI::dbWriteTable(
+    con,
+    "gene_ref_seq",
     tibble::tibble(
       name = names(gene_fasta),
       sequence = as.character(gene_fasta)
     ),
     overwrite = TRUE
   )
-  # col_types = FALSE reduces console spam
-  readr::read_csv(file.path(panaroo_output_path, "gene_presence_absence.csv"), show_col_types = FALSE) |>
-    dplyr::select(-`Non-unique Gene name`) |>
-    tidyr::pivot_longer(-c("Gene", "Annotation"),
-      names_to = "genome_ids",
-      values_to = "protein_ids"
-    ) |>
-    dplyr::mutate(genome_ids = sub("\\.PATRIC\\.\\.\\..*$", "", genome_ids)) |>
-    dplyr::select(genome_ids, Gene, protein_ids) |>
-    dplyr::distinct() |>
-    dplyr::filter(!is.na(protein_ids)) |>
-    tidyr::separate_rows(protein_ids, sep = ";") |>
-    # dplyr::filter(!stringr::str_detect(protein_ids, "_pseudo")) |>
-    dplyr::mutate(protein_ids = gsub("_pseudo", "", protein_ids)) |>
-    dplyr::mutate(protein_ids = gsub("_len", "", protein_ids)) |>
-    DBI::dbWriteTable(conn = con, name = "genome_gene_protein", overwrite = TRUE)
+
+  invisible(TRUE)
 }
 
 
 #' Import all Panaroo-derived outputs into DuckDB
 #'
-#' Wrapper that loads gene counts, gene names, struct tables, and reference
-#' sequence tables from a Panaroo output directory into a DuckDB database.
+#' Stores gene and structural counts as sparse long relations and imports the
+#' Panaroo reference sequences.
 #'
-#' @inheritParams .panaroo2geneTable
+#' @inheritParams .importPanarooTables
 #'
-#' @return Invisibly returns TRUE.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
 .panaroo2duckdb <- function(panaroo_output_path, duckdb_path) {
-  panaroo_output_path <- normalizePath(panaroo_output_path)
-  duckdb_path <- normalizePath(duckdb_path)
-
-  .panaroo2geneTable(panaroo_output_path, duckdb_path)
-  .panaroo2geneNames(panaroo_output_path, duckdb_path)
-  .panaroo2StructTable(panaroo_output_path, duckdb_path)
-  .panaroo2OtherTables(panaroo_output_path, duckdb_path)
+  .importPanarooTables(panaroo_output_path, duckdb_path)
+  .importPanarooReference(panaroo_output_path, duckdb_path)
   invisible(TRUE)
 }
 
@@ -1133,6 +1193,9 @@ runPanaroo2Duckdb <- function(duckdb_path,
      WHERE genome_id IS NOT NULL
      GROUP BY genome_id, cluster"
   )
+
+  DBI::dbExecute(con, "DROP TABLE cdhit_membership")
+  DBI::dbExecute(con, "DROP TABLE cdhit_raw")
 
   invisible(TRUE)
 }
@@ -2432,27 +2495,16 @@ cas_hmm <- .amr_progress_step(
   # run hmmsearch separately
   ####################################################################
 
-  databases <- list(
-    DefenseFinder = defense_hmm,
-    CasFinder = cas_hmm
-  )
+  databases <- list(DefenseFinder = defense_hmm, CasFinder = cas_hmm)
 
   combined_tbl <- purrr::imap_dfr(
     databases, function(hmm_file, db_name) {
+    .log_or_message(log_path, verbose, "Running ", db_name)
 
-      .log_or_message(log_path, verbose, "Running ", db_name)
+    tbl_file <- file.path(output_path, paste0("protein_", db_name, ".tbl"))
 
-      tbl_file <- file.path(output_path, paste0("protein_", db_name, ".tbl")
-      )
-
-      stderr_file <- tempfile(
-        pattern = paste0(
-          "hmmer_",
-          db_name,
-          "_"
-        ),
-        fileext = ".stderr"
-      )
+    stderr_file <- tempfile(pattern = paste0("hmmer_", db_name, "_"),
+                            fileext = ".stderr")
 
       status <- .amr_progress_step(
                   paste0("Running ", db_name, " HMMER"),
@@ -2476,14 +2528,8 @@ cas_hmm <- .amr_progress_step(
                         "--domZ",
                         total_proteins,
                         "--domtblout",
-                        file.path(
-                          "/work",
-                          basename(tbl_file)
-                        ),
-                        file.path(
-                          "/db",
-                          basename(hmm_file)
-                        ),
+                        file.path("/work", basename(tbl_file)),
+                        file.path("/db", basename(hmm_file)),
                         "/work/protein_DefenseCas.faa"
                       ),
                       stdout = FALSE,
@@ -2917,7 +2963,7 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
       con,
       paste0(
         "COPY (", sql, ") TO ", path_sql,
-        " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9)"
+        " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9, PRESERVE_ORDER false)"
       )
     )
   }
@@ -2935,52 +2981,19 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
   con_new <- .amr_connect_dataset_db(db_name)
   on.exit(try(DBI::dbDisconnect(con_new), silent = TRUE), add = TRUE)
 
-  # gene_count -> long parquet + view
-  DBI::dbReadTable(con, "gene_count") |>
-    tidyr::pivot_longer(-genome_id, names_to = "gene", values_to = "value") |>
-    dplyr::filter(!is.na(value) & value != "") |>
-    dplyr::mutate(value = as.integer(value)) |>
-    writeCompressedParquet(genes_parquet)
+  # Introducing the sparse ORB! Absence of a row means zero going forward.
+  # This previously happened in amRml for subset matrices, but we can do it early
+  # and save space, time, and compute.
+  writeDuckDBParquet(
+    "SELECT CAST(genome_id AS VARCHAR) AS genome_id, CAST(gene AS VARCHAR) AS gene, CAST(value AS INTEGER) AS value FROM gene_count WHERE value <> 0",
+    genes_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_count AS SELECT * FROM read_parquet('%s')", basename(genes_parquet)))
 
-  # protein_count -> long parquet + view
   writeDuckDBParquet(
-    paste0(
-      "WITH ",
-      "genomes AS (",
-      "  SELECT DISTINCT genome_id FROM protein_count",
-      "), ",
-      "proteins AS (",
-      "  SELECT DISTINCT protein FROM protein_count",
-      ") ",
-      "SELECT ",
-      "CAST(g.genome_id AS VARCHAR) AS genome_id, ",
-      "CAST(",
-      "  CASE ",
-      "    WHEN starts_with(p.protein, 'fig|') ",
-      "    THEN 'fig.' || substr(p.protein, 5) ",
-      "    ELSE p.protein ",
-      "  END AS VARCHAR",
-      ") AS protein, ",
-      "CAST(COALESCE(c.value, 0) AS INTEGER) AS value ",
-      "FROM genomes g ",
-      "CROSS JOIN proteins p ",
-      "LEFT JOIN protein_count c ",
-      "  ON c.genome_id = g.genome_id ",
-      " AND c.protein = p.protein"
-    ),
+    "SELECT CAST(genome_id AS VARCHAR) AS genome_id, CAST(protein AS VARCHAR) AS protein, CAST(value AS INTEGER) AS value FROM protein_count WHERE value <> 0",
     proteins_parquet
   )
-
-  DBI::dbExecute(
-    con_new,
-    sprintf(
-      "CREATE OR REPLACE VIEW protein_count AS ",
-      "SELECT * FROM read_parquet('%s')",
-      basename(proteins_parquet)
-    )
-  )
-
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_count AS SELECT * FROM read_parquet('%s')", basename(proteins_parquet)))
 
   # HMMER annotation counts -> long Parquet + views per database in manifest
@@ -3018,21 +3031,23 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
     )
   }
 
-  # gene_struct -> long parquet + view
-  DBI::dbReadTable(con, "gene_struct") |>
-    tidyr::pivot_longer(-genome_id, names_to = "struct", values_to = "value") |>
-    dplyr::filter(!is.na(value) & value != "") |>
-    dplyr::mutate(value = as.integer(value)) |>
-    writeCompressedParquet(struct_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(genome_id AS VARCHAR) AS genome_id, CAST(struct AS VARCHAR) AS struct, CAST(value AS INTEGER) AS value FROM gene_struct WHERE value <> 0",
+    struct_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW struct AS SELECT * FROM read_parquet('%s')", basename(struct_parquet)))
 
   # names/seq tables -> parquet + views
-  DBI::dbReadTable(con, "gene_names") |> writeCompressedParquet(gene_names_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(Gene AS VARCHAR) AS Gene, CAST(Annotation AS VARCHAR) AS Annotation FROM gene_names",
+    gene_names_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_names AS SELECT * FROM read_parquet('%s')", basename(gene_names_parquet)))
 
-  DBI::dbReadTable(con, "protein_names") |>
-    dplyr::select(-locus_tag) |>
-    writeCompressedParquet(protein_names_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(proteinID AS VARCHAR) AS proteinID, CAST(proteinName AS VARCHAR) AS proteinName FROM protein_names",
+    protein_names_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_names AS SELECT * FROM read_parquet('%s')", basename(protein_names_parquet)))
 
   # Parsing through the different HMMER result Parquets
@@ -3061,10 +3076,16 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
     )
   }
 
-  DBI::dbReadTable(con, "gene_ref_seq") |> writeCompressedParquet(gene_ref_seq_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(name AS VARCHAR) AS name, CAST(sequence AS VARCHAR) AS sequence FROM gene_ref_seq",
+    gene_ref_seq_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_seqs AS SELECT * FROM read_parquet('%s')", basename(gene_ref_seq_parquet)))
 
-  DBI::dbReadTable(con, "protein_cluster_seq") |> writeCompressedParquet(protein_cluster_seq_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(name AS VARCHAR) AS name, CAST(sequence AS VARCHAR) AS sequence FROM protein_cluster_seq",
+    protein_cluster_seq_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_seqs AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_seq_parquet)))
 
   writeDuckDBParquet(
@@ -3073,7 +3094,10 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
   )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_members AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_member_parquet)))
 
-  DBI::dbReadTable(con, "genome_gene_protein") |> writeCompressedParquet(genome_gene_protein_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(genome_ids AS VARCHAR) AS genome_ids, CAST(Gene AS VARCHAR) AS Gene, CAST(protein_ids AS VARCHAR) AS protein_ids FROM genome_gene_protein",
+    genome_gene_protein_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_gene_protein AS SELECT * FROM read_parquet('%s')", basename(genome_gene_protein_parquet)))
 
   invisible(TRUE)
@@ -3102,14 +3126,14 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' \enumerate{
 #'   \item **Panaroo** via [runPanaroo2Duckdb()] -> writes:
 #'     \itemize{
-#'       \item `gene_count` (genome x gene counts)\cr
+#'       \item `gene_count` (sparse long genome-gene counts)\cr
 #'       \item `gene_names`\cr
-#'       \item `gene_struct` (structural variants)\cr
+#'       \item `gene_struct` (sparse long struct variants)\cr
 #'       \item `gene_ref_seq`, `genome_gene_protein`
 #'     }
 #'   \item **CD-HIT** via [CDHIT2duckdb()] -> writes:
 #'     \itemize{
-#'       \item `protein_count` (genome x protein-cluster counts)\cr
+#'       \item `protein_count` (sparse long genome-protein-cluster counts)\cr
 #'       \item `protein_names`\cr
 #'       \item `protein_cluster_seq` (representative sequences)\cr
 #'       \item `protein_members`

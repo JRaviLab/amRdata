@@ -335,11 +335,11 @@ buildDyadFeatureMap <- function(
           CREATE OR REPLACE VIEW v_struct_genes AS
           SELECT DISTINCT
             struct,
-            gene
+            replace(gene_raw, '~', '.') AS gene
           FROM read_parquet('%s') s
           CROSS JOIN UNNEST(
-            string_split(s.struct, '.')
-          ) AS t(gene)
+            string_split(replace(s.struct, '.', '-'), '-')
+          ) AS t(gene_raw)
           WHERE s.value = 1
           ",
           sql_path
