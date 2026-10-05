@@ -1344,14 +1344,9 @@
 
 #' Check BV-BRC data availability for a single taxon
 #'
-#' Internal worker used by `checkDataAvailability()`. Each call resolves and
-#' summarizes a taxon independently.
-#'
-#' Summarize BV-BRC data availability for one taxon
-#'
-#' Resolves one taxon to available BV-BRC genomes and summarizes genome
-#' metadata, AMR phenotype availability, collection years, genome statistics,
-#' and the number of genomes passing the requested metadata QC thresholds.
+#' Internal worker used by `checkDataAvailability()`. Resolves one taxon to
+#' available BV-BRC genomes and summarizes genome metadata, AMR phenotype
+#' availability, collection years, genome statistics, and metadata QC.
 #'
 #' Metadata can be retrieved through the BV-BRC Data API or the legacy CLI/cache
 #' workflow.
@@ -3435,10 +3430,13 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #' @param hmm_file Path to the prepared HMM database.
 #' @param database Database name used for BiocFileCache registration.
 #' @param verbose Logical. Print a message when the sidecar is rebuilt.
+#' @param component Character or `NULL`. Optional component name used to keep
+#'   profile caches distinct for databases with multiple prepared HMMs.
 #'
 #' @return A list containing the sidecar path and BiocFileCache identifiers.
 #' @keywords internal
-.hmmer_profile_cache <- function(hmm_file, database, verbose = FALSE) {
+.hmmer_profile_cache <- function(hmm_file, database, verbose = FALSE,
+                                 component = NULL) {
   hmm_file <- normalizePath(hmm_file, mustWork = TRUE)
 
   profile_path <- file.path(
@@ -3459,7 +3457,12 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
   if (rebuild) {
     if (isTRUE(verbose)) {
-      message("Caching HMM profile metadata for ", database)
+      cache_parts <- c(database, component)
+      cache_parts <- cache_parts[!is.na(cache_parts) & nzchar(cache_parts)]
+      message(
+        "Caching HMM profile metadata for ",
+        paste(cache_parts, collapse = "/")
+      )
     }
 
     profiles <- .parse_hmmer_profiles(hmm_file)
@@ -3472,7 +3475,14 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   }
 
   profile_path <- normalizePath(profile_path, mustWork = TRUE)
-  rname <- .amr_bfc_hmmer_rname(database, component = "profiles")
+
+  rname_parts <- c(component, "profiles")
+  rname_parts <- rname_parts[!is.na(rname_parts) & nzchar(rname_parts)]
+
+  rname <- .amr_bfc_hmmer_rname(
+    database,
+    component = paste(rname_parts, collapse = "_")
+  )
   rid <- .amr_bfc_register_local(profile_path, rname)
 
   invisible(list(
@@ -3490,7 +3500,7 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #'
 #' @param file Path to a HMMER `.tbl` output file produced with `--domtblout`.
 #'
-#' @return A tibble with 19 columns matching the HMMER per-sequence hit table
+#' @return A tibble with 23 columns matching the HMMER per-sequence hit table
 #'
 #' @references Adapted from the rhmmer package
 #'   (<https://github.com/arendsee/rhmmer>).

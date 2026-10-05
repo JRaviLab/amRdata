@@ -15,7 +15,6 @@ test_that("prepareGenomes() forwards genome_id_file to retrieveMetadata()", {
   # retrieveMetadata() records the genome_id_file it receives; .filterGenomes()
   # returns NULL so prepareGenomes() exits cleanly right after.
   local_mocked_bindings(
-    .ensure_bvbrc_cache = function(...) invisible(NULL),
     retrieveMetadata = function(..., genome_id_file = NULL) {
       captured$gid <- genome_id_file
       invisible(NULL)

@@ -38,7 +38,9 @@ Default: \code{TRUE}.}
 CasFinder model archives must be retrieved. Default: \code{TRUE}.}
 }
 \value{
-Invisibly returns the path to the DefenseCas annotation Parquet file.
+Invisibly returns a list containing prepared DefenseFinder and
+CasFinder HMM/profile-cache metadata and the DefenseCas annotation Parquet
+path.
 }
 \description{
 Downloads and prepares the DefenseFinder and CasFinder model collections,
@@ -47,6 +49,7 @@ sequences in the selected dataset, and writes the resulting annotations for
 downstream processing.
 }
 \details{
-Prepared model files are reused when already present.
+Prepared combined HMMs, pressed indexes, and profile metadata are reused when
+already present.
 }
 \keyword{internal}

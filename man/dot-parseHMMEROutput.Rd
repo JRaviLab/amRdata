@@ -10,7 +10,7 @@
 \item{file}{Path to a HMMER \code{.tbl} output file produced with \code{--domtblout}.}
 }
 \value{
-A tibble with 19 columns matching the HMMER per-sequence hit table
+A tibble with 23 columns matching the HMMER per-sequence hit table
 }
 \description{
 Reads a HMMER \code{--domtblout} file and returns a tidy tibble with one row per

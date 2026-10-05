@@ -4,7 +4,7 @@
 \alias{.hmmer_profile_cache}
 \title{Create or reuse cached HMM profile metadata}
 \usage{
-.hmmer_profile_cache(hmm_file, database, verbose = FALSE)
+.hmmer_profile_cache(hmm_file, database, verbose = FALSE, component = NULL)
 }
 \arguments{
 \item{hmm_file}{Path to the prepared HMM database.}
@@ -12,6 +12,9 @@
 \item{database}{Database name used for BiocFileCache registration.}
 
 \item{verbose}{Logical. Print a message when the sidecar is rebuilt.}
+
+\item{component}{Character or \code{NULL}. Optional component name used to keep
+profile caches distinct for databases with multiple prepared HMMs.}
 }
 \value{
 A list containing the sidecar path and BiocFileCache identifiers.

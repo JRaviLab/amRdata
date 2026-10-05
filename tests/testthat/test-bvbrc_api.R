@@ -49,8 +49,7 @@ test_that(".resolveGenomeIDsApi resolves a species to valid genome IDs (live)", 
   on.exit(unlink(td, recursive = TRUE), add = TRUE)
 
   ids <- .resolveGenomeIDsApi(
-    base_dir = td, user_bacs = "Morganella morganii",
-    overwrite = TRUE, verbose = FALSE
+    base_dir = td, user_bacs = "Morganella morganii", verbose = FALSE
   )
   expect_type(ids, "character")
   expect_gt(length(ids), 0L)
@@ -68,8 +67,7 @@ test_that(".resolveGenomeIDsApi warns (not errors) on a zero-match input", {
 
   expect_warning(
     ids <- .resolveGenomeIDsApi(
-      base_dir = td, user_bacs = "Nosuchgenusxyzabc",
-      overwrite = TRUE, verbose = FALSE
+      base_dir = td, user_bacs = "Nosuchgenusxyzabc", verbose = FALSE
     ),
     "resolved 0 genomes"
   )
