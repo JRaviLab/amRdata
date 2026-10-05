@@ -1,11 +1,83 @@
-#' Build a protein-gene dyad feature network using DuckDB
+#' Describe HMMER-derived dyad feature views
 #'
-#' Constructs a two-mode (bipartite) network in which every node is either a
-#' protein-gene dyad or a biological feature, and every edge links a dyad to one
-#' of its features. Features include the dyad's own protein and gene, structural
-#' (pangenome graph) gene arrangements, and HMMER annotations: protein domains
-#' (Pfam), COGs, phage-defense systems (including Cas), and antimicrobial
-#' resistance genes.
+#' @param databases Character vector of HMMER database names.
+#'
+#' @return A named list describing view names, feature prefixes, SQL transforms,
+#'   and export column names for each database.
+#' @keywords internal
+.dyadHmmerSpecs <- function(databases) {
+  databases <- unique(as.character(databases))
+
+  purrr::set_names(databases) |>
+    purrr::map(function(database) {
+      known <- switch(
+        database,
+        Pfam = list(
+          key = "pfam",
+          prefix = "pfam",
+          feature_expr = "REPLACE(query_name, '-', '.')",
+          output_column = "Pfam"
+        ),
+        COG = list(
+          key = "cog",
+          prefix = "cog",
+          feature_expr = "query_name",
+          output_column = "COG"
+        ),
+        AMRFinder = list(
+          key = "amr",
+          prefix = "amr",
+          feature_expr = "REPLACE(REPLACE(query_name, '-NCBIFAM', ''), '-', '.')",
+          output_column = "ARG"
+        ),
+        DefenseCas = list(
+          key = "defense",
+          prefix = "defense",
+          feature_expr = "REPLACE(query_name, '-', '.')",
+          output_column = "DefenseCas"
+        ),
+        NULL
+      )
+
+      if (is.null(known)) {
+        key <- tolower(gsub("[^A-Za-z0-9]+", "_", database))
+
+        key <- gsub("^_+|_+$", "", key)
+
+        if (!nzchar(key)) {
+          key <- "feature"
+        }
+
+        if (grepl("^[0-9]", key)) {
+          key <- paste0("x_", key)
+        }
+
+        known <- list(
+          key = key,
+          prefix = key,
+          feature_expr = "query_name",
+          output_column = database
+        )
+      }
+
+      c(list(database = database),
+        known,
+        list(
+          annotation_view = paste0("dyad_ann_", known$key),
+          dyad_view = paste0("dyad_", known$key)
+        ))
+    })
+}
+
+#' Build virtual protein-gene dyad feature relations using DuckDB
+#'
+#' Creates a compact protein-gene dyad Parquet and registers virtual graph
+#' relations in the Parquet-backed ORB DuckDB. Expanded dyad-feature edges are
+#' not materialized. Structural and HMMER feature edges are reconstructed on
+#' demand from the canonical ORB Parquets.
+#'
+#' HMMER annotations are propagated from each individual protein through its
+#' CD-HIT representative cluster before joining to profile annotations.
 #'
 #' @param duckdb_path Character. Path to the source per-selection DuckDB. The
 #'   associated Parquet files and provenance manifest are expected to live
@@ -15,50 +87,27 @@
 #'   include. If `NULL`, all HMMER databases recorded in the manifest are used,
 #'   plus `struct` to include pangenome graph triplets. If a character vector is
 #'   supplied, individual feature scales can be selected.
-#' @param output_path Character or NULL. Directory where the output Parquet file
-#'   will be written. If NULL, the output is written alongside the source DuckDB.
+#' @param output_path Character or NULL. Directory where `dyads.parquet` is
+#'   written. If NULL, the dataset ORB directory is used.
+#' @param threads Integer. Maximum DuckDB threads used while building the compact
+#'   dyad dimension. Default `4`.
 #'
 #' @details
-#' The function performs the following steps:
-#' \enumerate{
-#'   \item Creates a protein-gene mapping from
-#'     \code{genome_gene_protein.parquet}.
-#'   \item Constructs a unique protein-gene dyad identifier of the form
-#'     \code{"protein|gene"}.
-#'   \item Optionally loads structural and HMMER annotations.
-#'   \item Generates a network edge list linking each dyad to its associated
-#'     features.
-#'   \item Writes the resulting edge list to a compressed Parquet file.
-#' }
+#' The canonical graph representation stores only unique `(protein, gene)` dyads
+#' in `dyads.parquet`. The ORB DuckDB then exposes views for `genome_dyad`,
+#' `struct_gene`, `dyad_struct`, each configured HMMER feature scale, and the
+#' compatibility relation `dyad_feature`.
 #'
-#' Every edge runs from a `protein|gene` dyad to a type-prefixed feature node:
+#' `dyad_feature` retains the historical two-column API (`dyad`, `feature`) but
+#' creates those strings only when queried. Protein and gene self-edges are also
+#' reconstructed virtually rather than persisted.
 #'
-#' \preformatted{
-#' protein|gene --> protein:PROTEIN_ID
-#' protein|gene --> gene:GENE_ID
-#' protein|gene --> pfam:PFXXXXX
-#' protein|gene --> cog:COGXXXX
-#' protein|gene --> amr:GENE_NAME
-#' protein|gene --> defense:DEFENSE_SYSTEM
-#' protein|gene --> struct:STRUCTURE
-#' }
-#'
-#' The type prefix on each feature keeps feature namespaces separate, so a
-#' generic feature name cannot collide across scales downstream.
-#'
-#' The output edge list contains two columns:
-#' \describe{
-#'   \item{dyad}{Protein-gene dyad identifier.}
-#'   \item{feature}{Feature node identifier prefixed by feature type.}
-#' }
-#'
-#' @return Invisibly returns the path to the generated
-#'   \code{dyad_feature.parquet} file.
+#' @return Invisibly returns the path to the generated `dyads.parquet` file.
 #'
 #' @examples
 #' \dontrun{
 #' buildDyadFeatureMap(
-#'   duckdb_path = "data/Staphylococcus_argenteus/Sar.duckdb"
+#'   duckdb_path = "data/Staphylococcus_argenteus/work/Sar.duckdb"
 #' )
 #' }
 #'
@@ -67,20 +116,15 @@
 buildDyadFeatureMap <- function(
     duckdb_path,
     additional_feature_scales = NULL,
-    output_path = NULL
+    output_path = NULL,
+    threads = 4L
 ) {
 
-  duckdb_path <- normalizePath(
-    duckdb_path,
-    mustWork = TRUE
-  )
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
 
   paths <- .amr_paths_from_duckdb(duckdb_path)
-  parquet_dir <- paths$orb
 
-  manifest_path <- .manifest_find_latest(
-    duckdb_path
-  )
+  manifest_path <- .manifest_find_latest(duckdb_path)
 
   if (is.null(manifest_path)) {
     stop(
@@ -89,7 +133,6 @@ buildDyadFeatureMap <- function(
     )
   }
 
-  # Read in the `runDataProcessing()` output manifest
   manifest <- jsonlite::read_json(
     manifest_path,
     simplifyVector = FALSE
@@ -97,26 +140,19 @@ buildDyadFeatureMap <- function(
 
   hmmer_stage <- NULL
 
-  # Find the most recent run whose HMMER stage completed successfully; its
-  # recorded databases determine which feature scales are available.
-  for (run in rev(manifest$runs)) {
-
-    stages <- run$stages %||% list()
-
+  for (run in rev(manifest$runs %||% list())) {
     matches <- purrr::keep(
-      stages,
+      run$stages %||% list(),
       ~ identical(.x$name, "hmmer") &&
         identical(.x$status, "success")
     )
 
     if (length(matches)) {
-      hmmer_stage <- matches[[1]]
+      hmmer_stage <- matches[[length(matches)]]
       break
     }
   }
 
-  # Without a successful HMMER stage the annotation Parquets we join against
-  # are not guaranteed to exist, so there is nothing to build from.
   if (is.null(hmmer_stage)) {
     stop(
       "No successful HMMER stage found in manifest: ",
@@ -124,29 +160,35 @@ buildDyadFeatureMap <- function(
     )
   }
 
-  hmmer_databases <- unlist(
-    hmmer_stage$parameters$databases
+  hmmer_databases <- unique(
+    as.character(
+      unlist(
+        hmmer_stage$parameters$databases %||% character(),
+        use.names = FALSE
+      )
+    )
   )
 
-  # A successful stage with no databases recorded should not happen; fail loudly.
   if (!length(hmmer_databases)) {
     stop(
       "HMMER stage in manifest does not contain any databases."
     )
   }
 
-  # Feature scales the caller is allowed to request: the structural view plus
-  # every HMMER database from the manifest (so new databases are picked up
-  # automatically).
   allowed_features <- c(
     "struct",
     hmmer_databases
   )
 
-  # Default to every allowed scale; otherwise reject anything unrecognised.
   if (is.null(additional_feature_scales)) {
     additional_feature_scales <- allowed_features
   } else {
+    additional_feature_scales <- unique(
+      as.character(
+        additional_feature_scales
+      )
+    )
+
     unknown_features <- setdiff(
       additional_feature_scales,
       allowed_features
@@ -184,419 +226,180 @@ buildDyadFeatureMap <- function(
     mustWork = TRUE
   )
 
-  parquet_path <- file.path(
+  if (!file.exists(paths$parquet_duckdb)) {
+    stop(
+      "Parquet-backed ORB DuckDB was not found: ",
+      paths$parquet_duckdb,
+      ". Run cleanData() before buildDyadFeatureMap()."
+    )
+  }
+
+  dyads_parquet <- file.path(
     out_dir,
+    "dyads.parquet"
+  )
+
+  legacy_dyad_parquet <- file.path(
+    paths$orb,
     "dyad_feature.parquet"
   )
 
-  con <- DBI::dbConnect(
-    duckdb::duckdb(),
-    dbdir = ":memory:"
+  con <- .amr_connect_dataset_db(
+    paths$parquet_duckdb
   )
 
   on.exit(
-    DBI::dbDisconnect(
-      con,
-      shutdown = TRUE
+    try(
+      DBI::dbDisconnect(con),
+      silent = TRUE
     ),
     add = TRUE
   )
 
-  # Local helpers -------------------------------------------------------------
+  threads <- as.integer(threads)
 
-  # Escape single quotes so a path can be embedded in a SQL string literal.
-  .sql_escape <- function(x) {
-    gsub(
-      "'",
-      "''",
-      x,
-      fixed = TRUE
-    )
-  }
-
-  # Resolve "<parquet_dir>/<dataset_name>.parquet" to an escaped absolute path,
-  # erroring if the expected Parquet file is missing.
-  .parquet_dataset_sql <- function(
-    parquet_dir,
-    dataset_name
+  if (
+    length(threads) != 1L ||
+    is.na(threads) ||
+    threads < 1L
   ) {
-
-    path <- file.path(
-      parquet_dir,
-      paste0(
-        dataset_name,
-        ".parquet"
-      )
-    )
-
-    if (!file.exists(path)) {
-      stop(
-        "Required Parquet file not found: ",
-        path
-      )
-    }
-
-    .sql_escape(
-      normalizePath(
-        path,
-        winslash = "/",
-        mustWork = TRUE
-      )
+    stop(
+      "`threads` must be a positive integer.",
+      call. = FALSE
     )
   }
 
-  # =========================
-  # Gene -> protein mapping
-  # =========================
-
-  # Base protein/gene pairs. Empty strings are excluded alongside NULLs to match
-  # the `value != ""` convention in data_processing.R and to avoid emitting
-  # bogus "protein|" or "|gene" dyads.
-  sql_path <- .parquet_dataset_sql(
-    parquet_dir,
-    "genome_gene_protein"
+  threads <- min(
+    threads,
+    as.integer(parallelly::availableCores())
   )
-
-  DBI::dbExecute(
-    con,
-    sprintf(
-      "
-      CREATE OR REPLACE VIEW protein_gene AS
-      SELECT DISTINCT
-        protein_ids AS protein,
-        REPLACE(Gene, '~', '.') AS gene
-      FROM read_parquet('%s')
-      WHERE protein_ids IS NOT NULL
-        AND protein_ids <> ''
-        AND Gene IS NOT NULL
-        AND Gene <> ''
-      ",
-      sql_path
-    )
-  )
-
-  # =========================
-  # Protein-gene -> dyad
-  # =========================
-
-  # Collapse each protein/gene pair into a single "protein|gene" dyad id; this
-  # is the dyad node for every edge in the output network.
-  DBI::dbExecute(
-    con,
-    "
-    CREATE OR REPLACE VIEW protein_gene_dyad AS
-    SELECT DISTINCT
-      protein,
-      gene,
-      CONCAT(protein, '|', gene) AS dyad
-    FROM protein_gene
-    "
-  )
-
-  # Track which optional feature views were successfully created, so the edge
-  # queries below only join against views that exist.
-  has_struct <- FALSE
-  has_pfam <- FALSE
-  has_cog <- FALSE
-  has_amr <- FALSE
-  has_defensecas <- FALSE
-
-  # =========================
-  # Structural gene features
-  # =========================
-
-  if ("struct" %in% additional_feature_scales) {
-
-    struct_path <- file.path(
-      parquet_dir,
-      "struct.parquet"
-    )
-
-    if (!file.exists(struct_path)) {
-
-      # Same skip-and-continue behaviour as .create_feature_view() uses for the
-      # HMMER datasets, kept inline here because the struct view is built with a
-      # different (UNNEST) query.
-      message(
-        "Skipping struct: no parquet found. Generate struct parquet first."
-      )
-
-    } else {
-
-      sql_path <- .parquet_dataset_sql(
-        parquet_dir,
-        "struct"
-      )
-
-      DBI::dbExecute(
-        con,
-        sprintf(
-          "
-          CREATE OR REPLACE VIEW v_struct_genes AS
-          SELECT DISTINCT
-            struct,
-            replace(gene_raw, '~', '.') AS gene
-          FROM read_parquet('%s') s
-          CROSS JOIN UNNEST(
-            string_split(replace(s.struct, '.', '-'), '-')
-          ) AS t(gene_raw)
-          WHERE s.value = 1
-          ",
-          sql_path
-        )
-      )
-
-      has_struct <- TRUE
-    }
-  }
-
-  # ==========================
-  # Generic HMMER feature view
-  # ==========================
-
-  # Local helper: build a `protein -> feature` view from one HMMER annotation
-  # Parquet. `feature_expr` is the SQL expression that derives the feature label
-  # from `query_name` (identity for most databases, a REPLACE() for AMRFinder).
-  # Returns TRUE if the view was created, FALSE if the Parquet was missing.
-  .create_feature_view <- function(
-    con,
-    view_name,
-    parquet_dir,
-    dataset_name,
-    feature_expr
-  ) {
-
-    sql_path <- tryCatch(
-      .parquet_dataset_sql(
-        parquet_dir,
-        dataset_name
-      ),
-      error = function(e) {
-        message(
-          "Skipping ",
-          dataset_name,
-          ": ",
-          e$message
-        )
-        NULL
-      }
-    )
-
-    if (is.null(sql_path)) {
-      return(FALSE)
-    }
-
-    DBI::dbExecute(
-      con,
-      sprintf(
-        "
-        CREATE OR REPLACE VIEW %s AS
-        SELECT DISTINCT
-          protein,
-          %s AS feature
-        FROM read_parquet('%s')
-        WHERE protein IS NOT NULL
-          AND query_name IS NOT NULL
-        ",
-        view_name,
-        feature_expr,
-        sql_path
-      )
-    )
-
-    TRUE
-  }
-
-  # =========================
-  # HMMER annotation features
-  # =========================
-
-  if ("Pfam" %in% additional_feature_scales) {
-
-    has_pfam <- .create_feature_view(
-      con = con,
-      view_name = "v_pfam",
-      parquet_dir = parquet_dir,
-      dataset_name = "protein_Pfam",
-      feature_expr = "REPLACE(query_name, '-', '.')"
-    )
-  }
-
-  if ("COG" %in% additional_feature_scales) {
-
-    has_cog <- .create_feature_view(
-      con = con,
-      view_name = "v_cog",
-      parquet_dir = parquet_dir,
-      dataset_name = "protein_COG",
-      feature_expr = "query_name"
-    )
-  }
-
-  if ("AMRFinder" %in% additional_feature_scales) {
-
-    has_amr <- .create_feature_view(
-      con = con,
-      view_name = "v_amrfinder",
-      parquet_dir = parquet_dir,
-      dataset_name = "protein_AMRFinder",
-      feature_expr = "REPLACE(REPLACE(query_name, '-NCBIFAM', ''), '-', '.')"
-    )
-  }
-
-  if ("DefenseCas" %in% additional_feature_scales) {
-
-    has_defensecas <- .create_feature_view(
-      con = con,
-      view_name = "v_defensecas",
-      parquet_dir = parquet_dir,
-      dataset_name = "protein_DefenseCas",
-      feature_expr = "REPLACE(query_name, '-', '.')"
-    )
-  }
-
-  # =========================
-  # Build network edge queries
-  # =========================
-
-  # Each entry is a SELECT returning (dyad, feature) rows that are UNIONed into
-  # the final edge list. In the joined queries below `pgd` aliases the
-  # `protein_gene_dyad` view, so `pgd.dyad` is the "protein|gene" dyad id.
-  edge_queries <- c(
-    "
-    SELECT DISTINCT
-      dyad AS dyad,
-      CONCAT('protein:', protein) AS feature
-    FROM protein_gene_dyad
-    ",
-    "
-    SELECT DISTINCT
-      dyad AS dyad,
-      CONCAT('gene:', gene) AS feature
-    FROM protein_gene_dyad
-    "
-  )
-
-  # =========================
-  # Structure edges
-  # =========================
-
-  if (has_struct) {
-
-    edge_queries <- c(
-      edge_queries,
-      "
-      SELECT DISTINCT
-        pgd.dyad AS dyad,
-        CONCAT('struct:', sg.struct) AS feature
-      FROM protein_gene_dyad pgd
-      JOIN v_struct_genes sg
-        ON pgd.gene = sg.gene
-      "
-    )
-  }
-
-  # =========================
-  # Pfam edges
-  # =========================
-
-  if (has_pfam) {
-
-    edge_queries <- c(
-      edge_queries,
-      "
-      SELECT DISTINCT
-        pgd.dyad AS dyad,
-        CONCAT('pfam:', pf.feature) AS feature
-      FROM protein_gene_dyad pgd
-      JOIN v_pfam pf
-        ON pgd.protein = pf.protein
-      "
-    )
-  }
-
-  # =========================
-  # COG edges
-  # =========================
-
-  if (has_cog) {
-
-    edge_queries <- c(
-      edge_queries,
-      "
-      SELECT DISTINCT
-        pgd.dyad AS dyad,
-        CONCAT('cog:', cf.feature) AS feature
-      FROM protein_gene_dyad pgd
-      JOIN v_cog cf
-        ON pgd.protein = cf.protein
-      "
-    )
-  }
-
-  # =========================
-  # AMRFinder edges
-  # =========================
-
-  if (has_amr) {
-
-    edge_queries <- c(
-      edge_queries,
-      "
-      SELECT DISTINCT
-        pgd.dyad AS dyad,
-        CONCAT('amr:', af.feature) AS feature
-      FROM protein_gene_dyad pgd
-      JOIN v_amrfinder af
-        ON pgd.protein = af.protein
-      "
-    )
-  }
-
-  # =========================
-  # DefenseCas edges
-  # =========================
-
-  if (has_defensecas) {
-
-    edge_queries <- c(
-      edge_queries,
-      "
-      SELECT DISTINCT
-        pgd.dyad AS dyad,
-        CONCAT('defense:', df.feature) AS feature
-      FROM protein_gene_dyad pgd
-      JOIN v_defensecas df
-        ON pgd.protein = df.protein
-      "
-    )
-  }
-
-  # =========================
-  # Final edge list
-  # =========================
 
   DBI::dbExecute(
     con,
     paste0(
-      "
-      CREATE OR REPLACE VIEW network_edges AS
-      ",
-      paste(
-        edge_queries,
-        collapse = "\nUNION\n"
+      "SET threads = ",
+      threads
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    "SET preserve_insertion_order = false"
+  )
+
+  duckdb_temp_dir <- tempfile(
+    pattern = "dyad_duckdb_",
+    tmpdir = paths$work
+  )
+
+  dir.create(
+    duckdb_temp_dir,
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+
+  on.exit(
+    unlink(
+      duckdb_temp_dir,
+      recursive = TRUE,
+      force = TRUE
+    ),
+    add = TRUE
+  )
+
+  DBI::dbExecute(
+    con,
+    paste(
+      "SET temp_directory =",
+      DBI::dbQuoteString(
+        con,
+        normalizePath(
+          duckdb_temp_dir,
+          winslash = "/",
+          mustWork = TRUE
+        )
       )
     )
   )
 
-  # =========================
-  # Export Parquet
-  # =========================
+  available_relations <- DBI::dbListTables(
+    con
+  )
 
-  parquet_sql <- DBI::dbQuoteString(
+  required_relations <- c(
+    "genome_gene_protein",
+    "protein_members"
+  )
+
+  missing_required <- setdiff(
+    required_relations,
+    available_relations
+  )
+
+  if (length(missing_required)) {
+    stop(
+      "Required ORB relation(s) not found: ",
+      paste(missing_required, collapse = ", ")
+    )
+  }
+
+  specs <- .dyadHmmerSpecs(
+    hmmer_databases
+  )
+
+  stale_views <- c(
+    "dyad_feature",
+    "dyads",
+    "genome_dyad",
+    "dyad_protein_cluster",
+    "struct_gene",
+    "dyad_struct",
+    unlist(
+      purrr::map(
+        specs,
+        ~ c(
+          .x$annotation_view,
+          .x$dyad_view
+        )
+      ),
+      use.names = FALSE
+    )
+  )
+
+  purrr::walk(
+    unique(stale_views),
+    function(view_name) {
+      DBI::dbExecute(
+        con,
+        paste(
+          "DROP VIEW IF EXISTS",
+          DBI::dbQuoteIdentifier(
+            con,
+            view_name
+          )
+        )
+      )
+    }
+  )
+
+  if (file.exists(legacy_dyad_parquet)) {
+    unlink(
+      legacy_dyad_parquet,
+      force = TRUE
+    )
+  }
+
+  if (file.exists(dyads_parquet)) {
+    unlink(
+      dyads_parquet,
+      force = TRUE
+    )
+  }
+
+  dyads_sql <- DBI::dbQuoteString(
     con,
     normalizePath(
-      parquet_path,
+      dyads_parquet,
       winslash = "/",
       mustWork = FALSE
     )
@@ -605,15 +408,271 @@ buildDyadFeatureMap <- function(
   DBI::dbExecute(
     con,
     paste0(
-      "
-      COPY network_edges
-      TO ",
-      parquet_sql,
-      "
-      (FORMAT PARQUET, COMPRESSION ZSTD)
-      "
+      "COPY (",
+      "SELECT DISTINCT ",
+      "CAST(protein_ids AS VARCHAR) AS protein, ",
+      "CAST(REPLACE(Gene, '~', '.') AS VARCHAR) AS gene ",
+      "FROM genome_gene_protein ",
+      "WHERE protein_ids IS NOT NULL ",
+      "  AND protein_ids <> '' ",
+      "  AND Gene IS NOT NULL ",
+      "  AND Gene <> ''",
+      ") TO ",
+      dyads_sql,
+      " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 3, PRESERVE_ORDER false)"
     )
   )
 
-  invisible(parquet_path)
+  dyads_view_path <- if (identical(
+    normalizePath(
+      out_dir,
+      mustWork = TRUE
+    ),
+    normalizePath(
+      paths$orb,
+      mustWork = TRUE
+    )
+  )) {
+    basename(dyads_parquet)
+  } else {
+    normalizePath(
+      dyads_parquet,
+      winslash = "/",
+      mustWork = TRUE
+    )
+  }
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE VIEW dyads AS ",
+      "SELECT * FROM read_parquet(",
+      DBI::dbQuoteString(
+        con,
+        dyads_view_path
+      ),
+      ")"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE VIEW genome_dyad AS
+     SELECT DISTINCT
+       CAST(genome_ids AS VARCHAR) AS genome_id,
+       CAST(protein_ids AS VARCHAR) AS protein,
+       CAST(REPLACE(Gene, '~', '.') AS VARCHAR) AS gene
+     FROM genome_gene_protein
+     WHERE genome_ids IS NOT NULL
+       AND genome_ids <> ''
+       AND protein_ids IS NOT NULL
+       AND protein_ids <> ''
+       AND Gene IS NOT NULL
+       AND Gene <> ''"
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE VIEW dyad_protein_cluster AS
+     SELECT DISTINCT
+       CAST(member AS VARCHAR) AS protein,
+       CAST(cluster AS VARCHAR) AS cluster
+     FROM protein_members
+     WHERE member IS NOT NULL
+       AND member <> ''
+       AND cluster IS NOT NULL
+       AND cluster <> ''"
+  )
+
+  ambiguous_members <- DBI::dbGetQuery(
+    con,
+    "SELECT count(*) AS n
+     FROM (
+       SELECT protein
+       FROM dyad_protein_cluster
+       GROUP BY protein
+       HAVING count(DISTINCT cluster) > 1
+     )"
+  )$n[[1L]]
+
+  if (ambiguous_members > 0L) {
+    stop(
+      "CD-HIT membership is ambiguous for ",
+      ambiguous_members,
+      " protein(s); each protein must map to at most one representative cluster."
+    )
+  }
+
+  created_edge_views <- character()
+  compatibility_parts <- c(
+    "SELECT protein || '|' || gene AS dyad, 'protein:' || protein AS feature FROM dyads",
+    "SELECT protein || '|' || gene AS dyad, 'gene:' || gene AS feature FROM dyads"
+  )
+
+  if (
+    "struct" %in% additional_feature_scales &&
+    "struct" %in% available_relations
+  ) {
+    DBI::dbExecute(
+      con,
+      "CREATE OR REPLACE VIEW struct_gene AS
+       WITH unique_structs AS (
+         SELECT DISTINCT CAST(struct AS VARCHAR) AS struct
+         FROM struct
+         WHERE value = 1
+       )
+       SELECT DISTINCT
+         s.struct,
+         CAST(REPLACE(gene_raw, '~', '.') AS VARCHAR) AS gene
+       FROM unique_structs s
+       CROSS JOIN UNNEST(
+         string_split(REPLACE(s.struct, '.', '-'), '-')
+       ) AS t(gene_raw)"
+    )
+
+    DBI::dbExecute(
+      con,
+      "CREATE OR REPLACE VIEW dyad_struct AS
+       SELECT
+         d.protein,
+         d.gene,
+         sg.struct AS feature
+       FROM dyads d
+       JOIN struct_gene sg
+         ON d.gene = sg.gene"
+    )
+
+    created_edge_views <- c(
+      created_edge_views,
+      "dyad_struct"
+    )
+
+    compatibility_parts <- c(
+      compatibility_parts,
+      "SELECT protein || '|' || gene AS dyad, 'struct:' || feature AS feature FROM dyad_struct"
+    )
+  }
+
+  for (database in intersect(
+    hmmer_databases,
+    additional_feature_scales
+  )) {
+    spec <- specs[[database]]
+    source_relation <- paste0(
+      "protein_",
+      database
+    )
+
+    if (!source_relation %in% available_relations) {
+      message(
+        "Skipping ",
+        database,
+        ": ",
+        source_relation,
+        " was not found in the ORB."
+      )
+      next
+    }
+
+    annotation_view_sql <- DBI::dbQuoteIdentifier(
+      con,
+      spec$annotation_view
+    )
+    dyad_view_sql <- DBI::dbQuoteIdentifier(
+      con,
+      spec$dyad_view
+    )
+    source_relation_sql <- DBI::dbQuoteIdentifier(
+      con,
+      source_relation
+    )
+
+    DBI::dbExecute(
+      con,
+      paste0(
+        "CREATE OR REPLACE VIEW ",
+        annotation_view_sql,
+        " AS ",
+        "SELECT DISTINCT ",
+        "CAST(protein AS VARCHAR) AS cluster, ",
+        "CAST(",
+        spec$feature_expr,
+        " AS VARCHAR) AS feature ",
+        "FROM ",
+        source_relation_sql,
+        " WHERE protein IS NOT NULL ",
+        "   AND query_name IS NOT NULL"
+      )
+    )
+
+    DBI::dbExecute(
+      con,
+      paste0(
+        "CREATE OR REPLACE VIEW ",
+        dyad_view_sql,
+        " AS ",
+        "SELECT d.protein, d.gene, a.feature ",
+        "FROM dyads d ",
+        "JOIN dyad_protein_cluster pc ",
+        "  ON d.protein = pc.protein ",
+        "JOIN ",
+        annotation_view_sql,
+        " a ON pc.cluster = a.cluster"
+      )
+    )
+
+    created_edge_views <- c(
+      created_edge_views,
+      spec$dyad_view
+    )
+
+    compatibility_parts <- c(
+      compatibility_parts,
+      paste0(
+        "SELECT protein || '|' || gene AS dyad, '",
+        spec$prefix,
+        ":' || feature AS feature FROM ",
+        dyad_view_sql
+      )
+    )
+  }
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE VIEW dyad_feature AS ",
+      paste(
+        compatibility_parts,
+        collapse = " UNION ALL "
+      )
+    )
+  )
+
+  if (length(created_edge_views)) {
+    available_relations <- unique(c(
+      available_relations,
+      created_edge_views
+    ))
+  }
+
+  missing_proteins <- DBI::dbGetQuery(
+    con,
+    "SELECT count(DISTINCT d.protein) AS n
+     FROM dyads d
+     LEFT JOIN dyad_protein_cluster pc
+       ON d.protein = pc.protein
+     WHERE pc.protein IS NULL"
+  )$n[[1L]]
+
+  if (missing_proteins > 0L) {
+    message(
+      "Dyad/CD-HIT mapping: ",
+      missing_proteins,
+      " protein(s) have no protein_members mapping and therefore cannot inherit HMMER annotations."
+    )
+  }
+
+  invisible(
+    dyads_parquet
+  )
 }

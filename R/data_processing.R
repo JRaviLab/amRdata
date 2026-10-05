@@ -1316,9 +1316,9 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @param progress Logical. Show download progress when HMM database archives
 #'   must be retrieved. Default: `TRUE`.
 #'
-#' @return A named list containing the prepared HMM path and associated files
-#'   for each requested database..
-#'
+#' @return A named list for each requested database containing the prepared
+#'   HMM path, pressed HMMER files, cached profile-metadata Parquet path,
+#'   source metadata, and BiocFileCache identifiers.
 #' @keywords internal
 .prepareHmmerDatabases <- function(
     hmmer_db_dir,
@@ -1614,13 +1614,22 @@ CDHIT2duckdb <- function(duckdb_path,
       hmm_path = hmm_file
     )
 
+    profile_resource <- .hmmer_profile_cache(
+      hmm_file = hmm_file,
+      database = db_name,
+      verbose = verbose
+    )
+
     db_paths[[db_name]] <- list(
       hmm = hmm_file,
+      profiles = profile_resource$path,
       source = db$url,
       type = db$type,
       pressed = pressed_files,
       bfc_rid = bfc_resource$rid,
-      bfc_rname = bfc_resource$rname
+      bfc_rname = bfc_resource$rname,
+      profiles_bfc_rid = profile_resource$rid,
+      profiles_bfc_rname = profile_resource$rname
     )
 
     if (verbose) {
@@ -2004,7 +2013,7 @@ CDHIT2duckdb <- function(duckdb_path,
             purrr::map(arrow::read_parquet) |>
             dplyr::bind_rows() |>
             dplyr::left_join(
-              .parse_hmmer_profiles(db_paths[[database_name]]$hmm) |>
+              arrow::read_parquet(db_paths[[database_name]]$profiles) |>
                 dplyr::select(query_name = profile_name, description = profile_description),
               by = "query_name"
             )
@@ -3148,8 +3157,8 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'         Parquet files to `output_path`, and builds a **Parquet-backed DuckDB**
 #'         (`*_parquet.duckdb`) with views over those Parquets.
 #'
-#'   \item **Dyad feature mapping** via [buildDyadFeatureMap()] -> writes the
-#'         protein-gene dyad feature network used for downstream graph analysis.
+#'   \item **Dyad feature mapping** via [buildDyadFeatureMap()] -> writes a compact
+#'         `dyads.parquet` and registers virtual graph views in the ORB DuckDB.
 #' }
 #'
 #' @param duckdb_path Character. Path to the **per-selection DuckDB** produced by
@@ -3835,38 +3844,17 @@ runDataProcessing <- function(
 
   parquet_duckdb_path <- paths$parquet_duckdb
 
-  dyad_parquet <- .amr_progress_step(
-    "Building protein-gene dyad map",
+  dyads_parquet <- .amr_progress_step(
+    "Building virtual protein-gene dyad map",
     buildDyadFeatureMap(
       duckdb_path = duckdb_path,
-      output_path = paths$orb
+      output_path = paths$orb,
+      threads = min(threads, 4L)
     ),
     progress = progress,
     verbose = verbose,
     log_path = log_path
   )
-
-  local({
-    con_orb <- .amr_connect_dataset_db(
-      paths$parquet_duckdb
-    )
-
-    on.exit(
-      try(
-        DBI::dbDisconnect(con_orb),
-        silent = TRUE
-      ),
-      add = TRUE
-    )
-
-    DBI::dbExecute(
-      con_orb,
-      sprintf(
-        "CREATE OR REPLACE VIEW dyad_feature AS SELECT * FROM read_parquet('%s')",
-        basename(dyad_parquet)
-      )
-    )
-  })
 
   parquet_duckdb_path <- normalizePath(
     parquet_duckdb_path,
@@ -3917,6 +3905,17 @@ runDataProcessing <- function(
       "_count"
     ),
 
+    "dyads",
+    "genome_dyad",
+    "dyad_protein_cluster",
+    "struct_gene",
+    "dyad_struct",
+    vapply(
+      .dyadHmmerSpecs(hmmer_databases),
+      `[[`,
+      character(1),
+      "dyad_view"
+    ),
     "dyad_feature"
   )
 
@@ -4002,8 +4001,8 @@ runDataProcessing <- function(
       paste0("protein_", hmmer_databases, "_count.parquet")
     ),
 
-    # Dyad feature map
-    file.path(paths$orb, "dyad_feature.parquet")
+    # Compact dyad dimension; feature edges remain virtual in the ORB DuckDB
+    dyads_parquet
   )
 
   missing_parquet_files <- parquet_files[!file.exists(parquet_files)]
@@ -4063,7 +4062,11 @@ runDataProcessing <- function(
       metadata_qc_rejections_parquet =
         "metadata_qc_rejections.parquet",
       selected_genomes_parquet =
-        "selected_genomes.parquet"
+        "selected_genomes.parquet",
+      dyads_parquet = "dyads.parquet",
+      dyad_representation = "virtual",
+      dyad_feature_relation = "dyad_feature",
+      dyad_hmmer_mapping = "protein_members.member_to_cluster"
     )
   )
 
@@ -4523,10 +4526,21 @@ exportProcessedData <- function(duckdb_path = NULL,
     "genome_gene_protein"
   )
 
+  dyad_relations <- unique(c(
+    "dyads",
+    "genome_dyad",
+    "struct_gene",
+    grep(
+      "^dyad_",
+      available_tables,
+      value = TRUE
+    )
+  ))
+
   default_exclusions <- c(
     "amr_phenotype",
     sequence_tables,
-    "dyad_feature"
+    dyad_relations
   )
 
   if (is.null(tables)) {
@@ -5508,7 +5522,7 @@ removeLocalFiles <- function(
         "protein_seqs.parquet",
         "protein_members.parquet",
 
-        "dyad_feature.parquet"
+        "dyads.parquet"
       )
     ),
 

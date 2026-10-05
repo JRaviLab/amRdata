@@ -38,8 +38,9 @@ and external-tool logging.}
 must be retrieved. Default: \code{TRUE}.}
 }
 \value{
-A named list containing the prepared HMM path and associated files
-for each requested database..
+A named list for each requested database containing the prepared
+HMM path, pressed HMMER files, cached profile-metadata Parquet path,
+source metadata, and BiocFileCache identifiers.
 }
 \description{
 Download and prepare HMMER databases for generating new file types.

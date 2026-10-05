@@ -2,12 +2,13 @@
 % Please edit documentation in R/feature_to_head.R
 \name{buildDyadFeatureMap}
 \alias{buildDyadFeatureMap}
-\title{Build a protein-gene dyad feature network using DuckDB}
+\title{Build virtual protein-gene dyad feature relations using DuckDB}
 \usage{
 buildDyadFeatureMap(
   duckdb_path,
   additional_feature_scales = NULL,
-  output_path = NULL
+  output_path = NULL,
+  threads = 4L
 )
 }
 \arguments{
@@ -21,59 +22,38 @@ include. If \code{NULL}, all HMMER databases recorded in the manifest are used,
 plus \code{struct} to include pangenome graph triplets. If a character vector is
 supplied, individual feature scales can be selected.}
 
-\item{output_path}{Character or NULL. Directory where the output Parquet file
-will be written. If NULL, the output is written alongside the source DuckDB.}
+\item{output_path}{Character or NULL. Directory where \code{dyads.parquet} is
+written. If NULL, the dataset ORB directory is used.}
+
+\item{threads}{Integer. Maximum DuckDB threads used while building the compact
+dyad dimension. Default \code{4}.}
 }
 \value{
-Invisibly returns the path to the generated
-\code{dyad_feature.parquet} file.
+Invisibly returns the path to the generated \code{dyads.parquet} file.
 }
 \description{
-Constructs a two-mode (bipartite) network in which every node is either a
-protein-gene dyad or a biological feature, and every edge links a dyad to one
-of its features. Features include the dyad's own protein and gene, structural
-(pangenome graph) gene arrangements, and HMMER annotations: protein domains
-(Pfam), COGs, phage-defense systems (including Cas), and antimicrobial
-resistance genes.
+Creates a compact protein-gene dyad Parquet and registers virtual graph
+relations in the Parquet-backed ORB DuckDB. Expanded dyad-feature edges are
+not materialized. Structural and HMMER feature edges are reconstructed on
+demand from the canonical ORB Parquets.
 }
 \details{
-The function performs the following steps:
-\enumerate{
-\item Creates a protein-gene mapping from
-\code{genome_gene_protein.parquet}.
-\item Constructs a unique protein-gene dyad identifier of the form
-\code{"protein|gene"}.
-\item Optionally loads structural and HMMER annotations.
-\item Generates a network edge list linking each dyad to its associated
-features.
-\item Writes the resulting edge list to a compressed Parquet file.
-}
+HMMER annotations are propagated from each individual protein through its
+CD-HIT representative cluster before joining to profile annotations.
 
-Every edge runs from a \code{protein|gene} dyad to a type-prefixed feature node:
+The canonical graph representation stores only unique \verb{(protein, gene)} dyads
+in \code{dyads.parquet}. The ORB DuckDB then exposes views for \code{genome_dyad},
+\code{struct_gene}, \code{dyad_struct}, each configured HMMER feature scale, and the
+compatibility relation \code{dyad_feature}.
 
-\preformatted{
-protein|gene --> protein:PROTEIN_ID
-protein|gene --> gene:GENE_ID
-protein|gene --> pfam:PFXXXXX
-protein|gene --> cog:COGXXXX
-protein|gene --> amr:GENE_NAME
-protein|gene --> defense:DEFENSE_SYSTEM
-protein|gene --> struct:STRUCTURE
-}
-
-The type prefix on each feature keeps feature namespaces separate, so a
-generic feature name cannot collide across scales downstream.
-
-The output edge list contains two columns:
-\describe{
-\item{dyad}{Protein-gene dyad identifier.}
-\item{feature}{Feature node identifier prefixed by feature type.}
-}
+\code{dyad_feature} retains the historical two-column API (\code{dyad}, \code{feature}) but
+creates those strings only when queried. Protein and gene self-edges are also
+reconstructed virtually rather than persisted.
 }
 \examples{
 \dontrun{
 buildDyadFeatureMap(
-  duckdb_path = "data/Staphylococcus_argenteus/Sar.duckdb"
+  duckdb_path = "data/Staphylococcus_argenteus/work/Sar.duckdb"
 )
 }
 
