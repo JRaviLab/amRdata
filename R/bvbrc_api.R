@@ -154,9 +154,9 @@
 # to Good-quality WGS/Complete genome IDs, and write the `bac_data` table (used by
 # retrieveMetadata()'s summary). Uses the Data API instead of the Docker-built
 # cache, so retrieveMetadata(metadata_method = "api") needs no Docker.
-.resolveGenomeIDsApi <- function(base_dir = ".", user_bacs,
-                                 overwrite = FALSE, num_workers = 8L,
-                                 verbose = TRUE) {
+.resolveGenomeIDsApi <- function(base_dir = ".", user_bacs, 
+                                 num_workers = 8L, verbose = TRUE,
+                                 write_bac_data = TRUE) {
   sel <- "genome_name,taxon_id,species,strain"
   parts <- .bvbrcFutureMap(
     user_bacs,
@@ -209,18 +209,18 @@
   df <- df[grepl("^[0-9]+[.][0-9]+$", df$genome_id), , drop = FALSE]
   df <- df[!duplicated(df$genome_id), , drop = FALSE]
 
-  # write bac_data (genome.* columns), mirroring .retrieveQueryIDs()
-  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
-  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-  bac <- .bvbrcPrefixFill(
-    df,
-    c("genome_id", "genome_name", "taxon_id", "species", "strain"),
-    "genome"
-  )
-  DBI::dbWriteTable(con, "bac_data", as.data.frame(bac), overwrite = TRUE)
-  if (isTRUE(verbose)) {
-    message("  [api] resolved ", nrow(df), " genome IDs; wrote bac_data")
+  if (isTRUE(write_bac_data)) {
+    paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
+    con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path)
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+    bac <- .bvbrcPrefixFill(df,
+      c("genome_id", "genome_name", "taxon_id", "species", "strain"),
+        "genome"
+      )
+    DBI::dbWriteTable(con, "bac_data", as.data.frame(bac), overwrite = TRUE)
+    if (isTRUE(verbose)) {
+      message("  [api] resolved ", nrow(df), " genome IDs; wrote bac_data")
+    }
   }
   unique(df$genome_id)
 }

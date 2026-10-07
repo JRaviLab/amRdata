@@ -1,5 +1,555 @@
 ### Helpers for amRdata live in this script
 
+
+##########################
+#    Verbosity helper    #
+##########################
+
+#' Print or log a pipeline status message
+#'
+#' Writes a status message to the console when `verbose = TRUE` and optionally
+#' appends the same message to a log file. Logging is independent of console
+#' verbosity, so status information can still be retained during quiet runs.
+#'
+#' @param ... Components passed to `paste0()` to construct the message.
+#' @param verbose Logical. If TRUE, print the message to the console.
+#'   Default: `FALSE`.
+#' @param log_path Character or `NULL`. Optional path to a log file where the
+#'   message should be appended.
+#'
+#' @return Invisibly returns the constructed message.
+#' @keywords internal
+.amr_status <- function(
+    ...,
+    verbose = FALSE,
+    log_path = NULL
+) {
+  msg <- paste0(...)
+
+  if (isTRUE(verbose)) {
+    message(msg)
+  }
+
+  if (!is.null(log_path)) {
+    .log_write(log_path, msg)
+  }
+
+  invisible(msg)
+}
+
+#' Check whether optional progress reporting is available
+#'
+#' Progress reporting is enabled only when requested by the caller and the
+#' optional `progressr` package is installed.
+#'
+#' @param progress Logical. Whether progress reporting was requested.
+#'   Default: `TRUE`.
+#'
+#' @return A logical scalar indicating whether progress reporting can be used.
+#' @keywords internal
+.amr_progress_available <- function(progress = TRUE) {
+  isTRUE(progress) &&
+    requireNamespace(
+      "progressr",
+      quietly = TRUE
+    )
+}
+
+#' Select the progress handler used by amRdata
+#'
+#' Chooses the transient progress display used by amRdata. Status progress is
+#' shown as a compact spinner and message, while step progress also reports the
+#' current and total number of completed steps.
+#'
+#' Explicit user configuration through `progressr.handlers` takes precedence.
+#' Otherwise, the `progress` backend is preferred when available, followed by
+#' `cli`, with `progressr`'s text progress bar used as a fallback.
+#'
+#' @param type Character. Progress display type. `"status"` is used for
+#'   long-running pipeline stages without a meaningful step count; `"steps"`
+#'   reports completed steps as `current/total`.
+#'
+#' @return A `progressr` progression handler.
+#' @keywords internal
+.amr_progress_handler <- function(type = c("status", "steps")) {
+  type <- match.arg(type)
+
+  if (!is.null(getOption("progressr.handlers", NULL))) {
+    return(progressr::handlers())
+  }
+
+  if (requireNamespace("progress", quietly = TRUE)) {
+    if (identical(type, "steps")) {
+      return(
+        progressr::handler_progress(
+          format = ":spin :message :current/:total",
+          clear = TRUE
+        )
+      )
+    }
+
+    return(
+      progressr::handler_progress(
+        format = ":spin :message",
+        clear = TRUE
+      )
+    )
+  }
+
+  if (requireNamespace("cli", quietly = TRUE)) {
+    if (identical(type, "steps")) {
+      return(
+        progressr::handler_cli(
+          format = "{cli::pb_spin} {cli::pb_status} {cli::pb_current}/{cli::pb_total}",
+          format_done = "{cli::pb_status} {cli::pb_current}/{cli::pb_total}",
+          clear = TRUE
+        )
+      )
+    }
+
+    return(
+      progressr::handler_cli(
+        format = "{cli::pb_spin} {cli::pb_status}",
+        format_done = "{cli::pb_status}",
+        clear = TRUE
+      )
+    )
+  }
+
+  progressr::handler_txtprogressbar(clear = TRUE)
+}
+
+#' Evaluate an expression with optional progress reporting
+#'
+#' @keywords internal
+.amr_with_progress <- function(expr,
+                               progress = TRUE,
+                               type = c("status", "steps")) {
+  type <- match.arg(type)
+  expr <- substitute(expr)
+  env <- parent.frame()
+
+  if (!.amr_progress_available(progress)) {
+    return(eval(expr, envir = env))
+  }
+
+  progressr::with_progress(eval(expr, envir = env),
+                           handlers = .amr_progress_handler(type = type),
+                           cleanup = TRUE)
+}
+
+#' How much time left on that big download? This will tell you
+#'
+#' Downloads a file with `httr2`, including retries and an extended timeout for
+#' the large reference databases used by amRdata. When requested, `httr2`
+#' reports download progress.
+#'
+#' @param url Character. URL of the file to download.
+#' @param destfile Character. Local path where the downloaded file should be
+#'   written.
+#' @param progress Logical. Show download progress while transferring the file.
+#'   Default: `TRUE`.
+#'
+#' @return Invisibly returns `destfile`.
+#' @keywords internal
+.amr_download_file <- function(url, destfile, progress = TRUE) {
+  req <- httr2::request(url) |>
+    httr2::req_retry(
+      max_tries = 3L,
+      retry_on_failure = TRUE
+    ) |>
+    httr2::req_timeout(
+      max(3600, getOption("timeout"))
+    )
+
+  if (isTRUE(progress)) {
+    old_options <- options(
+      cli.progress_show_after = 0
+    )
+
+    on.exit(
+      options(old_options),
+      add = TRUE
+    )
+
+    req <- httr2::req_progress(
+      req,
+      type = "down"
+    )
+  }
+
+  httr2::req_perform(
+    req,
+    path = destfile
+  )
+
+  invisible(destfile)
+}
+
+
+#' Create an optional progressor
+#'
+#' Creates a `progressr` progressor when progress reporting is available.
+#' Otherwise, returns a no-op function so callers can issue progress updates
+#' without their own package-availability checks.
+#'
+#' @param steps Integer. Number of progress steps expected.
+#' @param progress Logical. Enable progress reporting when available.
+#'   Default: `TRUE`.
+#' @param label Character. Optional progressor label.
+#' @param message Character. Initial progress message.
+#' @param auto_finish Logical. If TRUE, automatically finish the progressor
+#'   when all steps have been reported. Default: `TRUE`.
+#'
+#' @return A progressor function, or a no-op function when progress reporting
+#'   is unavailable.
+#' @keywords internal
+.amr_progressor <- function(steps,
+                            progress = TRUE,
+                            label = NA_character_,
+                            message = character(),
+                            auto_finish = TRUE) {
+  if (!.amr_progress_available(progress)) {
+    return(function(...) {
+      invisible(NULL)
+    })
+  }
+
+  progressr::progressor(
+    steps = steps,
+    label = label,
+    message = message,
+    auto_finish = auto_finish,
+    on_exit = FALSE
+  )
+}
+
+
+#' Run one workflow stage with optional progress reporting
+#'
+#' Evaluates a workflow stage while displaying a tenmporary progress message.
+#' Permanent console output is controlled independently by `verbose`, and the
+#' stage message can optionally be written to a processing log.
+#'
+#' @param message Character scalar describing the workflow stage.
+#' @param expr Expression to evaluate.
+#' @param progress Logical. Show temporary progress while the expression runs.
+#'   Default: `TRUE`.
+#' @param verbose Logical. Print persistent start and completion messages.
+#'   Default: `FALSE`.
+#' @param log_path Character or `NULL`. Optional processing log path.
+#'
+#' @return The value returned by `expr`.
+#' @keywords internal
+.amr_progress_step <- function(message, expr,
+                               progress = TRUE,
+                               verbose = FALSE,
+                               log_path = NULL) {
+  if (missing(message) ||
+      length(message) != 1L ||
+      !nzchar(as.character(message))) {
+    stop("`message` must be a non-empty character scalar.", call. = FALSE)
+  }
+
+  expr <- substitute(expr)
+  env <- parent.frame()
+  message <- as.character(message)
+
+  .amr_status(
+    paste0(message, "..."),
+    verbose = verbose,
+    log_path = log_path
+  )
+
+  value <- if (!.amr_progress_available(progress)) {
+    eval(expr, envir = env)
+  } else {
+    .amr_with_progress({
+      p <- .amr_progressor(
+        steps = 1L,
+        progress = progress,
+        message = message
+      )
+
+      p(amount = 0, message = message)
+      value <- eval(expr, envir = env)
+      p(message = paste0(message, " complete"))
+      value
+    }, progress = progress)
+  }
+
+  .amr_status(
+    paste0(message, " complete."),
+    verbose = verbose,
+    log_path = log_path
+  )
+
+  value
+}
+
+##########################
+#  Package path helper   #
+##########################
+
+.amr_dataset_paths <- function(base_dir, user_bacs) {
+  base_dir <- normalizePath(base_dir, mustWork = FALSE)
+
+  dataset_name <- paste(user_bacs, collapse = "__") |>
+    stringr::str_replace_all("\\s+", "_") |>
+    stringr::str_replace_all("[^A-Za-z0-9._-]", "")
+
+  dataset_id <- .generateDBname(user_bacs)
+  root <- file.path(base_dir, "data", dataset_name)
+
+  list(
+    root = root,
+    genomes = file.path(root, "genomes"),
+    panaroo = file.path(root, "panaroo"),
+    cdhit = file.path(root, "cd-hit"),
+    hmmer = file.path(root, "hmmer"),
+
+    work = file.path(root, "work"),
+    working_duckdb = file.path(
+      root,
+      "work",
+      paste0(dataset_id, ".duckdb")
+    ),
+    panaroo_input = file.path(
+      root,
+      "work",
+      paste0(dataset_id, ".txt")
+    ),
+
+    orb = file.path(root, "orb"),
+    parquet_duckdb = file.path(
+      root,
+      "orb",
+      paste0(dataset_id, "_parquet.duckdb")
+    ),
+    processing_log = file.path(
+      root,
+      "orb",
+      paste0(dataset_id, "_processing.log")
+    ),
+
+    exports = file.path(root, "exports")
+  )
+}
+
+.amr_paths_from_duckdb <- function(duckdb_path) {
+  duckdb_path <- normalizePath(
+    duckdb_path,
+    mustWork = FALSE
+  )
+
+  work_dir <- dirname(duckdb_path)
+
+  if (!identical(basename(work_dir), "work")) {
+    stop(
+      "Working DuckDB must be located inside the dataset 'work/' directory."
+    )
+  }
+
+  root <- dirname(work_dir)
+
+  dataset_id <- tools::file_path_sans_ext(
+    basename(duckdb_path)
+  )
+
+  list(
+    root = root,
+
+    genomes = file.path(root, "genomes"),
+    panaroo = file.path(root, "panaroo"),
+    cdhit = file.path(root, "cd-hit"),
+    hmmer = file.path(root, "hmmer"),
+
+    work = work_dir,
+    working_duckdb = duckdb_path,
+    panaroo_input = file.path(
+      work_dir,
+      paste0(dataset_id, ".txt")
+    ),
+
+    orb = file.path(root, "orb"),
+    parquet_duckdb = file.path(
+      root,
+      "orb",
+      paste0(dataset_id, "_parquet.duckdb")
+    ),
+    processing_log = file.path(
+      root,
+      "orb",
+      paste0(dataset_id, "_processing.log")
+    ),
+
+    exports = file.path(root, "exports")
+  )
+}
+
+
+.amr_paths_from_dataset_db <- function(dataset_path) {
+  dataset_path <- normalizePath(
+    dataset_path,
+    mustWork = FALSE
+  )
+
+  container_dir <- dirname(dataset_path)
+  container_name <- basename(container_dir)
+
+  if (!container_name %in% c("work", "orb")) {
+    stop(
+      "Dataset DuckDB must be located inside the dataset 'work/' or 'orb/' directory."
+    )
+  }
+
+  filename <- basename(dataset_path)
+
+  if (
+    identical(container_name, "orb") &&
+    !grepl("_parquet\\.duckdb$", filename)
+  ) {
+    stop(
+      "ORB DuckDB must use the '<dataset>_parquet.duckdb' filename."
+    )
+  }
+
+  dataset_id <- tools::file_path_sans_ext(
+    filename
+  )
+
+  dataset_id <- sub(
+    "_parquet$",
+    "",
+    dataset_id
+  )
+
+  root <- dirname(container_dir)
+
+  list(
+    root = root,
+
+    genomes = file.path(root, "genomes"),
+    panaroo = file.path(root, "panaroo"),
+    cdhit = file.path(root, "cd-hit"),
+    hmmer = file.path(root, "hmmer"),
+
+    work = file.path(root, "work"),
+    working_duckdb = file.path(
+      root,
+      "work",
+      paste0(dataset_id, ".duckdb")
+    ),
+    panaroo_input = file.path(
+      root,
+      "work",
+      paste0(dataset_id, ".txt")
+    ),
+
+    orb = file.path(root, "orb"),
+    parquet_duckdb = file.path(
+      root,
+      "orb",
+      paste0(dataset_id, "_parquet.duckdb")
+    ),
+    processing_log = file.path(
+      root,
+      "orb",
+      paste0(dataset_id, "_processing.log")
+    ),
+
+    exports = file.path(root, "exports")
+  )
+}
+
+.amr_connect_dataset_db <- function(
+    dataset_path,
+    read_only = FALSE
+) {
+  dataset_path <- normalizePath(
+    dataset_path,
+    mustWork = isTRUE(read_only)
+  )
+
+  paths <- .amr_paths_from_dataset_db(
+    dataset_path
+  )
+
+  con <- DBI::dbConnect(
+    duckdb::duckdb(),
+    dbdir = dataset_path,
+    read_only = read_only
+  )
+
+  if (identical(
+    basename(dirname(dataset_path)),
+    "orb"
+  )) {
+    orb_dir <- normalizePath(
+      paths$orb,
+      mustWork = TRUE
+    )
+
+    tryCatch(
+      {
+        DBI::dbExecute(
+          con,
+          paste(
+            "SET file_search_path =",
+            DBI::dbQuoteString(
+              con,
+              orb_dir
+            )
+          )
+        )
+      },
+      error = function(e) {
+        try(
+          DBI::dbDisconnect(con),
+          silent = TRUE
+        )
+
+        stop(
+          "Could not configure ORB Parquet search path: ",
+          conditionMessage(e),
+          call. = FALSE
+        )
+      }
+    )
+  }
+
+  con
+}
+
+
+### Ye olde compatibility helper
+#' Build the working DuckDB path for a user-bacs selection
+#'
+#' Compatibility wrapper around `.amr_dataset_paths()`.
+#' Places the per-selection working database at:
+#'   <base_dir>/data/<dataset>/work/<abbrev>.duckdb
+#'
+#' New code should prefer `.amr_dataset_paths()` when it needs paths other
+#' than the working DuckDB!
+#' @keywords internal
+.buildDBpath <- function(base_dir = ".", user_bacs) {
+  paths <- .amr_dataset_paths(
+    base_dir = base_dir,
+    user_bacs = user_bacs
+  )
+
+  dir.create(
+    paths$work,
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+
+  list(
+    db_dir = paths$root,
+    db_path = paths$working_duckdb
+  )
+}
+
 ##########################
 # CPU allocation helpers #
 ##########################
@@ -149,20 +699,38 @@
   if (!nrow(hits)) NULL else hits[1, , drop = FALSE]
 }
 
-# Return the cached local path for a named BV-BRC resource. When create = TRUE,
-# reserve a new path in BFC for the caller to populate
-.amr_bfc_bvbrc_path <- function(create = FALSE, rname = "amRdata_bvbrc_bacterial_metadata") {
+# Return the BFC-managed path for the shared BV-BRC CLI metadata DuckDB.
+#
+# If the resource has already been registered but the DuckDB has not yet been
+# created, create = TRUE returns the existing reserved path rather than replacing
+# the BFC record
+.amr_bfc_bvbrc_path <- function(create = FALSE, rname = .amr_bfc_bvbrc_rname()) {
   bfc <- .amr_bfc()
   hit <- .amr_bfc_find(bfc, rname)
 
   if (!is.null(hit)) {
-    path <- tryCatch(
-      BiocFileCache::bfcrpath(bfc, rids = hit$rid[[1]], exact = TRUE),
-      error = function(e) NA_character_
-    )
+    path <- as.character(hit$rpath[[1]])
 
-    if (length(path) == 1L && file.exists(path)) {
-      return(normalizePath(path, mustWork = TRUE))
+    if (length(path) == 1L &&
+        !is.na(path) &&
+        nzchar(path)) {
+      # BFC stores "relative" resources relative to its cache directory.
+      if (identical(as.character(hit$rtype[[1]]), "relative")) {
+        path <- file.path(BiocFileCache::bfccache(bfc), path)
+      }
+
+      path <- normalizePath(path, mustWork = FALSE)
+
+      if (file.exists(path)) {
+        return(normalizePath(path, mustWork = TRUE))
+      }
+
+      # The registry entry can exist before the DuckDB itself is written.
+      if (isTRUE(create)) {
+        return(path)
+      }
+
+      return(NULL)
     }
 
     if (isTRUE(create)) {
@@ -187,12 +755,65 @@
   normalizePath(path, mustWork = FALSE)
 }
 
+# Remove the shared BV-BRC CLI metadata DuckDB and its BFC registration
+.amr_bfc_remove_bvbrc <- function(rname = .amr_bfc_bvbrc_rname()) {
+  bfc <- .amr_bfc()
+
+  hit <- .amr_bfc_find(bfc, rname)
+
+  if (is.null(hit)) {
+    return(invisible(list(
+      registered = FALSE, path = NULL
+    )))
+  }
+
+  path <- as.character(hit$rpath[[1]])
+
+  if (length(path) == 1L &&
+      !is.na(path) &&
+      nzchar(path)) {
+    if (identical(as.character(hit$rtype[[1]]), "relative")) {
+      path <- file.path(BiocFileCache::bfccache(bfc), path)
+    }
+
+    path <- normalizePath(path, mustWork = FALSE)
+  } else {
+    path <- NULL
+  }
+
+  # Remove the resource from BiocFileCache
+  BiocFileCache::bfcremove(bfc, hit$rid[[1]])
+
+  if (!is.null(.amr_bfc_find(bfc, rname))) {
+    stop("BV-BRC metadata could not be removed from the BiocFileCache registry.",
+         call. = FALSE)
+  }
+
+  # Defensive cleanup in case anything remains on disk
+  if (!is.null(path)) {
+    leftovers <- c(path, paste0(path, ".wal"))
+
+    leftovers <- leftovers[file.exists(leftovers)]
+
+    if (length(leftovers)) {
+      unlink(leftovers, force = TRUE)
+    }
+  }
+
+  invisible(list(registered = TRUE, path = path))
+}
+
 # BFC name for a prepared HMMER database
 .amr_bfc_hmmer_rname <- function(database, component = NULL) {
   parts <- c("amR_hmmer", database, component)
   parts <- parts[!is.na(parts) & nzchar(parts)]
 
   paste(parts, collapse = "_")
+}
+
+# Stable BFC resource name for the shared BV-BRC CLI metadata DuckDB
+.amr_bfc_bvbrc_rname <- function() {
+  "amRdata_bvbrc_bacterial_metadata"
 }
 
 # Register a prepared HMMER database with BFC
@@ -284,6 +905,373 @@
   invisible(hit$rid[[1]])
 }
 
+# Find datasets that successfully completed prepareGenomes() and still retain
+# their working DuckDB for downstream feature processing.
+.amr_processing_datasets <- function() {
+  bfc <- .amr_bfc()
+
+  resources <- BiocFileCache::bfcquery(
+    bfc,
+    query = "^amR_dataset_manifest_",
+    field = "rname",
+    exact = FALSE
+  )
+
+  empty_result <- tibble::tibble(
+    label = character(),
+    dataset_id = character(),
+    duckdb_path = character(),
+    manifest_path = character(),
+    modified = as.POSIXct(character())
+  )
+
+  if (!nrow(resources)) {
+    return(empty_result)
+  }
+
+  candidates <- purrr::map_dfr(
+    seq_len(nrow(resources)),
+    function(i) {
+      manifest_path <- as.character(
+        resources$rpath[[i]]
+      )
+
+      if (
+        is.na(manifest_path) ||
+        !nzchar(manifest_path) ||
+        !file.exists(manifest_path)
+      ) {
+        return(NULL)
+      }
+
+      manifest <- tryCatch(
+        jsonlite::read_json(
+          manifest_path,
+          simplifyVector = FALSE
+        ),
+        error = function(e) NULL
+      )
+
+      if (is.null(manifest)) {
+        return(NULL)
+      }
+
+      valid_manifest <- tryCatch(
+        {
+          .manifest_validate(manifest)
+          TRUE
+        },
+        error = function(e) FALSE
+      )
+
+      if (!isTRUE(valid_manifest)) {
+        return(NULL)
+      }
+
+      prepare_complete <- any(
+        purrr::map_lgl(
+          manifest$runs %||% list(),
+          function(run) {
+            if (!identical(
+              run$status,
+              "success"
+            )) {
+              return(FALSE)
+            }
+
+            any(
+              purrr::map_lgl(
+                run$stages %||% list(),
+                function(stage) {
+                  identical(
+                    stage$name,
+                    "build_genome_file_table"
+                  ) &&
+                    identical(
+                      stage$status,
+                      "success"
+                    )
+                }
+              )
+            )
+          }
+        )
+      )
+
+      if (!prepare_complete) {
+        return(NULL)
+      }
+
+      duckdb_path <- as.character(
+        manifest$dataset$duckdb %||% ""
+      )
+
+      if (
+        !nzchar(duckdb_path) ||
+        !file.exists(duckdb_path)
+      ) {
+        return(NULL)
+      }
+
+      duckdb_path <- normalizePath(
+        duckdb_path,
+        mustWork = TRUE
+      )
+
+      valid_path <- tryCatch(
+        {
+          .amr_paths_from_duckdb(
+            duckdb_path
+          )
+          TRUE
+        },
+        error = function(e) FALSE
+      )
+
+      if (!valid_path) {
+        return(NULL)
+      }
+
+      user_bacs <- unlist(
+        manifest$dataset$selection$user_bacs %||% character(),
+        use.names = FALSE
+      )
+
+      label <- if (length(user_bacs)) {
+        paste(
+          user_bacs,
+          collapse = ", "
+        )
+      } else {
+        basename(
+          dirname(
+            dirname(duckdb_path)
+          )
+        )
+      }
+
+      tibble::tibble(
+        label = label,
+        dataset_id = as.character(
+          manifest$dataset_id
+        ),
+        duckdb_path = duckdb_path,
+        manifest_path = normalizePath(
+          manifest_path,
+          mustWork = TRUE
+        ),
+        modified = file.info(
+          manifest_path
+        )$mtime
+      )
+    }
+  )
+
+  if (!nrow(candidates)) {
+    return(empty_result)
+  }
+
+  candidates |>
+    dplyr::arrange(
+      dplyr::desc(modified)
+    ) |>
+    dplyr::distinct(
+      duckdb_path,
+      .keep_all = TRUE
+    )
+}
+
+# Find amRdata datasets that are still eligible for cleanup, including datasets
+# whose mutable work/ directory has already been removed. Cleanup discovery is
+# based on the retained registered manifest rather than the working DuckDB.
+.amr_cleanup_datasets <- function() {
+  bfc <- .amr_bfc()
+
+  resources <- BiocFileCache::bfcquery(
+    bfc,
+    query = "^amR_dataset_manifest_",
+    field = "rname",
+    exact = FALSE
+  )
+
+  empty_result <- tibble::tibble(
+    label = character(),
+    dataset_id = character(),
+    dataset_path = character(),
+    manifest_path = character(),
+    modified = as.POSIXct(character())
+  )
+
+  if (!nrow(resources)) {
+    return(empty_result)
+  }
+
+  candidates <- purrr::map_dfr(
+    seq_len(nrow(resources)),
+    function(i) {
+      manifest_path <- as.character(
+        resources$rpath[[i]]
+      )
+
+      if (
+        is.na(manifest_path) ||
+        !nzchar(manifest_path) ||
+        !file.exists(manifest_path)
+      ) {
+        return(NULL)
+      }
+
+      manifest <- tryCatch(
+        jsonlite::read_json(
+          manifest_path,
+          simplifyVector = FALSE
+        ),
+        error = function(e) NULL
+      )
+
+      if (is.null(manifest)) {
+        return(NULL)
+      }
+
+      valid_manifest <- tryCatch(
+        {
+          .manifest_validate(manifest)
+          TRUE
+        },
+        error = function(e) FALSE
+      )
+
+      if (
+        !isTRUE(valid_manifest) ||
+        !identical(
+          manifest$manifest_type %||% "",
+          "amR_dataset"
+        )
+      ) {
+        return(NULL)
+      }
+
+      manifest_path <- normalizePath(
+        manifest_path,
+        mustWork = TRUE
+      )
+
+      orb_dir <- dirname(manifest_path)
+      dataset_path <- dirname(orb_dir)
+      data_dir <- dirname(dataset_path)
+
+      # Match the directory structure that removeLocalFiles() itself requires.
+      if (
+        !identical(basename(orb_dir), "orb") ||
+        !identical(basename(data_dir), "data") ||
+        !dir.exists(dataset_path)
+      ) {
+        return(NULL)
+      }
+
+      dataset_id <- as.character(
+        manifest$dataset_id %||% ""
+      )
+
+      if (!nzchar(dataset_id)) {
+        return(NULL)
+      }
+
+      user_bacs <- unlist(
+        manifest$dataset$selection$user_bacs %||% character(),
+        use.names = FALSE
+      )
+
+      label <- if (length(user_bacs)) {
+        paste(
+          user_bacs,
+          collapse = ", "
+        )
+      } else {
+        basename(dataset_path)
+      }
+
+      tibble::tibble(
+        label = label,
+        dataset_id = dataset_id,
+        dataset_path = normalizePath(
+          dataset_path,
+          mustWork = TRUE
+        ),
+        manifest_path = manifest_path,
+        modified = file.info(
+          manifest_path
+        )$mtime
+      )
+    }
+  )
+
+  if (!nrow(candidates)) {
+    return(empty_result)
+  }
+
+  candidates |>
+    dplyr::arrange(
+      dplyr::desc(modified)
+    ) |>
+    dplyr::distinct(
+      dataset_path,
+      .keep_all = TRUE
+    )
+}
+
+# Interactive selector function thing, very cool
+.amr_select_processing_dataset <- function() {
+  if (!interactive()) {
+    stop(
+      "`duckdb_path` must be supplied in non-interactive sessions.",
+      call. = FALSE
+    )
+  }
+
+  candidates <- .amr_processing_datasets()
+
+  if (!nrow(candidates)) {
+    stop(
+      "No prepared amRdata datasets were found.\n",
+      "Run prepareGenomes() first.",
+      call. = FALSE
+    )
+  }
+
+  if (nrow(candidates) == 1L) {
+    message(
+      "Using prepared dataset: ",
+      candidates$label[[1]]
+    )
+
+    return(
+      candidates$duckdb_path[[1]]
+    )
+  }
+
+  choices <- paste0(
+    candidates$label,
+    " [",
+    candidates$dataset_id,
+    "]"
+  )
+
+  selection <- utils::menu(
+    choices = choices,
+    title = "Select an amRdata dataset to process:"
+  )
+
+  if (selection == 0L) {
+    stop(
+      "Dataset selection cancelled.",
+      call. = FALSE
+    )
+  }
+
+  candidates$duckdb_path[[selection]]
+}
+
 
 #' Helps normalize Docker paths
 #' @keywords internal
@@ -337,9 +1325,15 @@
     if (grepl("^#", line)) {
       return(line)
     }
-    parts <- strsplit(line, "[\t ]", perl = TRUE)[[1]]
+    parts <- strsplit(line, "[\\t ]", perl = TRUE)[[1]]
     if (length(parts) >= 9) {
-      paste(c(parts[1:8], paste(parts[9:length(parts)], collapse = " ")), collapse = "\t")
+      paste(
+        c(
+          parts[1:8],
+          paste(parts[9:length(parts)], collapse = " ")
+        ),
+        collapse = "\t"
+      )
     } else {
       line
     }
@@ -353,10 +1347,36 @@
 #' Internal worker used by `checkDataAvailability()`. Each call resolves and
 #' summarizes a taxon independently.
 #'
-#' @param user_bac Character scalar. Taxon ID or species name.
-#' @inheritParams checkDataAvailability
+#' Summarize BV-BRC data availability for one taxon
 #'
-#' @return A one-row tibble containing genome and AMR availability statistics.
+#' Resolves one taxon to available BV-BRC genomes and summarizes genome
+#' metadata, AMR phenotype availability, collection years, genome statistics,
+#' and the number of genomes passing the requested metadata QC thresholds.
+#'
+#' Metadata can be retrieved through the BV-BRC Data API or the legacy CLI/cache
+#' workflow.
+#'
+#' @param user_bac Character scalar. Taxon ID or species name to summarize.
+#' @param base_dir Character. Project root. Default: `"."`.
+#' @param metadata_method Character. Metadata backend, either `"api"` or
+#'   `"cli"`.
+#' @param max_checkm_contam Numeric. Maximum allowed CheckM contamination
+#'   percentage. Default: `5`.
+#' @param min_checkm_complete Numeric. Minimum allowed CheckM completeness
+#'   percentage. Default: `95`.
+#' @param gc_deviations Numeric or `NULL`. Optional maximum standard deviations
+#'   from median GC content.
+#' @param length_deviations Numeric or `NULL`. Optional maximum standard
+#'   deviations from median genome length.
+#' @param cds_deviations Numeric or `NULL`. Optional maximum standard deviations
+#'   from median CDS count.
+#' @param verbose Logical. Print persistent metadata-query messages.
+#'   Default: `TRUE`.
+#' @param write_bac_data Logical. If TRUE, allow resolved metadata to be written
+#'   to the per-selection `bac_data` table. Default: `FALSE`.
+#'
+#' @return A one-row tibble summarizing genome, AMR, QC, and collection metadata
+#'   availability for the requested taxon.
 #' @keywords internal
 .checkDataPerTaxon <- function(
     user_bac,
@@ -367,7 +1387,8 @@
     gc_deviations = NULL,
     length_deviations = NULL,
     cds_deviations = NULL,
-    verbose = TRUE
+    verbose = TRUE,
+    write_bac_data = FALSE
 ) {
   metadata_method <- match.arg(metadata_method)
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
@@ -424,13 +1445,15 @@
     .resolveGenomeIDsApi(
       base_dir = base_dir,
       user_bacs = user_bac,
-      verbose = verbose
+      verbose = verbose,
+      write_bac_data = write_bac_data
     )
   } else {
     # Legacy CLI shenanigans
     bac_input_data <- .retrieveCustomQuery(
       base_dir = base_dir,
-      user_bacs = user_bac
+      user_bacs = user_bac,
+      verbose = verbose
     )
 
     if (is.null(bac_input_data) || nrow(bac_input_data) == 0L) {
@@ -498,7 +1521,6 @@
   # Fetch genome metadata
   genome_fields <- paste(
     c(
-      "genome_id",
       "genome_name",
       "species",
       "taxon_id",
@@ -582,7 +1604,6 @@
   } else {
     drug_fields <- paste(
       c(
-        "genome_id",
         "antibiotic",
         "evidence",
         "laboratory_typing_method",
@@ -1140,28 +2161,6 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   manifest_state
 }
 
-# Backfill fields added after a manifest may have been written, so manifests
-# from before manifest_type/manifest_id/artifacts existed can still resume.
-.manifest_migrate_legacy <- function(manifest, manifest_path) {
-  if (!is.list(manifest) || !identical(as.integer(manifest$schema_version %||% NA), 1L)) {
-    return(manifest)
-  }
-
-  if (is.null(manifest$manifest_type)) {
-    manifest$manifest_type <- "amR_dataset"
-  }
-
-  if (is.null(manifest$manifest_id)) {
-    manifest$manifest_id <- tools::file_path_sans_ext(basename(manifest_path))
-  }
-
-  if (is.null(manifest$artifacts)) {
-    manifest$artifacts <- list()
-  }
-
-  manifest
-}
-
 # Manifest schema validation helper
 .manifest_validate <- function(manifest) {
   if (!is.list(manifest)) {
@@ -1415,6 +2414,36 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   invisible(log_path)
 }
 
+.log_tool_output <- function(log_path, tool, output) {
+  if (is.null(log_path) ||
+      !length(output)) {
+    return(invisible(log_path))
+  }
+
+  .log_write(log_path, "----- ", tool, " output -----")
+
+  purrr::walk(as.character(output), ~ .log_write(log_path, .x))
+
+  .log_write(log_path, "----- end ", tool, " output -----")
+
+  invisible(log_path)
+}
+
+
+.log_or_message <- function(log_path = NULL,
+                            verbose = TRUE,
+                            ...) {
+  msg <- paste0(...)
+
+  if (!is.null(log_path)) {
+    .log_write(log_path, msg)
+  } else if (isTRUE(verbose)) {
+    message(msg)
+  }
+
+  invisible(msg)
+}
+
 
 #' Find the most recent recorded attempt of a named stage in a manifest run
 #'
@@ -1478,13 +2507,30 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
 # To distinguish multiple manifests in the same bug directory
 .manifest_find_latest <- function(
-    duckdb_path,
+    dataset_path,
     require_success = TRUE
 ) {
-  manifest_dir <- dirname(normalizePath(
-    duckdb_path,
+  dataset_path <- normalizePath(
+    dataset_path,
     mustWork = FALSE
-  ))
+  )
+
+  container_dir <- dirname(dataset_path)
+
+  if (!basename(container_dir) %in% c("work", "orb")) {
+    stop(
+      "Dataset files must be located inside 'work/' or 'orb/'."
+    )
+  }
+
+  manifest_dir <- file.path(
+    dirname(container_dir),
+    "orb"
+  )
+
+  if (!dir.exists(manifest_dir)) {
+    return(NULL)
+  }
 
   manifests <- list.files(
     manifest_dir,
@@ -1497,7 +2543,10 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   }
 
   manifests <- manifests[
-    order(file.info(manifests)$mtime, decreasing = TRUE)
+    order(
+      file.info(manifests)$mtime,
+      decreasing = TRUE
+    )
   ]
 
   if (!isTRUE(require_success)) {
@@ -1506,7 +2555,10 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
   for (path in manifests) {
     manifest <- tryCatch(
-      jsonlite::read_json(path, simplifyVector = FALSE),
+      jsonlite::read_json(
+        path,
+        simplifyVector = FALSE
+      ),
       error = function(e) NULL
     )
 
@@ -1514,10 +2566,12 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
       next
     }
 
-    if (any(purrr::map_lgl(
-      manifest$runs,
-      ~ identical(.x$status, "success")
-    ))) {
+    if (any(
+      purrr::map_lgl(
+        manifest$runs,
+        ~ identical(.x$status, "success")
+      )
+    )) {
       return(path)
     }
   }
@@ -1553,11 +2607,6 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     manifest_path,
     simplifyVector = FALSE
   )
-
-  # Manifests written before manifest_type/manifest_id/artifacts existed are
-  # still valid amR dataset manifests; backfill so .manifest_validate() (and
-  # amRml's readiness check) don't treat them as foreign/corrupt.
-  manifest <- .manifest_migrate_legacy(manifest, manifest_path)
 
   # Is this manifest any good?
   .manifest_validate(manifest)
@@ -1774,7 +2823,10 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     verbose = TRUE
 ) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
-  parquet_dir <- dirname(duckdb_path)
+
+  paths <- .amr_paths_from_dataset_db(duckdb_path)
+
+  parquet_dir <- paths$orb
 
   manifest_path <- .manifest_find_latest(duckdb_path)
 
@@ -1849,9 +2901,9 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     dbdir = ":memory:"
   )
 
-  duckdb_temp_dir <- file.path(
-    parquet_dir,
-    ".duckdb_temp"
+  duckdb_temp_dir <- tempfile(
+    pattern = "amRdata_duckdb_",
+    tmpdir = tempdir()
   )
 
   dir.create(
@@ -2134,6 +3186,272 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     result_sql
   ) |>
     tibble::as_tibble()
+}
+
+.amr_resolve_export_orb <- function(path = NULL) {
+
+  resolve_working_db <- function(duckdb_path) {
+    paths <- .amr_paths_from_duckdb(
+      duckdb_path
+    )
+
+    if (!file.exists(paths$parquet_duckdb)) {
+      return(NA_character_)
+    }
+
+    normalizePath(
+      paths$parquet_duckdb,
+      mustWork = TRUE
+    )
+  }
+
+    if (is.null(path)) {
+
+    bfc <- .amr_bfc()
+
+    resources <- BiocFileCache::bfcquery(
+      bfc,
+      query = "^amR_dataset_manifest_",
+      field = "rname",
+      exact = FALSE
+    )
+
+    if (!nrow(resources)) {
+      stop(
+        "No completed amRdata ORBs were found.",
+        call. = FALSE
+      )
+    }
+
+    candidates <- purrr::map_dfr(
+      seq_len(nrow(resources)),
+      function(i) {
+
+        manifest_path <- as.character(
+          resources$rpath[[i]]
+        )
+
+        if (
+          is.na(manifest_path) ||
+          !nzchar(manifest_path) ||
+          !file.exists(manifest_path)
+        ) {
+          return(NULL)
+        }
+
+        manifest <- tryCatch(
+          jsonlite::read_json(
+            manifest_path,
+            simplifyVector = FALSE
+          ),
+          error = function(e) NULL
+        )
+
+        if (is.null(manifest)) {
+          return(NULL)
+        }
+
+        valid_manifest <- tryCatch(
+          {
+            .manifest_validate(manifest)
+            TRUE
+          },
+          error = function(e) FALSE
+        )
+
+        if (!isTRUE(valid_manifest)) {
+          return(NULL)
+        }
+
+        artifact <- manifest$artifacts$amRml_input %||% NULL
+
+        if (
+          is.null(artifact) ||
+          !identical(
+            artifact$status,
+            "ready"
+          )
+        ) {
+          return(NULL)
+        }
+
+        orb_dir <- dirname(
+          normalizePath(
+            manifest_path,
+            mustWork = TRUE
+          )
+        )
+
+        orb_databases <- list.files(
+          orb_dir,
+          pattern = "_parquet\\.duckdb$",
+          full.names = TRUE
+        )
+
+        if (length(orb_databases) != 1L) {
+          return(NULL)
+        }
+
+        orb_path <- normalizePath(
+          orb_databases[[1]],
+          mustWork = TRUE
+        )
+
+        user_bacs <- unlist(
+          manifest$dataset$selection$user_bacs %||% character(),
+          use.names = FALSE
+        )
+
+        label <- if (length(user_bacs)) {
+          paste(
+            user_bacs,
+            collapse = ", "
+          )
+        } else {
+          basename(
+            dirname(
+              orb_dir
+            )
+          )
+        }
+
+        tibble::tibble(
+          label = label,
+          dataset_id = as.character(
+            manifest$dataset_id
+          ),
+          orb_path = orb_path,
+          manifest_path = normalizePath(
+            manifest_path,
+            mustWork = TRUE
+          ),
+          modified = file.info(
+            manifest_path
+          )$mtime
+        )
+      }
+    )
+
+    if (!nrow(candidates)) {
+      stop(
+        "No completed amRdata ORBs were found.",
+        call. = FALSE
+      )
+    }
+
+    candidates <- candidates |>
+      dplyr::arrange(
+        dplyr::desc(modified)
+      ) |>
+      dplyr::distinct(
+        orb_path,
+        .keep_all = TRUE
+      )
+
+    if (nrow(candidates) == 1L) {
+      return(
+        candidates$orb_path[[1]]
+      )
+    }
+
+    if (!interactive()) {
+      stop(
+        "`duckdb_path` must be supplied when multiple ORBs are available ",
+        "in a non-interactive session.",
+        call. = FALSE
+      )
+    }
+
+    choices <- paste0(
+      candidates$label,
+      " [",
+      candidates$dataset_id,
+      "]"
+    )
+
+    selection <- utils::menu(
+      choices = choices,
+      title = "Select an amRdata dataset to export:"
+    )
+
+    if (selection == 0L) {
+      stop(
+        "Dataset selection cancelled.",
+        call. = FALSE
+      )
+    }
+
+    return(
+      candidates$orb_path[[selection]]
+    )
+  }
+
+  path <- normalizePath(
+    path,
+    mustWork = TRUE
+  )
+
+  if (dir.exists(path)) {
+
+    orb_databases <- list.files(
+      path,
+      pattern = "_parquet\\.duckdb$",
+      full.names = TRUE
+    )
+
+    if (!length(orb_databases)) {
+      stop(
+        "No ORB DuckDB was found in: ",
+        path,
+        call. = FALSE
+      )
+    }
+
+    if (length(orb_databases) > 1L) {
+      stop(
+        "Multiple ORB DuckDB files were found in: ",
+        path,
+        call. = FALSE
+      )
+    }
+
+    return(
+      normalizePath(
+        orb_databases[[1]],
+        mustWork = TRUE
+      )
+    )
+  }
+
+  paths <- .amr_paths_from_dataset_db(
+    path
+  )
+
+  container <- basename(
+    dirname(path)
+  )
+
+  if (identical(container, "orb")) {
+    return(path)
+  }
+
+  if (
+    identical(container, "work") &&
+    file.exists(paths$parquet_duckdb)
+  ) {
+    return(
+      normalizePath(
+        paths$parquet_duckdb,
+        mustWork = TRUE
+      )
+    )
+  }
+
+  stop(
+    "No completed ORB could be resolved from: ",
+    path,
+    call. = FALSE
+  )
 }
 
 #########################

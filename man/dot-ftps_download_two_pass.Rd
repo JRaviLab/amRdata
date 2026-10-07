@@ -2,21 +2,46 @@
 % Please edit documentation in R/data_curation.R
 \name{.ftps_download_two_pass}
 \alias{.ftps_download_two_pass}
-\title{Helps manage FTPS downloading from BV-BRC, trying a quick download first, and
-if that fails, trying a longer timeout 2nd pass at the end in case it was a
-hiccup. If the 2nd pass fails, log and give up on that file.}
+\title{Download BV-BRC genomes using a two-pass FTPS strategy}
 \usage{
 .ftps_download_two_pass(
   genome_ids,
   out_dir,
   workers_first = 8L,
   workers_second = 8L,
-  log_file = NULL
+  log_file = NULL,
+  verbose = TRUE,
+  progress = TRUE
 )
 }
+\arguments{
+\item{genome_ids}{Character vector of BV-BRC genome IDs.}
+
+\item{out_dir}{Character. Directory where genome files should be written.}
+
+\item{workers_first}{Integer. Number of parallel workers used for the first
+download pass. Default: \code{8}.}
+
+\item{workers_second}{Integer. Number of parallel workers used for retry
+downloads. Default: \code{8}.}
+
+\item{log_file}{Character or \code{NULL}. Optional path for FTPS status and
+failure logging.}
+
+\item{verbose}{Logical. Print persistent FTPS status messages.
+Default: \code{TRUE}.}
+
+\item{progress}{Logical. Show transient genome download counters.
+Default: \code{TRUE}.}
+}
+\value{
+Character vector of genome IDs with complete file sets after both
+download passes.
+}
 \description{
-Helps manage FTPS downloading from BV-BRC, trying a quick download first, and
-if that fails, trying a longer timeout 2nd pass at the end in case it was a
-hiccup. If the 2nd pass fails, log and give up on that file.
+Downloads genome file sets in parallel using a short first-pass timeout.
+Genomes that fail the first pass are retried with a longer timeout before
+being excluded as real failures. Optional progress reports completed genome
+attempts rather than individual file transfers.
 }
 \keyword{internal}

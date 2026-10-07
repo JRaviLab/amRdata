@@ -12,7 +12,7 @@ prepareGenomes(
   metadata_method = c("api", "cli"),
   overwrite = FALSE,
   num_workers = 8L,
-  chunk_size = 50L,
+  chunk_size = 10L,
   image = "danylmb/bvbrc:5.3",
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
   max_checkm_contam = 5,
@@ -23,7 +23,8 @@ prepareGenomes(
   export_tables = FALSE,
   load_tables = FALSE,
   debug = FALSE,
-  verbose = TRUE
+  verbose = FALSE,
+  progress = getOption("amRdata.progress", TRUE)
 )
 }
 \arguments{
@@ -77,12 +78,18 @@ return them in \code{data}. Default FALSE.}
 
 \item{debug}{Logical. If TRUE, keep QC columns in metadata tables.}
 
-\item{verbose}{Logical. Print progress messages. Default TRUE.}
+\item{verbose}{Logical. Print persistent console status messages. Default FALSE.}
+
+\item{progress}{Logical. If \code{TRUE}, show transient progress updates for
+long-running steps without permanently printing them to the console when
+the \code{progressr} package is available. Set to \code{FALSE} to disable progress
+updates. Defaults to \code{TRUE}, unless overridden by the \code{amRdata.progress}
+option.}
 }
 \value{
 A list (the output of \code{genomeList()}), containing:
 \itemize{
-\item \code{duckdbConnection}  Active DBI connection to the per-bug DuckDB
+\item \code{duckdb_path}  Path to the per-bug DuckDB
 \item \code{table_name}        \code{"files"}
 }
 }

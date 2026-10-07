@@ -2,7 +2,7 @@
 % Please edit documentation in R/data_curation.R
 \name{.updateBVBRCdata}
 \alias{.updateBVBRCdata}
-\title{Update BV-BRC metadata in DuckDB}
+\title{Update the cached BV-BRC CLI metadata database}
 \usage{
 .updateBVBRCdata(
   base_dir = ".",
@@ -26,7 +26,17 @@ A tibble containing BV-BRC bacterial genome metadata.
 }
 \description{
 Fetches bacterial genome metadata from BV-BRC using the BV-BRC CLI and stores
-it in a BiocFileCache-managed DuckDB database.
-If the table exists and is older than \code{max_age_days}, it refreshes; otherwise,
-loads the existing table. BV-BRC column names are preserved exactly.
+it in a shared BiocFileCache-managed DuckDB database.
+}
+\details{
+If the metadata table exists and is older than \code{max_age_days}, it is refreshed;
+otherwise, the existing table is loaded. BV-BRC column names are preserved
+exactly.
+
+This cache is used only by the \code{"cli"} metadata backend. The \code{"api"} backend
+queries BV-BRC directly and does not use or need this DuckDB.
+
+The cached DuckDB can be removed with
+\code{removeLocalDatabases("BV-BRC")}. It will be recreated automatically the next
+time the CLI metadata backend is used.
 }

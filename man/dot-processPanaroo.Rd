@@ -2,24 +2,28 @@
 % Please edit documentation in R/data_processing.R
 \name{.processPanaroo}
 \alias{.processPanaroo}
-\title{processPanaroo()}
+\title{Run one Panaroo pangenome job}
 \usage{
 .processPanaroo(
   batch_input,
   output_path,
+  mount_root,
   core_threshold,
   len_dif_percent,
   cluster_threshold,
   family_seq_identity,
   panaroo_threads_per_job,
   refind_mode = c("off", "default", "strict"),
-  verbose = TRUE
+  log_path = NULL
 )
 }
 \arguments{
 \item{batch_input}{A series of genome IDs for input}
 
 \item{output_path}{Character scalar. Base directory for Panaroo outputs and temporary files.}
+
+\item{mount_root}{Character. Host dataset directory mounted into the Docker
+container.}
 
 \item{core_threshold}{Numeric. Core genome threshold for Panaroo (\code{--core_threshold}). Default \code{0.90}.}
 
@@ -40,11 +44,22 @@ stop codons, which existing upstream genome-quality fields do not flag.
 Default \code{"off"} for now, to avoid that runtime risk; plan to move this back to
 \code{"default"} once a QC step upstream (e.g. in \code{.apply_metadata_qc()}) can screen
 out affected genomes before they reach Panaroo.}
+
+\item{log_path}{Character or \code{NULL}. Optional path for Panaroo command output
+logging.}
 }
 \value{
 A list of results for each Panaroo batch in its output directory.
 }
 \description{
+Runs Panaroo inside Docker for one batch of prepared genome GFF/FASTA inputs.
+Host paths are translated to container-visible paths and Panaroo output is
+written to a uniquely named directory under \code{output_path}.
+}
+\details{
+Panaroo is run with strict cleaning, paralog merging, and invalid-gene
+removal. Refinding behavior is controlled by \code{refind_mode}.
+
 See Panaroo's documentation for details on how the parameters affect your
 pangenome output: https://gthlab.au/panaroo/#/gettingstarted/params
 }

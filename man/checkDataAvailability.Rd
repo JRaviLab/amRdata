@@ -13,7 +13,7 @@ checkDataAvailability(
   gc_deviations = NULL,
   length_deviations = NULL,
   cds_deviations = NULL,
-  verbose = TRUE
+  verbose = FALSE
 )
 }
 \arguments{
@@ -40,7 +40,7 @@ length. Optional. Default \code{NULL}.}
 \item{cds_deviations}{Numeric. Maximum SDs from the median CDS count.
 Optional. Default \code{NULL}.}
 
-\item{verbose}{Logical. If TRUE, print progress messages. Default \code{TRUE}.}
+\item{verbose}{Logical. If TRUE, print progress messages. Default \code{FALSE}.}
 }
 \value{
 A tibble with one row per requested taxon containing summary
