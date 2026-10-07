@@ -7,7 +7,8 @@
 .proteinAnnotations2Duckdb(
   duckdb_path,
   databases,
-  output_path = dirname(duckdb_path)
+  output_path = NULL,
+  verbose = TRUE
 )
 }
 \arguments{

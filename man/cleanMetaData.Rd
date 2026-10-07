@@ -4,7 +4,7 @@
 \alias{cleanMetaData}
 \title{Clean BV-BRC metadata, then save as Parquet files}
 \usage{
-cleanMetaData(duckdb_path, path)
+cleanMetaData(duckdb_path, path = NULL)
 }
 \arguments{
 \item{duckdb_path}{Path to the \strong{per-selection DuckDB} produced by

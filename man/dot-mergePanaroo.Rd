@@ -10,7 +10,8 @@
   len_dif_percent = 0.95,
   cluster_threshold = 0.95,
   family_seq_identity = 0.5,
-  threads = 8
+  threads = 8,
+  log_path = NULL
 )
 }
 \arguments{

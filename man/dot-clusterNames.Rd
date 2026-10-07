@@ -4,11 +4,9 @@
 \alias{.clusterNames}
 \title{Extract per-cluster protein names from CD-HIT cluster FASTA}
 \usage{
-.clusterNames(cluster_map, cluster_fasta)
+.clusterNames(cluster_fasta)
 }
 \arguments{
-\item{cluster_map}{Output of \code{.parseProteinClusters()}.}
-
 \item{cluster_fasta}{Path to representative FASTA file used by CD-HIT.}
 }
 \value{

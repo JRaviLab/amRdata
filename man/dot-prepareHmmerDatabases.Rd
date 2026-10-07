@@ -9,7 +9,9 @@
   databases = c("Pfam", "COG", "AMRFinder"),
   docker_image = "staphb/hmmer",
   hmmer_db_url = NULL,
-  verbose = TRUE
+  verbose = TRUE,
+  log_path = NULL,
+  progress = TRUE
 )
 }
 \arguments{
@@ -28,9 +30,16 @@ built-in database definitions. This function is not currently active!}
 
 \item{verbose}{Logical. Print status messages while checking, downloading,
 combining, and pressing databases. Default: \code{TRUE}.}
+
+\item{log_path}{Character or \code{NULL}. Optional path for database preparation
+and external-tool logging.}
+
+\item{progress}{Logical. Show download progress when HMM database archives
+must be retrieved. Default: \code{TRUE}.}
 }
 \value{
-A list of paths to the database hmm files.
+A named list containing the prepared HMM path and associated files
+for each requested database..
 }
 \description{
 Download and prepare HMMER databases for generating new file types.
