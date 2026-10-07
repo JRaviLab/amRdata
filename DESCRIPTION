@@ -51,12 +51,14 @@ Imports:
     purrr,
     readr,
     reshape2,
+    R.utils,
     stringr,
     tibble,
     tidyr
 biocViews: GenomeAssembly, Annotation, Sequencing
 VignetteBuilder: knitr
 Suggests:
+    readxl,
     rmarkdown,
     writexl,
     testthat (>= 3.0.0)

@@ -762,6 +762,11 @@ if (!is.null(status) && status != 0L) {
   })
   .log_tool_output(log_path, "CD-HIT", output)
 
+  status <- attr(output, "status")
+  if (!is.null(status) && status != 0L) {
+    stop(sprintf("cd-hit failed with exit status %s:\n%s", status, paste(output, collapse = "\n")))
+  }
+
   if (!file.exists(clustered_faa)) {
     stop("CD-HIT failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
   }
@@ -1476,7 +1481,9 @@ CDHIT2duckdb <- function(duckdb_path,
 
       .log_tool_output(log_path, "HMMER", output)
 
-      if (!all(file.exists(pressed_files))) {
+      status <- attr(output, "status")
+
+      if ((!is.null(status) && status != 0L) || !all(file.exists(pressed_files))) {
         stop(
           "hmmpress failed for ",
           db_name,
