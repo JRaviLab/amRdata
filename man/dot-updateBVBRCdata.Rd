@@ -30,3 +30,4 @@ it in a BiocFileCache-managed DuckDB database.
 If the table exists and is older than \code{max_age_days}, it refreshes; otherwise,
 loads the existing table. BV-BRC column names are preserved exactly.
 }
+\keyword{internal}
