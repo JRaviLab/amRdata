@@ -2763,6 +2763,20 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
     dplyr::filter(genome_drug.resistant_phenotype %in% c("Resistant", "Susceptible")) |>
     DBI::dbWriteTable(conn = con, name = "filtered_metadata", overwrite = TRUE)
 
+  # Exclude genome-drug pairs with conflicting resistance phenotypes
+  # We could save the phentoype conflicts out as a Parquet later if we want!
+  filtered_metadata <- DBI::dbReadTable(con, "filtered_metadata")
+  conflicts <- filtered_metadata |>
+    dplyr::group_by(genome.genome_id, drug_abbr) |>
+    dplyr::filter(dplyr::n_distinct(genome_drug.resistant_phenotype) > 1L) |>
+    dplyr::ungroup()
+
+  DBI::dbWriteTable(con, "metadata_phenotype_conflicts", conflicts, overwrite = TRUE)
+
+  dplyr::anti_join(filtered_metadata, conflicts,
+                   by = c("genome.genome_id", "drug_abbr")) |>
+    DBI::dbWriteTable(conn = con, name = "filtered_metadata", overwrite = TRUE)
+
   resistance_summary <- DBI::dbReadTable(con, "filtered_metadata") |>
     dplyr::filter(genome_drug.resistant_phenotype == "Resistant") |>
     dplyr::group_by(genome.genome_id) |>
