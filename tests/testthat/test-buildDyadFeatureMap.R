@@ -5,11 +5,20 @@ test_that("buildDyadFeatureMap() errors when the DuckDB path does not exist", {
 })
 
 test_that("buildDyadFeatureMap() errors when no provenance manifest is found", {
-  tmp_dir <- file.path(tempdir(), paste0("dyad-test-", as.integer(runif(1, 1, 1e6))))
-  dir.create(tmp_dir)
-  on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)
+  tmp_dir <- file.path(
+    tempdir(),
+    paste0("dyad-test-", as.integer(runif(1, 1, 1e6)))
+  )
 
-  fake_db <- file.path(tmp_dir, "fake.duckdb")
+  work_dir <- file.path(tmp_dir, "work")
+  dir.create(work_dir, recursive = TRUE)
+
+  on.exit(
+    unlink(tmp_dir, recursive = TRUE),
+    add = TRUE
+  )
+
+  fake_db <- file.path(work_dir, "fake.duckdb")
   file.create(fake_db)
 
   expect_error(

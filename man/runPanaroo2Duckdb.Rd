@@ -27,7 +27,7 @@ runPanaroo2Duckdb(
 
 \item{output_path}{Character or \code{NULL}. Directory where Panaroo outputs
 (\verb{panaroo_out_*} or merged \verb{merge_output/}) will be written. If \code{NULL},
-defaults to \code{dirname(duckdb_path)}.}
+defaults to the dataset's \verb{panaroo/} directory.}
 
 \item{core_threshold}{Numeric. Panaroo \code{--core_threshold} parameter.
 Default: \code{0.90}.}

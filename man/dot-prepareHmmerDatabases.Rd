@@ -24,9 +24,10 @@ prepared separately by the DefenseFinder/CasFinder workflow.}
 \item{docker_image}{Character. Docker image containing HMMER tools used to
 press the prepared databases. Default: \code{"staphb/hmmer"}.}
 
-\item{hmmer_db_url}{NON-FUNCTIONAL. Character or \code{NULL}. URL used to download
-a custom HMMER database when \code{databases} contains names not covered by the
-built-in database definitions. This function is not currently active!}
+\item{hmmer_db_url}{EXPERIMENTAL. Character or \code{NULL}. URL used to download
+a custom HMMER database when \code{databases} contains a name outside the
+built-in database definitions. Custom database support has NOT YET BEEN
+VALIDATED and is not part of the current, supported workflow.}
 
 \item{verbose}{Logical. Print status messages while checking, downloading,
 combining, and pressing databases. Default: \code{TRUE}.}
@@ -38,8 +39,9 @@ and external-tool logging.}
 must be retrieved. Default: \code{TRUE}.}
 }
 \value{
-A named list containing the prepared HMM path and associated files
-for each requested database..
+A named list for each requested database containing the prepared
+HMM path, pressed HMMER files, cached profile-metadata Parquet path,
+source metadata, and BiocFileCache identifiers.
 }
 \description{
 Download and prepare HMMER databases for generating new file types.

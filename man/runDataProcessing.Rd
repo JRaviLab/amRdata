@@ -201,14 +201,14 @@ been altered or deleted since the failed run.
 \enumerate{
 \item \strong{Panaroo} via \code{\link[=runPanaroo2Duckdb]{runPanaroo2Duckdb()}} -> writes:
 \itemize{
-\item \code{gene_count} (genome x gene counts)\cr
+\item \code{gene_count} (sparse long genome-gene counts)\cr
 \item \code{gene_names}\cr
-\item \code{gene_struct} (structural variants)\cr
+\item \code{gene_struct} (sparse long struct variants)\cr
 \item \code{gene_ref_seq}, \code{genome_gene_protein}
 }
 \item \strong{CD-HIT} via \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}} -> writes:
 \itemize{
-\item \code{protein_count} (genome x protein-cluster counts)\cr
+\item \code{protein_count} (sparse long genome-protein-cluster counts)\cr
 \item \code{protein_names}\cr
 \item \code{protein_cluster_seq} (representative sequences)\cr
 \item \code{protein_members}
@@ -223,8 +223,8 @@ been altered or deleted since the failed run.
 Parquet files to \code{output_path}, and builds a \strong{Parquet-backed DuckDB}
 (\verb{*_parquet.duckdb}) with views over those Parquets.
 
-\item \strong{Dyad feature mapping} via \code{\link[=buildDyadFeatureMap]{buildDyadFeatureMap()}} -> writes the
-protein-gene dyad feature network used for downstream graph analysis.
+\item \strong{Dyad feature mapping} via \code{\link[=buildDyadFeatureMap]{buildDyadFeatureMap()}} -> writes a compact
+\code{dyads.parquet} and registers virtual graph views in the ORB DuckDB.
 }
 }
 
