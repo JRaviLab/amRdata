@@ -1,6 +1,6 @@
-# Contributing to NewPackage
+# Contributing to amRdata
 
-This outlines how to propose a change to NewPackage.
+This outlines how to propose a change to amRdata.
 For a detailed discussion on contributing to this and other tidyverse packages, please see the [development contributing guide](https://rstd.io/tidy-contrib) and our [code review principles](https://code-review.tidyverse.org/).
 
 ## Fixing typos
@@ -18,7 +18,7 @@ See our guide on [how to create a great issue](https://code-review.tidyverse.org
 
 ### Pull request process
 
-*   Fork the package and clone onto your computer. If you haven't done this before, we recommend using `usethis::create_from_github("JRaviLab/NewPackage", fork = TRUE)`.
+*   Fork the package and clone onto your computer. If you haven't done this before, we recommend using `usethis::create_from_github("JRaviLab/amRdata", fork = TRUE)`.
 
 *   Install all development dependencies with `devtools::install_dev_deps()`, and then make sure the package passes R CMD check by running `devtools::check()`. 
     If R CMD check doesn't pass cleanly, it's a good idea to ask for help before continuing. 
@@ -40,8 +40,14 @@ See our guide on [how to create a great issue](https://code-review.tidyverse.org
 *  We use [testthat](https://cran.r-project.org/package=testthat) for unit tests. 
    Contributions with test cases included are easier to accept.  
 
+### Testing parallel code
+
+*   `furrr`/`future::multisession` workers are fresh R processes that load the *installed* copy of amRdata from `.libPaths()`; they do not see changes made only via `devtools::load_all()` in your interactive session.
+    If a worker fails with `could not find function ".xxx"` for an internal amRdata helper, your installed copy is stale.
+    Run `devtools::install()` (or `pkgbuild::compile_dll(); devtools::document(); devtools::install()`) before exercising any function that runs work via `future`/`furrr`, or temporarily set `future::plan(future::sequential)` while iterating with `load_all()` alone.
+
 ## Code of Conduct
 
-Please note that the NewPackage project is released with a
+Please note that the amRdata project is released with a
 [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By contributing to this
 project you agree to abide by its terms.
