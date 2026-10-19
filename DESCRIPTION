@@ -31,6 +31,7 @@ URL: https://github.com/JRaviLab/amRdata
 BugReports: https://github.com/JRaviLab/amRdata/issues
 Imports:
     arrow,
+    BiocFileCache,
     BiocParallel,
     BiocFileCache,
     Biostrings,
@@ -54,7 +55,8 @@ Imports:
     R.utils,
     stringr,
     tibble,
-    tidyr
+    tidyr,
+    tidyselect
 biocViews: GenomeAssembly, Annotation, Sequencing
 VignetteBuilder: knitr
 Suggests:

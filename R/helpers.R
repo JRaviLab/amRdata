@@ -2357,3 +2357,11 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
   version
 }
+
+#' Coerce a character vector to UTF-8, dropping unconvertible bytes
+#'
+#' @param x Character vector.
+#' @keywords internal
+.toUtf8 <- function(x) {
+  iconv(x, from = "", to = "UTF-8", sub = "")
+}
