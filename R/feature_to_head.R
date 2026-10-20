@@ -69,16 +69,11 @@
     })
 }
 
-#' Build virtual protein-gene dyad feature relations using DuckDB
+#' Build virtual protein cluster-gene cluster dyad features using DuckDB
 #'
-#' Creates a compact protein-gene dyad Parquet and registers virtual graph
-#' relations in the Parquet-backed ORB DuckDB. Expanded dyad-feature edges are
-#' not materialized. Structural and HMMER feature edges are reconstructed on
-#' demand from the canonical ORB Parquets.
-#'
-#' HMMER annotations are propagated from each individual protein through its
-#' CD-HIT representative cluster before joining to profile annotations.
-#'
+#' Creates a compact protein cluster-gene cluster dyad Parquet and registers virtual 
+#' graph relations in the Parquet-backed ORB DuckDB.
+#' 
 #' @param duckdb_path Character. Path to the source per-selection DuckDB. The
 #'   associated Parquet files and provenance manifest are expected to live
 #'   alongside it. This is the same `duckdb_path` produced by
@@ -93,14 +88,17 @@
 #'   dyad dimension. Default `4`.
 #'
 #' @details
-#' The canonical graph representation stores only unique `(protein, gene)` dyads
-#' in `dyads.parquet`. The ORB DuckDB then exposes views for `genome_dyad`,
-#' `struct_gene`, `dyad_struct`, each configured HMMER feature scale, and the
-#' compatibility relation `dyad_feature`.
-#'
-#' `dyad_feature` retains the historical two-column API (`dyad`, `feature`) but
-#' creates those strings only when queried. Protein and gene self-edges are also
-#' reconstructed virtually rather than persisted.
+#' The canonical `dyads.parquet` contains distinct `(protein, gene)` pairs,
+#' where `protein` is a CD-HIT protein-cluster representative and `gene` is a
+#' gene-cluster identifier.
+#' 
+#' `member_dyads` and `genome_dyad` preserve protein-member provenance, and
+#' `genome_cluster_dyad` links genomes to cluster-pair dyads.
+#' `dyad_feature` retains the two-column API (`dyad`, `feature`) as a virtual
+#' view. It maps existing `protein:<member>` feature keys to cluster-pair
+#' dyads via their observed member/gene pair, and exposes the
+#' `protein_cluster:<representative>` key for cluster-level features.
+#' HMMER and struct edges remain virtual.
 #'
 #' @return Invisibly returns the path to the generated `dyads.parquet` file.
 #'
@@ -351,6 +349,8 @@ buildDyadFeatureMap <- function(
     "dyad_feature",
     "dyads",
     "genome_dyad",
+    "genome_cluster_dyad",
+    "member_dyads",
     "dyad_protein_cluster",
     "struct_gene",
     "dyad_struct",
@@ -382,6 +382,40 @@ buildDyadFeatureMap <- function(
     }
   )
 
+  # Each protein member must have at most one CD-HIT representative or something
+  # weird is going on
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE VIEW dyad_protein_cluster AS
+     SELECT DISTINCT
+       CAST(member AS VARCHAR) AS protein,
+       CAST(cluster AS VARCHAR) AS cluster
+     FROM protein_members
+     WHERE member IS NOT NULL
+       AND member <> ''
+       AND cluster IS NOT NULL
+       AND cluster <> ''"
+  )
+
+  ambiguous_members <- DBI::dbGetQuery(
+    con,
+    "SELECT count(*) AS n
+     FROM (
+       SELECT protein
+       FROM dyad_protein_cluster
+       GROUP BY protein
+       HAVING count(DISTINCT cluster) > 1
+     )"
+  )$n[[1L]]
+
+  if (ambiguous_members > 0L) {
+    stop(
+      "CD-HIT membership is ambiguous for ",
+      ambiguous_members,
+      " protein(s); each protein must map to at most one representative cluster."
+    )
+  }
+
   if (file.exists(legacy_dyad_parquet)) {
     unlink(
       legacy_dyad_parquet,
@@ -410,13 +444,17 @@ buildDyadFeatureMap <- function(
     paste0(
       "COPY (",
       "SELECT DISTINCT ",
-      "CAST(protein_ids AS VARCHAR) AS protein, ",
-      "CAST(REPLACE(Gene, '~', '.') AS VARCHAR) AS gene ",
-      "FROM genome_gene_protein ",
-      "WHERE protein_ids IS NOT NULL ",
-      "  AND protein_ids <> '' ",
-      "  AND Gene IS NOT NULL ",
-      "  AND Gene <> ''",
+      # `protein` means the cluster representative, not a specific member ID.
+      # DISTINCT collapses repeated genomes & members into a single cluster pair
+      "pc.cluster AS protein, ",
+      "CAST(REPLACE(g.Gene, '~', '.') AS VARCHAR) AS gene ",
+      "FROM genome_gene_protein g ",
+      "JOIN dyad_protein_cluster pc ",
+      "  ON CAST(g.protein_ids AS VARCHAR) = pc.protein ",
+      "WHERE g.protein_ids IS NOT NULL ",
+      "  AND g.protein_ids <> '' ",
+      "  AND g.Gene IS NOT NULL ",
+      "  AND g.Gene <> ''",
       ") TO ",
       dyads_sql,
       " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 3, PRESERVE_ORDER false)"
@@ -471,42 +509,40 @@ buildDyadFeatureMap <- function(
        AND Gene <> ''"
   )
 
+  # Keep the old protein member + gene cluster observations separate from
+  # cluster-pair ID, also needed to avoid assigning member to gene clusters it 
+  # never co-occurred with
   DBI::dbExecute(
     con,
-    "CREATE OR REPLACE VIEW dyad_protein_cluster AS
+    "CREATE OR REPLACE VIEW member_dyads AS
      SELECT DISTINCT
-       CAST(member AS VARCHAR) AS protein,
-       CAST(cluster AS VARCHAR) AS cluster
-     FROM protein_members
-     WHERE member IS NOT NULL
-       AND member <> ''
-       AND cluster IS NOT NULL
-       AND cluster <> ''"
+       CAST(protein_ids AS VARCHAR) AS protein,
+       CAST(REPLACE(Gene, '~', '.') AS VARCHAR) AS gene
+     FROM genome_gene_protein
+     WHERE protein_ids IS NOT NULL AND protein_ids <> ''
+       AND Gene IS NOT NULL AND Gene <> ''"
   )
 
-  ambiguous_members <- DBI::dbGetQuery(
+  DBI::dbExecute(
     con,
-    "SELECT count(*) AS n
-     FROM (
-       SELECT protein
-       FROM dyad_protein_cluster
-       GROUP BY protein
-       HAVING count(DISTINCT cluster) > 1
-     )"
-  )$n[[1L]]
-
-  if (ambiguous_members > 0L) {
-    stop(
-      "CD-HIT membership is ambiguous for ",
-      ambiguous_members,
-      " protein(s); each protein must map to at most one representative cluster."
-    )
-  }
+    "CREATE OR REPLACE VIEW genome_cluster_dyad AS
+     SELECT DISTINCT
+       g.genome_id,
+       pc.cluster AS protein,
+       g.gene
+     FROM genome_dyad g
+     JOIN dyad_protein_cluster pc ON g.protein = pc.protein"
+  )
 
   created_edge_views <- character()
   compatibility_parts <- c(
-    "SELECT protein || '|' || gene AS dyad, 'protein:' || protein AS feature FROM dyads",
-    "SELECT protein || '|' || gene AS dyad, 'gene:' || gene AS feature FROM dyads"
+    # Cluster-level self-edge
+    "SELECT protein || '|' || gene AS dyad, 'protein_cluster:' || protein AS feature FROM dyads",
+    "SELECT protein || '|' || gene AS dyad, 'gene:' || gene AS feature FROM dyads",
+    # Preserve protein member predictor key. JOIN to member_dyads (not just the 
+    # protein cluster) so that a member is linked only to genes actually observed. 
+    # Dyad ID is a pair of clusters & may have several protein member edges
+    "SELECT pc.cluster || '|' || md.gene AS dyad, 'protein:' || md.protein AS feature FROM member_dyads md JOIN dyad_protein_cluster pc ON md.protein = pc.protein"
   )
 
   if (
@@ -613,11 +649,10 @@ buildDyadFeatureMap <- function(
         " AS ",
         "SELECT d.protein, d.gene, a.feature ",
         "FROM dyads d ",
-        "JOIN dyad_protein_cluster pc ",
-        "  ON d.protein = pc.protein ",
+        # HMMER source relation is keyed by CD-HIT/cluster representative 
         "JOIN ",
         annotation_view_sql,
-        " a ON pc.cluster = a.cluster"
+        " a ON d.protein = a.cluster"
       )
     )
 
@@ -658,7 +693,7 @@ buildDyadFeatureMap <- function(
   missing_proteins <- DBI::dbGetQuery(
     con,
     "SELECT count(DISTINCT d.protein) AS n
-     FROM dyads d
+     FROM member_dyads d
      LEFT JOIN dyad_protein_cluster pc
        ON d.protein = pc.protein
      WHERE pc.protein IS NULL"
@@ -668,7 +703,7 @@ buildDyadFeatureMap <- function(
     message(
       "Dyad/CD-HIT mapping: ",
       missing_proteins,
-      " protein(s) have no protein_members mapping and therefore cannot inherit HMMER annotations."
+      " protein member(s) have no protein_members mapping and therefore are not included in cluster-pair dyads."
     )
   }
 
