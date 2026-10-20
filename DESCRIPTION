@@ -42,22 +42,29 @@ Imports:
     future,
     ggplot2,
     glue,
+    grDevices,
     grid,
     gridExtra,
     httr2,
     jsonlite,
     knitr,
     parallelly,
+    progressr,
     purrr,
     readr,
     reshape2,
     R.utils,
+    stats,
     stringr,
     tibble,
-    tidyr
+    tidyr,
+    tools,
+    utils
 biocViews: GenomeAssembly, Annotation, Sequencing
 VignetteBuilder: knitr
 Suggests:
+    cli,
+    progress,
     readxl,
     rmarkdown,
     writexl,
