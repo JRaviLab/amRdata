@@ -17,7 +17,8 @@ runPanaroo2Duckdb(
   strip_pseudogenes = FALSE,
   pseudogene_clean_dir = "gff_clean",
   write_pseudogene_audit = TRUE,
-  verbose = TRUE
+  verbose = TRUE,
+  log_path = NULL
 )
 }
 \arguments{

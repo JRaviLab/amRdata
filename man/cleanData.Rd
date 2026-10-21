@@ -4,7 +4,7 @@
 \alias{cleanData}
 \title{Clean feature matrices, then save as Parquet files}
 \usage{
-cleanData(duckdb_path, path)
+cleanData(duckdb_path, path = NULL, verbose = TRUE)
 }
 \arguments{
 \item{duckdb_path}{Path to the \strong{per-selection DuckDB} produced by

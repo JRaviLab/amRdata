@@ -14,7 +14,7 @@ genomeList(base_dir = ".", user_bacs, expected_ids = NULL, verbose = TRUE)
 \item{verbose}{Logical. If TRUE, prints messages.}
 }
 \value{
-A list with duckdbConnection and table_name = "files".
+A path to a DuckDB database and table_name = "files".
 }
 \description{
 Scans <base_dir>/data/<bug_dir>/genomes for *.PATRIC.gff, *.fna, *.PATRIC.faa,

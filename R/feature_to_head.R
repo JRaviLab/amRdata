@@ -75,7 +75,8 @@ buildDyadFeatureMap <- function(
     mustWork = TRUE
   )
 
-  parquet_dir <- dirname(duckdb_path)
+  paths <- .amr_paths_from_duckdb(duckdb_path)
+  parquet_dir <- paths$orb
 
   manifest_path <- .manifest_find_latest(
     duckdb_path
@@ -162,7 +163,7 @@ buildDyadFeatureMap <- function(
   }
 
   out_dir <- if (is.null(output_path)) {
-    parquet_dir
+    paths$orb
   } else {
     normalizePath(
       output_path,
@@ -175,6 +176,12 @@ buildDyadFeatureMap <- function(
     out_dir,
     recursive = TRUE,
     showWarnings = FALSE
+  )
+
+  out_dir <- normalizePath(
+    out_dir,
+    winslash = "/",
+    mustWork = TRUE
   )
 
   parquet_path <- file.path(

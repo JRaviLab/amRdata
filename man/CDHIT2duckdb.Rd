@@ -6,13 +6,15 @@
 \usage{
 CDHIT2duckdb(
   duckdb_path,
-  output_path,
+  output_path = NULL,
   output_prefix = "cdhit_out",
   identity = 0.9,
   word_length = 5,
   threads = 0,
   memory = 0,
-  extra_args = c("-g", "1")
+  extra_args = c("-g", "1"),
+  verbose = TRUE,
+  log_path = NULL
 )
 }
 \description{

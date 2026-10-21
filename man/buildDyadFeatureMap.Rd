@@ -61,13 +61,13 @@ protein|gene --> defense:DEFENSE_SYSTEM
 protein|gene --> struct:STRUCTURE
 }
 
-The type prefix on each target keeps feature namespaces separate, so a
+The type prefix on each feature keeps feature namespaces separate, so a
 generic feature name cannot collide across scales downstream.
 
 The output edge list contains two columns:
 \describe{
-\item{source}{Protein-gene dyad identifier.}
-\item{target}{Feature node identifier prefixed by feature type.}
+\item{dyad}{Protein-gene dyad identifier.}
+\item{feature}{Feature node identifier prefixed by feature type.}
 }
 }
 \examples{
