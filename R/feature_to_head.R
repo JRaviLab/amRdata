@@ -74,10 +74,9 @@
 #' Creates a compact protein cluster-gene cluster dyad Parquet and registers virtual 
 #' graph relations in the Parquet-backed ORB DuckDB.
 #' 
-#' @param duckdb_path Character. Path to the source per-selection DuckDB. The
-#'   associated Parquet files and provenance manifest are expected to live
-#'   alongside it. This is the same `duckdb_path` produced by
-#'   \code{\link{runDataProcessing}}.
+#' @param duckdb_path Character. Path to the working DuckDB or the existing
+#'   Parquet-backed ORB DuckDB. Either can be used when the ORB and its
+#'   provenance manifest already exist.
 #' @param additional_feature_scales Character vector of optional feature types to
 #'   include. If `NULL`, all HMMER databases recorded in the manifest are used,
 #'   plus `struct` to include pangenome graph triplets. If a character vector is
@@ -120,7 +119,7 @@ buildDyadFeatureMap <- function(
 
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
 
-  paths <- .amr_paths_from_duckdb(duckdb_path)
+  paths <- .amr_paths_from_dataset_db(duckdb_path)
 
   manifest_path <- .manifest_find_latest(duckdb_path)
 
@@ -287,7 +286,7 @@ buildDyadFeatureMap <- function(
 
   duckdb_temp_dir <- tempfile(
     pattern = "dyad_duckdb_",
-    tmpdir = paths$work
+    tmpdir = if (dir.exists(paths$work)) paths$work else paths$orb
   )
 
   dir.create(

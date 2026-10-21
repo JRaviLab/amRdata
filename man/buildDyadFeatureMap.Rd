@@ -2,7 +2,7 @@
 % Please edit documentation in R/feature_to_head.R
 \name{buildDyadFeatureMap}
 \alias{buildDyadFeatureMap}
-\title{Build virtual protein-gene dyad feature relations using DuckDB}
+\title{Build virtual protein cluster-gene cluster dyad features using DuckDB}
 \usage{
 buildDyadFeatureMap(
   duckdb_path,
@@ -12,10 +12,9 @@ buildDyadFeatureMap(
 )
 }
 \arguments{
-\item{duckdb_path}{Character. Path to the source per-selection DuckDB. The
-associated Parquet files and provenance manifest are expected to live
-alongside it. This is the same \code{duckdb_path} produced by
-\code{\link{runDataProcessing}}.}
+\item{duckdb_path}{Character. Path to the working DuckDB or the existing
+Parquet-backed ORB DuckDB. Either can be used when the ORB and its
+provenance manifest already exist.}
 
 \item{additional_feature_scales}{Character vector of optional feature types to
 include. If \code{NULL}, all HMMER databases recorded in the manifest are used,
@@ -32,23 +31,21 @@ dyad dimension. Default \code{4}.}
 Invisibly returns the path to the generated \code{dyads.parquet} file.
 }
 \description{
-Creates a compact protein-gene dyad Parquet and registers virtual graph
-relations in the Parquet-backed ORB DuckDB. Expanded dyad-feature edges are
-not materialized. Structural and HMMER feature edges are reconstructed on
-demand from the canonical ORB Parquets.
+Creates a compact protein cluster-gene cluster dyad Parquet and registers virtual
+graph relations in the Parquet-backed ORB DuckDB.
 }
 \details{
-HMMER annotations are propagated from each individual protein through its
-CD-HIT representative cluster before joining to profile annotations.
+The canonical \code{dyads.parquet} contains distinct \verb{(protein, gene)} pairs,
+where \code{protein} is a CD-HIT protein-cluster representative and \code{gene} is a
+gene-cluster identifier.
 
-The canonical graph representation stores only unique \verb{(protein, gene)} dyads
-in \code{dyads.parquet}. The ORB DuckDB then exposes views for \code{genome_dyad},
-\code{struct_gene}, \code{dyad_struct}, each configured HMMER feature scale, and the
-compatibility relation \code{dyad_feature}.
-
-\code{dyad_feature} retains the historical two-column API (\code{dyad}, \code{feature}) but
-creates those strings only when queried. Protein and gene self-edges are also
-reconstructed virtually rather than persisted.
+\code{member_dyads} and \code{genome_dyad} preserve protein-member provenance, and
+\code{genome_cluster_dyad} links genomes to cluster-pair dyads.
+\code{dyad_feature} retains the two-column API (\code{dyad}, \code{feature}) as a virtual
+view. It maps existing \verb{protein:<member>} feature keys to cluster-pair
+dyads via their observed member/gene pair, and exposes the
+\verb{protein_cluster:<representative>} key for cluster-level features.
+HMMER and struct edges remain virtual.
 }
 \examples{
 \dontrun{

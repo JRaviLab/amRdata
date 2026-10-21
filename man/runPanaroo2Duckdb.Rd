@@ -54,8 +54,18 @@ Default: \code{FALSE}.}
 \code{"strict"}). See \code{\link[=.processPanaroo]{.processPanaroo()}} for what refinding does and the runtime
 caveat behind the current default. Default \code{"off"}.}
 
+\item{strip_pseudogenes}{Logical. Whether to remove pseudogene features from
+GFF files before running Panaroo.}
+
+\item{pseudogene_clean_dir}{Character. Subdirectory used for cleaned GFFs.}
+
+\item{write_pseudogene_audit}{Logical. Whether to write the pseudogene
+cleaning audit to record what was removed from where.}
+
 \item{verbose}{Logical. Print status messages during Panaroo execution,
 merging, and DuckDB import. Default: \code{TRUE}.}
+
+\item{log_path}{Character or \code{NULL}. Optional processing log path.}
 }
 \value{
 Invisibly returns the path to the selected Panaroo output directory
