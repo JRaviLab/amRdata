@@ -1344,14 +1344,9 @@
 
 #' Check BV-BRC data availability for a single taxon
 #'
-#' Internal worker used by `checkDataAvailability()`. Each call resolves and
-#' summarizes a taxon independently.
-#'
-#' Summarize BV-BRC data availability for one taxon
-#'
-#' Resolves one taxon to available BV-BRC genomes and summarizes genome
-#' metadata, AMR phenotype availability, collection years, genome statistics,
-#' and the number of genomes passing the requested metadata QC thresholds.
+#' Internal worker used by `checkDataAvailability()`. Resolves one taxon to
+#' available BV-BRC genomes and summarizes genome metadata, AMR phenotype
+#' availability, collection years, genome statistics, and metadata QC.
 #'
 #' Metadata can be retrieved through the BV-BRC Data API or the legacy CLI/cache
 #' workflow.
@@ -2801,22 +2796,17 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #' Export a dyad-centric feature table
 #'
 #' Builds a one-row-per-dyad table linking protein-gene dyads to structural
-#' features and HMMER annotations recorded in the dataset provenance manifest.
+#' features and HMMER annotations registered as virtual relations in the ORB.
 #' Feature values are deduplicated and combined into semicolon-separated
 #' character fields.
 #'
-#' @param duckdb_path Character. Path to the source dataset DuckDB. Associated
-#'   Parquet files and provenance manifest are expected there.
-#' @param output_path Character or NULL. Directory where the output Parquet file
-#'   will be written. Defaults to the DuckDB directory.
-#' @param output_stem Character. Output filename stem. Default
-#'   `"dyad_annotations"`.
+#' @param duckdb_path Character. Path to the processed ORB DuckDB.
 #' @param feature_scales Character vector of optional feature types to include.
 #'   If NULL, includes `struct` plus all HMMER databases recorded in the
 #'   manifest.
 #' @param verbose Logical. Print progress messages.
 #'
-#' @return Invisibly returns the path to the generated Parquet file.
+#' @return A tibble with one row per protein-gene dyad.
 #'
 #' @keywords internal
 .exportDyadAnnotations <- function(
@@ -2825,10 +2815,6 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     verbose = TRUE
 ) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
-
-  paths <- .amr_paths_from_dataset_db(duckdb_path)
-
-  parquet_dir <- paths$orb
 
   manifest_path <- .manifest_find_latest(duckdb_path)
 
@@ -2844,20 +2830,17 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     simplifyVector = FALSE
   )
 
-  # Find latest successful HMMER stage
   hmmer_stage <- NULL
 
   for (run in rev(manifest$runs %||% list())) {
-    stages <- run$stages %||% list()
-
     matches <- purrr::keep(
-      stages,
+      run$stages %||% list(),
       ~ identical(.x$name, "hmmer") &&
         identical(.x$status, "success")
     )
 
     if (length(matches)) {
-      hmmer_stage <- matches[[1]]
+      hmmer_stage <- matches[[length(matches)]]
       break
     }
   }
@@ -2898,253 +2881,126 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     }
   }
 
-  con <- DBI::dbConnect(
-    duckdb::duckdb(),
-    dbdir = ":memory:"
-  )
-
-  duckdb_temp_dir <- tempfile(
-    pattern = "amRdata_duckdb_",
-    tmpdir = tempdir()
-  )
-
-  dir.create(
-    duckdb_temp_dir,
-    recursive = TRUE,
-    showWarnings = FALSE
-  )
-
-  DBI::dbExecute(
-    con,
-    sprintf(
-      "SET temp_directory=%s",
-      DBI::dbQuoteString(
-        con,
-        normalizePath(
-          duckdb_temp_dir,
-          winslash = "/",
-          mustWork = TRUE
-        )
-      )
-    )
+  con <- .amr_connect_dataset_db(
+    duckdb_path,
+    read_only = TRUE
   )
 
   on.exit(
-    {
-      try(DBI::dbDisconnect(con), silent = TRUE)
-      unlink(
-        duckdb_temp_dir,
-        recursive = TRUE,
-        force = TRUE
-      )
-    },
+    try(
+      DBI::dbDisconnect(con),
+      silent = TRUE
+    ),
     add = TRUE
   )
 
-  parquet_sql <- function(dataset_name) {
-    path <- file.path(
-      parquet_dir,
-      paste0(dataset_name, ".parquet")
-    )
-
-    if (!file.exists(path)) {
-      return(NULL)
-    }
-
-    normalizePath(
-      path,
-      winslash = "/",
-      mustWork = TRUE
-    )
-  }
-
-  # Initialize using protein-gene dyads
-  genome_gene_protein_path <- parquet_sql(
-    "genome_gene_protein"
+  available_relations <- DBI::dbListTables(
+    con
   )
 
-  if (is.null(genome_gene_protein_path)) {
+  required_relations <- c(
+    "dyads",
+    "dyad_protein_cluster"
+  )
+
+  missing_required <- setdiff(
+    required_relations,
+    available_relations
+  )
+
+  if (length(missing_required)) {
     stop(
-      "Required Parquet file not found: ",
-      file.path(
-        parquet_dir,
-        "genome_gene_protein.parquet"
-      )
+      "Dyad graph relation(s) not found in ORB: ",
+      paste(missing_required, collapse = ", "),
+      ". Re-run buildDyadFeatureMap()."
     )
   }
 
-  DBI::dbExecute(
-    con,
-    sprintf(
-      "
-      CREATE OR REPLACE VIEW protein_gene AS
-      SELECT DISTINCT
-        protein_ids AS protein,
-        REPLACE(Gene, '~', '.') AS gene
-      FROM read_parquet('%s')
-      WHERE protein_ids IS NOT NULL
-        AND Gene IS NOT NULL
-      ",
-      genome_gene_protein_path
-    )
-  )
-
-  DBI::dbExecute(
-    con,
-    "
-    CREATE OR REPLACE VIEW protein_gene_dyad AS
-    SELECT DISTINCT
-      protein,
-      gene,
-      CONCAT(protein, '|', gene) AS dyad
-    FROM protein_gene
-    "
-  )
-
-  # Finish initializing with one row per dyad
   feature_select <- character()
   feature_joins <- character()
 
-  # Pangenome graph structural variant ('struct') annotations
-  if ("struct" %in% feature_scales) {
-    struct_path <- parquet_sql("struct")
+  if (
+    "struct" %in% feature_scales &&
+    "struct_gene" %in% available_relations
+  ) {
+    feature_select <- c(
+      feature_select,
+      "sg.struct"
+    )
 
-    if (is.null(struct_path)) {
-      if (isTRUE(verbose)) {
-        message(
-          "Skipping struct: struct.parquet was not found."
-        )
-      }
-    } else {
-      DBI::dbExecute(
-        con,
-        sprintf(
-          "
-          CREATE OR REPLACE VIEW struct_genes AS
-          SELECT DISTINCT
-            s.struct,
-            t.gene
-          FROM read_parquet('%s') s
-          CROSS JOIN UNNEST(
-            string_split(s.struct, '.')
-          ) AS t(gene)
-          WHERE s.value = 1
-          ",
-          struct_path
-        )
+    feature_joins <- c(
+      feature_joins,
+      paste0(
+        "LEFT JOIN (",
+        "SELECT gene, ",
+        "string_agg(DISTINCT struct, ';' ORDER BY struct) AS struct ",
+        "FROM struct_gene GROUP BY gene",
+        ") sg ON d.gene = sg.gene"
       )
-
-      DBI::dbExecute(
-        con,
-        "
-        CREATE OR REPLACE VIEW dyad_struct AS
-        SELECT
-          pgd.dyad,
-          string_agg(
-            DISTINCT sg.struct,
-            ';'
-            ORDER BY sg.struct
-          ) AS struct
-        FROM protein_gene_dyad pgd
-        JOIN struct_genes sg
-          ON pgd.gene = sg.gene
-        GROUP BY pgd.dyad
-        "
-      )
-
-      feature_select <- c(
-        feature_select,
-        "ds.struct"
-      )
-
-      feature_joins <- c(
-        feature_joins,
-        "LEFT JOIN dyad_struct ds ON b.dyad = ds.dyad"
-      )
-    }
+    )
   }
 
-  # HMMER feature annotations
+  specs <- .dyadHmmerSpecs(
+    hmmer_databases
+  )
+
   for (database in intersect(
     hmmer_databases,
     feature_scales
   )) {
-    dataset_name <- paste0(
-      "protein_",
-      database
-    )
+    spec <- specs[[database]]
 
-    hmmer_path <- parquet_sql(dataset_name)
-
-    if (is.null(hmmer_path)) {
+    if (!spec$annotation_view %in% available_relations) {
       if (isTRUE(verbose)) {
         message(
           "Skipping ",
           database,
           ": ",
-          dataset_name,
-          ".parquet was not found."
+          spec$annotation_view,
+          " was not found in the ORB."
         )
       }
       next
     }
 
-    view_name <- paste0(
-      "dyad_",
-      make.names(database)
-    )
-
-    DBI::dbExecute(
-      con,
-      sprintf(
-        "
-        CREATE OR REPLACE VIEW %s AS
-        SELECT
-          pgd.dyad,
-          string_agg(
-            DISTINCT h.query_name,
-            ';'
-            ORDER BY h.query_name
-          ) AS feature
-        FROM protein_gene_dyad pgd
-        JOIN read_parquet('%s') h
-          ON pgd.protein = h.protein
-        WHERE h.query_name IS NOT NULL
-        GROUP BY pgd.dyad
-        ",
-        view_name,
-        hmmer_path
-      )
-    )
-
-    # Give AMRFinder a better human-readable name (ARG, in this case)
-    output_column <- if (identical(database, "AMRFinder")) {
-      "ARG"
-    } else {
-      database
-    }
-
     alias <- paste0(
-      "d_",
-      make.names(database)
+      "a_",
+      spec$key
+    )
+
+    annotation_view_sql <- DBI::dbQuoteIdentifier(
+      con,
+      spec$annotation_view
+    )
+
+    output_column_sql <- DBI::dbQuoteIdentifier(
+      con,
+      spec$output_column
     )
 
     feature_select <- c(
       feature_select,
-      sprintf(
-        '%s.feature AS "%s"',
+      paste0(
         alias,
-        output_column
+        ".feature AS ",
+        output_column_sql
       )
     )
 
     feature_joins <- c(
       feature_joins,
-      sprintf(
-        "LEFT JOIN %s %s ON b.dyad = %s.dyad",
-        view_name,
+      paste0(
+        "LEFT JOIN (",
+        "SELECT cluster, ",
+        "string_agg(DISTINCT feature, ';' ORDER BY feature) AS feature ",
+        "FROM ",
+        annotation_view_sql,
+        " GROUP BY cluster",
+        ") ",
         alias,
-        alias
+        " ON pc.cluster = ",
+        alias,
+        ".cluster"
       )
     )
   }
@@ -3152,7 +3008,10 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   select_features <- if (length(feature_select)) {
     paste0(
       ",\n      ",
-      paste(feature_select, collapse = ",\n      ")
+      paste(
+        feature_select,
+        collapse = ",\n      "
+      )
     )
   } else {
     ""
@@ -3161,26 +3020,31 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   join_features <- if (length(feature_joins)) {
     paste0(
       "\n    ",
-      paste(feature_joins, collapse = "\n    ")
+      paste(
+        feature_joins,
+        collapse = "\n    "
+      )
     )
   } else {
     ""
   }
 
   result_sql <- paste0(
-    "
-    SELECT
-      b.dyad,
-      b.protein,
-      b.gene",
+    "SELECT\n",
+    "      d.protein || '|' || d.gene AS dyad,\n",
+    "      d.protein,\n",
+    "      d.gene",
     select_features,
-    "
-    FROM protein_gene_dyad b",
+    "\n    FROM dyads d\n",
+    "    LEFT JOIN dyad_protein_cluster pc\n",
+    "      ON d.protein = pc.protein",
     join_features
   )
 
   if (isTRUE(verbose)) {
-    message("Building dyad annotation table.")
+    message(
+      "Building dyad annotation table from virtual ORB relations."
+    )
   }
 
   DBI::dbGetQuery(
@@ -3489,45 +3353,143 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
 #' Parsing HMM database to extract profile names, accessions and descriptions
 #'
-#' @param hmm_file path to the HMM database file (`.hmm`)
+#' Streams through an HMM database in bounded line chunks and retains only the
+#' `NAME`, `ACC`, and `DESC` fields needed during annotation finalization.
 #'
-#' @returns a tibble
+#' @param hmm_file Path to the HMM database file (`.hmm`).
+#' @param chunk_lines Number of lines to read per chunk.
+#'
+#' @returns A tibble with one row per HMM profile.
 #'
 #' @keywords internal
-.parse_hmmer_profiles <- function(hmm_file) {
+.parse_hmmer_profiles <- function(hmm_file, chunk_lines = 100000L) {
+  input <- file(hmm_file, open = "r")
+  on.exit(close(input), add = TRUE)
 
-  lines <- readLines(hmm_file, warn = FALSE)
+  names_out <- character()
+  accessions_out <- character()
+  descriptions_out <- character()
 
-  starts <- c(
-    which(grepl("^NAME\\s+", lines)),
-    length(lines) + 1L
-  )
+  current_name <- NA_character_
+  current_accession <- NA_character_
+  current_description <- NA_character_
 
-  blocks <- purrr::map2(
-    starts[-length(starts)],
-    starts[-1L] - 1L,
-    ~ lines[.x:.y]
-  )
-
-  extract_field <- function(block, pattern) {
-
-    hit <- stringr::str_subset(block, pattern)
-
-    if (length(hit) == 0) {
-      return(NA_character_)
+  flush_profile <- function() {
+    if (is.na(current_name)) {
+      return(invisible(NULL))
     }
 
-    stringr::str_remove(hit[[1]], pattern)
+    names_out <<- c(names_out, current_name)
+    accessions_out <<- c(accessions_out, current_accession)
+    descriptions_out <<- c(descriptions_out, current_description)
+
+    invisible(NULL)
   }
 
-  purrr::map_dfr(
-    blocks,
-    ~ tibble::tibble(
-      profile_name = extract_field(.x, "^NAME\\s+"),
-      profile_accession = extract_field(.x, "^ACC\\s+"),
-      profile_description = extract_field(.x, "^DESC\\s+")
+  repeat {
+    lines <- readLines(input, n = chunk_lines, warn = FALSE)
+    if (!length(lines)) break
+
+    relevant <- lines[grepl("^(NAME|ACC|DESC)\\s+", lines)]
+    if (!length(relevant)) next
+
+    for (line in relevant) {
+      if (grepl("^NAME\\s+", line)) {
+        flush_profile()
+        current_name <- sub("^NAME\\s+", "", line)
+        current_accession <- NA_character_
+        current_description <- NA_character_
+      } else if (grepl("^ACC\\s+", line) &&
+                 !is.na(current_name) &&
+                 is.na(current_accession)) {
+        current_accession <- sub("^ACC\\s+", "", line)
+      } else if (grepl("^DESC\\s+", line) &&
+                 !is.na(current_name) &&
+                 is.na(current_description)) {
+        current_description <- sub("^DESC\\s+", "", line)
+      }
+    }
+  }
+
+  flush_profile()
+
+  tibble::tibble(
+    profile_name = names_out,
+    profile_accession = accessions_out,
+    profile_description = descriptions_out
+  )
+}
+
+#' Create or reuse cached HMM profile metadata
+#'
+#' Stores the small profile lookup table beside the prepared HMM database so
+#' dataset finalization does not need to rescan the full HMM file. The sidecar
+#' is rebuilt when it is missing or older than the HMM database and is registered
+#' as a component of the database in the shared BiocFileCache registry.
+#'
+#' @param hmm_file Path to the prepared HMM database.
+#' @param database Database name used for BiocFileCache registration.
+#' @param verbose Logical. Print a message when the sidecar is rebuilt.
+#' @param component Character or `NULL`. Optional component name used to keep
+#'   profile caches distinct for databases with multiple prepared HMMs.
+#'
+#' @return A list containing the sidecar path and BiocFileCache identifiers.
+#' @keywords internal
+.hmmer_profile_cache <- function(hmm_file, database, verbose = FALSE,
+                                 component = NULL) {
+  hmm_file <- normalizePath(hmm_file, mustWork = TRUE)
+
+  profile_path <- file.path(
+    dirname(hmm_file),
+    paste0(
+      tools::file_path_sans_ext(basename(hmm_file)),
+      ".profiles.parquet"
     )
   )
+
+  rebuild <- !file.exists(profile_path)
+
+  if (!rebuild) {
+    rebuild <- isTRUE(
+      file.info(profile_path)$mtime < file.info(hmm_file)$mtime
+    )
+  }
+
+  if (rebuild) {
+    if (isTRUE(verbose)) {
+      cache_parts <- c(database, component)
+      cache_parts <- cache_parts[!is.na(cache_parts) & nzchar(cache_parts)]
+      message(
+        "Caching HMM profile metadata for ",
+        paste(cache_parts, collapse = "/")
+      )
+    }
+
+    profiles <- .parse_hmmer_profiles(hmm_file)
+
+    arrow::write_parquet(
+      profiles,
+      profile_path,
+      compression = "zstd"
+    )
+  }
+
+  profile_path <- normalizePath(profile_path, mustWork = TRUE)
+
+  rname_parts <- c(component, "profiles")
+  rname_parts <- rname_parts[!is.na(rname_parts) & nzchar(rname_parts)]
+
+  rname <- .amr_bfc_hmmer_rname(
+    database,
+    component = paste(rname_parts, collapse = "_")
+  )
+  rid <- .amr_bfc_register_local(profile_path, rname)
+
+  invisible(list(
+    path = profile_path,
+    rid = rid,
+    rname = rname
+  ))
 }
 
 #' Parse HMMER tabular output into a tibble
@@ -3538,7 +3500,7 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #'
 #' @param file Path to a HMMER `.tbl` output file produced with `--domtblout`.
 #'
-#' @return A tibble with 19 columns matching the HMMER per-sequence hit table
+#' @return A tibble with 23 columns matching the HMMER per-sequence hit table
 #'
 #' @references Adapted from the rhmmer package
 #'   (<https://github.com/arendsee/rhmmer>).

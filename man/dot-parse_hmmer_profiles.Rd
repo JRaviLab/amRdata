@@ -4,15 +4,18 @@
 \alias{.parse_hmmer_profiles}
 \title{Parsing HMM database to extract profile names, accessions and descriptions}
 \usage{
-.parse_hmmer_profiles(hmm_file)
+.parse_hmmer_profiles(hmm_file, chunk_lines = 100000L)
 }
 \arguments{
-\item{hmm_file}{path to the HMM database file (\code{.hmm})}
+\item{hmm_file}{Path to the HMM database file (\code{.hmm}).}
+
+\item{chunk_lines}{Number of lines to read per chunk.}
 }
 \value{
-a tibble
+A tibble with one row per HMM profile.
 }
 \description{
-Parsing HMM database to extract profile names, accessions and descriptions
+Streams through an HMM database in bounded line chunks and retains only the
+\code{NAME}, \code{ACC}, and \code{DESC} fields needed during annotation finalization.
 }
 \keyword{internal}

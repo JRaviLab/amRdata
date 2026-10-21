@@ -13,6 +13,8 @@ already contain the tables written by \code{\link[=prepareGenomes]{prepareGenome
 genome-processing steps.}
 
 \item{path}{the path to working directory}
+
+\item{verbose}{Logical. Print status messages during feature export. Default 'TRUE'.}
 }
 \description{
 Clean feature matrices, then save as Parquet files
