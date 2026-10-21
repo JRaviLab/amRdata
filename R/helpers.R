@@ -1254,7 +1254,8 @@
     candidates$label,
     " [",
     candidates$dataset_id,
-    "]"
+    "] - ",
+    candidates$duckdb_path
   )
 
   selection <- utils::menu(

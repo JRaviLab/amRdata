@@ -741,7 +741,7 @@
 #' other inputs are matched case-insensitively against species names.
 #'
 #' Individual inputs that cannot be resolved generate warnings. The function
-#' stops if none of the supplied inputs can be matched.
+#' returns an empty tibble if none of the supplied inputs can be matched.
 #'
 #' @param base_dir Character. Project root used by the amRdata workflow.
 #'   Default: `"."`.
@@ -784,7 +784,7 @@
         bvbrc_bacs$genome.species,
         stringr::fixed(user_bac, ignore_case = TRUE)
       )
-      if (any(matched)) {
+      if (any(matched, na.rm = TRUE)) {
         matched_indices <- which(matched)
         bac_df <- tibble::tibble(
           genome.taxon_id = bvbrc_bacs$genome.taxon_id[matched_indices],
@@ -799,12 +799,7 @@
 
   bac_input_data <- bac_input_data[!is.na(bac_input_data$genome.species), ]
 
-  if (nrow(bac_input_data) > 0) {
-    return(bac_input_data)
-  } else {
-    stop("No matches in the database found for the provided inputs.", call. = FALSE)
-    return(NULL)
-  }
+  return(bac_input_data)
 }
 
 
