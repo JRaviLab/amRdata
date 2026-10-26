@@ -638,7 +638,7 @@ if (!is.null(status) && status != 0L) {
       "CREATE OR REPLACE TABLE genome_gene_protein AS ",
       "WITH cells AS (",
       "  SELECT DISTINCT ",
-      "    regexp_replace(genome_raw, '\\.PATRIC\\.\\..*$', '') AS genome_ids, ",
+      "    regexp_replace(regexp_replace(genome_raw, '^X', ''), '\\.PATRIC$', '') AS genome_ids, ",
       "    Gene, protein_ids ",
       "  FROM read_parquet(", gene_stage_sql, ")",
       ") ",
