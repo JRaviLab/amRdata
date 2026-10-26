@@ -195,10 +195,11 @@ stage parameters.
 \itemize{
 \item Set \code{resume = TRUE} to avoid re-running stages that already completed
 successfully in the most recent prior attempt (per the dataset manifest).
-\item Resuming is driven entirely by the manifest plus a check that the
-previously recorded output files still exist --- it does not re-validate
-the contents of those outputs, so don't rely on it if files may have
-been altered or deleted since the failed run.
+\item Reuse requires that parameters that would affect results match the prior run.
+Changed or missing parameters will rerun that stage and downstream stages.
+Adjusting thread and worker counts does not invalidate reuse. Resuming does
+not re-validate the contents of prior outputs, so don't rely on it if files
+may have been altered or deleted since the failed run.
 }
 }
 \section{Pipeline Steps}{

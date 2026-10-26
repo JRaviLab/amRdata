@@ -3341,10 +3341,11 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' **Resuming a Failed Run**
 #' * Set `resume = TRUE` to avoid re-running stages that already completed
 #'   successfully in the most recent prior attempt (per the dataset manifest).
-#' * Resuming is driven entirely by the manifest plus a check that the
-#'   previously recorded output files still exist --- it does not re-validate
-#'   the contents of those outputs, so don't rely on it if files may have
-#'   been altered or deleted since the failed run.
+#' * Reuse requires that parameters that would affect results match the prior run.
+#'   Changed or missing parameters will rerun that stage and downstream stages.
+#'   Adjusting thread and worker counts does not invalidate reuse. Resuming does 
+#'   not re-validate the contents of prior outputs, so don't rely on it if files 
+#'   may have been altered or deleted since the failed run.
 #'
 #' @seealso
 #' [prepareGenomes()], [runPanaroo2Duckdb()], [CDHIT2duckdb()], [cleanMetaData()],
@@ -3484,7 +3485,48 @@ runDataProcessing <- function(
   } else {
     NULL
   }
-  resume_completed <- .resume_plan(prev_run, stage_order)
+  if (is.null(hmmer_db_dir)) hmmer_db_dir <- .defaultHmmerDbDir()
+  dir.create(hmmer_db_dir, recursive = TRUE, showWarnings = FALSE)
+  hmmer_db_dir <- normalizePath(hmmer_db_dir, mustWork = TRUE)
+
+  # Compare results-affecting parameters
+  stage_parameters <- list(
+    panaroo = list(
+      core_threshold = panaroo_core_threshold,
+      len_dif_percent = panaroo_len_dif_percent,
+      cluster_threshold = panaroo_cluster_threshold,
+      family_seq_identity = panaroo_family_seq_identity,
+      split_jobs = panaroo_split_jobs,
+      refind_mode = panaroo_refind_mode,
+      strip_pseudogenes = panaroo_strip_pseudogenes,
+      remove_all_x_cds = TRUE
+    ),
+    cdhit = list(
+      identity = cdhit_identity,
+      word_length = cdhit_word_length,
+      extra_args = cdhit_extra_args,
+      output_prefix = cdhit_output_prefix
+    ),
+    hmmer = list(
+      databases = hmmer_databases,
+      database_dir = hmmer_db_dir,
+      database_cache = "BiocFileCache",
+      docker_image = hmmer_docker_image
+    )
+  )
+  resume_completed <- .resume_plan(prev_run, stage_order, stage_parameters)
+
+  reuse_stage <- function(manifest, name) {
+    prior <- .manifest_prior_stage(prev_run, name)
+    .manifest_stage(
+      manifest, name = name, status = "success",
+      parameters = prior$parameters,
+      inputs = duckdb_path,
+      outputs = purrr::map_chr(prior$outputs, "path"),
+      tool = prior$tool, metrics = prior$metrics,
+      message = "Resumed: reused successful output from a previous run."
+    )
+  }
 
   if (any(resume_completed)) {
     status(
@@ -3539,39 +3581,15 @@ runDataProcessing <- function(
 
     pan_dir <- .manifest_prior_stage(prev_run, "panaroo")$outputs[[1]]$path
 
-    manifest <- .manifest_stage(
-      manifest,
-      name = "panaroo",
-      status = "skipped",
-      inputs = duckdb_path,
-      outputs = c(
-        pan_dir,
-        duckdb_path
-      ),
-      tool = list(
-        name = "Panaroo",
-        docker_image = "staphb/panaroo:1.7.0"
-      ),
-      message = "Resumed: reused successful output from a previous run."
-    )
+    manifest <- reuse_stage(manifest, "panaroo")
   } else {
     # Log!
     manifest <- .manifest_stage(
       manifest,
       name = "panaroo",
       status = "running",
-      parameters = list(
-        core_threshold = panaroo_core_threshold,
-        len_dif_percent = panaroo_len_dif_percent,
-        cluster_threshold = panaroo_cluster_threshold,
-        family_seq_identity = panaroo_family_seq_identity,
-        threads_requested = requested_threads,
-        threads_used = threads,
-        split_jobs = panaroo_split_jobs,
-        refind_mode = panaroo_refind_mode,
-        strip_pseudogenes = panaroo_strip_pseudogenes,
-        remove_all_x_cds = TRUE
-      ),
+      parameters = c(stage_parameters$panaroo,
+                     list(threads_requested = requested_threads, threads_used = threads)),
       inputs = duckdb_path,
       tool = list(
         name = "Panaroo",
@@ -3606,17 +3624,7 @@ runDataProcessing <- function(
       manifest,
       name = "panaroo",
       status = "success",
-      parameters = list(
-        core_threshold = panaroo_core_threshold,
-        len_dif_percent = panaroo_len_dif_percent,
-        cluster_threshold = panaroo_cluster_threshold,
-        family_seq_identity = panaroo_family_seq_identity,
-        threads = threads,
-        split_jobs = panaroo_split_jobs,
-        refind_mode = panaroo_refind_mode,
-        strip_pseudogenes = panaroo_strip_pseudogenes,
-        remove_all_x_cds = TRUE
-      ),
+      parameters = c(stage_parameters$panaroo, list(threads = threads)),
       inputs = duckdb_path,
       outputs = c(
         pan_dir,
@@ -3635,37 +3643,14 @@ runDataProcessing <- function(
   if (resume_completed[["cdhit"]]) {
     status("Skipping CD-HIT (resume): reusing output from the previous run.")
 
-    manifest <- .manifest_stage(
-      manifest,
-      name = "cdhit",
-      status = "skipped",
-      inputs = duckdb_path,
-      outputs = c(
-        file.path(paths$cdhit, paste0(cdhit_output_prefix, "_input.fa")),
-        file.path(paths$cdhit, paste0(cdhit_output_prefix, "_proteins")),
-        file.path(duckdb_path)
-      ),
-      tool = list(
-        name = "CD-HIT",
-        version = "4.8.1",
-        docker_image = "weizhongli1987/cdhit:4.8.1"
-      ),
-      message = "Resumed: reused successful output from a previous run."
-    )
+    manifest <- reuse_stage(manifest, "cdhit")
   } else {
     # Log!
     manifest <- .manifest_stage(
       manifest,
       name = "cdhit",
       status = "running",
-      parameters = list(
-        identity = cdhit_identity,
-        word_length = cdhit_word_length,
-        memory = cdhit_memory,
-        threads = threads,
-        extra_args = cdhit_extra_args,
-        output_prefix = cdhit_output_prefix
-      ),
+      parameters = c(stage_parameters$cdhit, list(memory = cdhit_memory, threads = threads)),
       inputs = duckdb_path,
       tool = list(
         name = "CD-HIT",
@@ -3697,14 +3682,7 @@ runDataProcessing <- function(
       manifest,
       name = "cdhit",
       status = "success",
-      parameters = list(
-        identity = cdhit_identity,
-        word_length = cdhit_word_length,
-        memory = cdhit_memory,
-        threads = threads,
-        extra_args = cdhit_extra_args,
-        output_prefix = cdhit_output_prefix
-      ),
+      parameters = c(stage_parameters$cdhit, list(memory = cdhit_memory, threads = threads)),
       inputs = duckdb_path,
       outputs = c(
         file.path(paths$cdhit, paste0(cdhit_output_prefix, "_input.fa")),
@@ -3720,35 +3698,13 @@ runDataProcessing <- function(
   }
 
   # 3) HMMER -> write HMM-based match tables for desired databases
-  hmmer_db_dir <- if (is.null(hmmer_db_dir)) {
-    .defaultHmmerDbDir()
-  } else {
-    normalizePath(hmmer_db_dir, mustWork = FALSE)
-  }
-
-  dir.create(
-    hmmer_db_dir,
-    recursive = TRUE,
-    showWarnings = FALSE
-  )
-
   hmmer_result <- NULL
   defense_result <- NULL
 
   if (resume_completed[["hmmer"]]) {
     status("Skipping HMMER (resume): reusing output from the previous run.")
 
-    manifest <- .manifest_stage(
-      manifest,
-      name = "hmmer",
-      status = "skipped",
-      inputs = duckdb_path,
-      tool = list(
-        name = "HMMER",
-        docker_image = hmmer_docker_image
-      ),
-      message = "Resumed: reused successful output from a previous run."
-    )
+    manifest <- reuse_stage(manifest, "hmmer")
   } else {
     status("Running HMMER with databases: ", paste(hmmer_databases, collapse = ", "))
 
@@ -3756,15 +3712,9 @@ runDataProcessing <- function(
       manifest,
       name = "hmmer",
       status = "running",
-      parameters = list(
-        databases = hmmer_databases,
-        database_dir = hmmer_db_dir,
-        database_cache = "BiocFileCache",
-        docker_image = hmmer_docker_image,
-        threads = threads,
-        num_of_splits = hmmer_num_splits,
-        workers = hmmer_workers
-      ),
+      parameters = c(stage_parameters$hmmer,
+                     list(threads = threads, num_of_splits = hmmer_num_splits,
+                          workers = hmmer_workers)),
       inputs = duckdb_path,
       tool = list(
         name = "HMMER",
@@ -3834,16 +3784,13 @@ runDataProcessing <- function(
 
   missing_tables <- local({
     con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-
+    
     on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
+    
     expected_tables[
-      !vapply(
+      !purrr::map_lgl(
         expected_tables,
-        function(tbl) {
-          DBI::dbExistsTable(con, tbl)
-        },
-        logical(1)
+        ~ DBI::dbExistsTable(con, .x)
       )
     ]
   })
@@ -3860,15 +3807,9 @@ runDataProcessing <- function(
       manifest,
       name = "hmmer",
       status = "success",
-      parameters = list(
-        databases = hmmer_databases,
-        database_dir = hmmer_db_dir,
-        database_cache = "BiocFileCache",
-        docker_image = hmmer_docker_image,
-        threads = threads,
-        num_of_splits = hmmer_num_splits,
-        workers = hmmer_workers
-      ),
+      parameters = c(stage_parameters$hmmer,
+                     list(threads = threads, num_of_splits = hmmer_num_splits,
+                          workers = hmmer_workers)),
       inputs = duckdb_path,
       outputs = c(
         file.path(
@@ -3982,14 +3923,12 @@ runDataProcessing <- function(
     "dyad_protein_cluster",
     "struct_gene",
     "dyad_struct",
-    vapply(
-      .dyadHmmerSpecs(hmmer_databases),
-      `[[`,
-      character(1),
-      "dyad_view"
-    ),
-    "dyad_feature"
-  )
+      purrr::map_chr(
+        .dyadHmmerSpecs(hmmer_databases),
+        "dyad_view"
+      ),
+      "dyad_feature"
+    )
 
   local({
     con_orb <- .amr_connect_dataset_db(
@@ -4601,6 +4540,8 @@ exportProcessedData <- function(duckdb_path = NULL,
   dyad_relations <- unique(c(
     "dyads",
     "genome_dyad",
+    "member_dyads",
+    "genome_cluster_dyad",
     "struct_gene",
     grep(
       "^dyad_",
@@ -5645,21 +5586,19 @@ removeLocalFiles <- function(
   ]
 
   reclaimed_bytes <- sum(
-    vapply(
+    purrr::map_dbl(
       remove_paths,
-      path_bytes,
-      numeric(1)
+      path_bytes
     )
   )
 
   retained_bytes <- sum(
-    vapply(
+    purrr::map_dbl(
       c(
         paths$orb,
         paths$exports
       ),
-      path_bytes,
-      numeric(1)
+      path_bytes
     )
   )
 

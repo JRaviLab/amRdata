@@ -4,12 +4,15 @@
 \alias{.resume_plan}
 \title{Determine which pipeline stages can be safely skipped when resuming}
 \usage{
-.resume_plan(prev_run, stage_order)
+.resume_plan(prev_run, stage_order, parameters = NULL)
 }
 \arguments{
 \item{prev_run}{A single run entry from a manifest's \code{runs} list, or \code{NULL}.}
 
 \item{stage_order}{Character vector of stage names, in pipeline order.}
+
+\item{parameters}{Optional named list of current results-affecting parameters
+per stage. Missing or changed recorded parameters prevent reuse.}
 }
 \value{
 Named logical vector (named by \code{stage_order}) marking which

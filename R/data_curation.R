@@ -59,6 +59,8 @@
 #'   second. Default: `2048`.
 #' @param min_bytes Integer. Minimum file size considered a valid download.
 #'   Default: `100`.
+#' @param skip_existing Logical. Reuse complete local files. If FALSE, refresh
+#'   files on both download passes. Default: TRUE.
 #'
 #' @return `TRUE` when all required genome files are complete on disk;
 #'   otherwise `FALSE`.
@@ -68,7 +70,8 @@
                                max_time = 30L,
                                speed_time = 30L,
                                speed_limit = 2048L,
-                               min_bytes = 100L) {
+                               min_bytes = 100L,
+                               skip_existing = TRUE) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   exts <- c(".fna", ".PATRIC.faa", ".PATRIC.gff")
@@ -76,7 +79,7 @@
     dest <- file.path(out_dir, paste0(genomeID, ext))
     dest_tmp <- paste0(dest, ".tmp")
 
-    if (file.exists(dest) && file.info(dest)$size > min_bytes) next
+    if (isTRUE(skip_existing) && file.exists(dest) && file.info(dest)$size > min_bytes) next
     if (file.exists(dest) && file.info(dest)$size == 0) try(unlink(dest), silent = TRUE)
     if (file.exists(dest_tmp)) try(unlink(dest_tmp), silent = TRUE)
 
@@ -133,6 +136,9 @@
 #' @param progress Logical. Show transient genome download counters.
 #'   Default: `TRUE`.
 #'
+#' @param skip_existing Logical. Reuse complete local files. If FALSE, refresh
+#'   files on both download passes. Default: TRUE.
+#'
 #' @return Character vector of genome IDs with complete file sets after both
 #'   download passes.
 #' @keywords internal
@@ -141,7 +147,8 @@
                                     workers_second = 8L,
                                     log_file = NULL,
                                     verbose = TRUE,
-                                    progress = TRUE) {
+                                    progress = TRUE,
+                                    skip_existing = TRUE) {
   genome_ids <- unique(as.character(genome_ids))
   if (!length(genome_ids)) {
     return(character(0))
@@ -185,7 +192,8 @@
       ok <- .ftps_download_one(
         gid, out_dir,
         connect_timeout = 10L, max_time = 45L,
-        speed_time = 30L, speed_limit = 2048L
+        speed_time = 30L, speed_limit = 2048L,
+        skip_existing = skip_existing
       )
 
       p(
@@ -241,7 +249,8 @@
       ok <- .ftps_download_one(
         gid, out_dir,
         connect_timeout = 10L, max_time = 120L,
-        speed_time = 30L, speed_limit = 2048L
+        speed_time = 30L, speed_limit = 2048L,
+        skip_existing = skip_existing
       )
 
       p(
@@ -1615,8 +1624,12 @@ retrieveMetadata <- function(user_bacs,
           (`genome_drug.laboratory_typing_method` == "Computational Prediction")
       )
     } else {
-      # Lab_or_comp: Doesn't matter, keep any predictions
-      md <- md
+      md <- dplyr::filter(
+        md,
+        `genome_drug.evidence` %in% c("Laboratory Method", "Computational Method") |
+          (!is.na(`genome_drug.computational_method`) & nzchar(`genome_drug.computational_method`)) |
+          (`genome_drug.laboratory_typing_method` == "Computational Prediction")
+      )
     }
 
     md <- md |>
@@ -1969,7 +1982,8 @@ retrieveGenomes <- function(base_dir = ".",
       workers_second = ftp_workers,
       log_file = ftp_log,
       verbose = verbose,
-      progress = progress
+      progress = progress,
+      skip_existing = skip_existing
     )
 
     dropped_ids <- setdiff(ids, ok_ids)
@@ -2757,7 +2771,7 @@ exportTables <- function(duckdb_path,
       if (is.null(tables)) "default" else paste(unique(as.character(tables)), collapse = ", "),
       as.character(length(exported_files)),
       paste(summary_tables, collapse = ", "),
-      vapply(summary_tables, count_if_present, character(1))
+      purrr::map_chr(summary_tables, count_if_present)
     )
   )
 

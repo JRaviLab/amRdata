@@ -2476,11 +2476,13 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #'
 #' @param prev_run A single run entry from a manifest's `runs` list, or `NULL`.
 #' @param stage_order Character vector of stage names, in pipeline order.
+#' @param parameters Optional named list of current results-affecting parameters
+#'   per stage. Missing or changed recorded parameters prevent reuse.
 #'
 #' @return Named logical vector (named by `stage_order`) marking which
 #'   stages are safe to skip.
 #' @keywords internal
-.resume_plan <- function(prev_run, stage_order) {
+.resume_plan <- function(prev_run, stage_order, parameters = NULL) {
   completed <- stats::setNames(rep(FALSE, length(stage_order)), stage_order)
 
   for (name in stage_order) {
@@ -2488,6 +2490,20 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
     if (is.null(stage) || !identical(stage$status, "success")) {
       break
+    }
+
+    if (!is.null(parameters)) {
+      expected <- parameters[[name]]
+      if (is.null(expected) ||
+          !all(names(expected) %in% names(stage$parameters))) break
+      same <- purrr::map_lgl(names(expected), ~ {
+        isTRUE(all.equal(
+          as.list(unlist(stage$parameters[[.x]], use.names = FALSE)),
+          as.list(unlist(expected[[.x]], use.names = FALSE)),
+          check.attributes = FALSE, tolerance = 0
+        ))
+      })
+      if (!all(same)) break
     }
 
     out_paths <- purrr::map_chr(stage$outputs, "path")
@@ -2832,19 +2848,19 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     lines <- readLines(gff_in, warn = FALSE)
     rows <- which(!startsWith(lines, "#") & nzchar(trimws(lines)))
     fields <- strsplit(lines[rows], "\t", fixed = TRUE)
-    cds <- vapply(fields, function(x) {
-      length(x) >= 9L && grepl("CDS", x[[3L]], fixed = TRUE) && x[[8L]] == "0"
-    }, logical(1L))
+    cds <- purrr::map_lgl(fields, ~ {
+      length(.x) >= 9L && grepl("CDS", .x[[3L]], fixed = TRUE) && .x[[8L]] == "0"
+    })
     rows <- rows[cds]
     fields <- fields[cds]
     if (!length(rows)) next
 
     fasta <- Biostrings::readDNAStringSet(fna_in)
     names(fasta) <- sub("\\s.*$", "", names(fasta))
-    contigs <- sub("^accn\\|", "", vapply(fields, "[[", character(1L), 1L))
-    starts <- suppressWarnings(as.integer(vapply(fields, "[[", character(1L), 4L)))
-    ends <- suppressWarnings(as.integer(vapply(fields, "[[", character(1L), 5L)))
-    strands <- vapply(fields, "[[", character(1L), 7L)
+    contigs <- sub("^accn\\|", "", purrr::map_chr(fields, 1L))
+    starts <- suppressWarnings(as.integer(purrr::map_chr(fields, 4L)))
+    ends <- suppressWarnings(as.integer(purrr::map_chr(fields, 5L)))
+    strands <- purrr::map_chr(fields, 7L)
     index <- match(contigs, names(fasta))
     ends_used <- pmin(ends, Biostrings::width(fasta)[index])
     lengths <- ends_used - starts + 1L
@@ -2872,11 +2888,14 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     gff_out <- file.path(.docker_path(output_path), clean_dir, basename(gff_in))
     dir.create(dirname(gff_out), recursive = TRUE, showWarnings = FALSE)
     writeLines(lines[-rows[removed]], gff_out, useBytes = TRUE)
-    attributes <- vapply(fields[removed], "[[", character(1L), 9L)
-    annotation <- vapply(strsplit(attributes, ";", fixed = TRUE), function(x) {
-      id <- x[startsWith(x, "ID=")]
-      if (length(id)) substring(id[[1L]], 4L) else NA_character_
-    }, character(1L))
+    attributes <- purrr::map_chr(fields[removed], 9L)
+    annotation <- purrr::map_chr(
+      strsplit(attributes, ";", fixed = TRUE),
+      ~ {
+        id <- .x[startsWith(.x, "ID=")]
+        if (length(id)) substring(id[[1L]], 4L) else NA_character_
+      }
+    )
     audit <- dplyr::bind_rows(audit, tibble::tibble(
       genome_id = sub("\\.PATRIC\\.gff$", "", basename(gff_in)),
       annotation_id = annotation, gff_in = gff_in, gff_out = gff_out,
