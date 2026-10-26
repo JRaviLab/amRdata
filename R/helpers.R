@@ -2793,6 +2793,105 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   )
 }
 
+
+#' Remove CDS records that translate entirely to unknown amino acids
+#'
+#' Screen CDS using paired FASTA sequences before Panaroo, which accepts all-X 
+#' translations during preprocessing, then crashes in validation.
+#'
+#' @inheritParams .stripPseudogeneGFFs
+#' @param clean_dir Subdirectory for changed GFF copies.
+#' @return A list with rewritten \code{panaroo_input_files} and an \code{audit}
+#'   tibble containing one row per removed CDS, including its genome, annotation
+#'   ID, coordinates, sequence lengths, input paths, and removal reason.
+#' @details
+#' Matches Panaroo's default translation: any codon containing a base other than 
+#' ACGT becomes X, even if ambiguous codons could be resolved. CDS already 
+#' rejected by Panaroo for length or internal stops are left to existing filter.
+#' Original GFF and FASTA files are preserved.
+#' @keywords internal
+.removeAllXCDSGFFs <- function(panaroo_input_files,
+                               output_path,
+                               clean_dir = "gff_invalid_cds_clean") {
+  out_lines <- as.character(panaroo_input_files)
+  audit <- tibble::tibble(
+    genome_id = character(), annotation_id = character(),
+    gff_in = character(), gff_out = character(), fna_in = character(),
+    gff_line = integer(), contig = character(), start = integer(),
+    end = integer(), strand = character(), dna_length = integer(),
+    protein_length = integer(), reason = character()
+  )
+
+  for (i in seq_along(out_lines)) {
+    parts <- strsplit(trimws(out_lines[[i]]), "\\s+")[[1]]
+    if (length(parts) != 2L) {
+      stop("Broken Panaroo input line: ", out_lines[[i]], call. = FALSE)
+    }
+    gff_in <- .docker_path(parts[[1L]])
+    fna_in <- .docker_path(parts[[2L]])
+    lines <- readLines(gff_in, warn = FALSE)
+    rows <- which(!startsWith(lines, "#") & nzchar(trimws(lines)))
+    fields <- strsplit(lines[rows], "\t", fixed = TRUE)
+    cds <- vapply(fields, function(x) {
+      length(x) >= 9L && grepl("CDS", x[[3L]], fixed = TRUE) && x[[8L]] == "0"
+    }, logical(1L))
+    rows <- rows[cds]
+    fields <- fields[cds]
+    if (!length(rows)) next
+
+    fasta <- Biostrings::readDNAStringSet(fna_in)
+    names(fasta) <- sub("\\s.*$", "", names(fasta))
+    contigs <- sub("^accn\\|", "", vapply(fields, "[[", character(1L), 1L))
+    starts <- suppressWarnings(as.integer(vapply(fields, "[[", character(1L), 4L)))
+    ends <- suppressWarnings(as.integer(vapply(fields, "[[", character(1L), 5L)))
+    strands <- vapply(fields, "[[", character(1L), 7L)
+    index <- match(contigs, names(fasta))
+    ends_used <- pmin(ends, Biostrings::width(fasta)[index])
+    lengths <- ends_used - starts + 1L
+    eligible <- which(!is.na(index) & !is.na(lengths) & starts >= 1L &
+                        lengths >= 34L & lengths %% 3L == 0L)
+    if (!length(eligible)) next
+
+    dna <- Biostrings::subseq(
+      fasta[index[eligible]], start = starts[eligible], end = ends_used[eligible]
+    )
+    ambiguous <- rowSums(Biostrings::letterFrequency(dna, c("A", "C", "G", "T"))) <
+      lengths[eligible]
+    eligible <- eligible[ambiguous]
+    dna <- dna[ambiguous]
+    if (!length(eligible)) next
+    reverse <- strands[eligible] == "-"
+    dna[reverse] <- Biostrings::reverseComplement(dna[reverse])
+    # Biostrings can resolve some fuzzy codons that Panaroo translates as X. 
+    # Canonical codons must start on codon boundary.
+    coding <- sub("(TAA|TAG|TGA)$", "", as.character(dna))
+    all_x <- !grepl("^(?:.{3})*[ACGT]{3}", coding, perl = TRUE)
+    if (!any(all_x)) next
+
+    removed <- eligible[all_x]
+    gff_out <- file.path(.docker_path(output_path), clean_dir, basename(gff_in))
+    dir.create(dirname(gff_out), recursive = TRUE, showWarnings = FALSE)
+    writeLines(lines[-rows[removed]], gff_out, useBytes = TRUE)
+    attributes <- vapply(fields[removed], "[[", character(1L), 9L)
+    annotation <- vapply(strsplit(attributes, ";", fixed = TRUE), function(x) {
+      id <- x[startsWith(x, "ID=")]
+      if (length(id)) substring(id[[1L]], 4L) else NA_character_
+    }, character(1L))
+    audit <- dplyr::bind_rows(audit, tibble::tibble(
+      genome_id = sub("\\.PATRIC\\.gff$", "", basename(gff_in)),
+      annotation_id = annotation, gff_in = gff_in, gff_out = gff_out,
+      fna_in = fna_in, gff_line = rows[removed], contig = contigs[removed],
+      start = starts[removed], end = ends[removed], strand = strands[removed],
+      dna_length = lengths[removed],
+      protein_length = as.integer(nchar(coding[all_x]) / 3L),
+      reason = "all_x_translation"
+    ))
+    out_lines[[i]] <- paste(gff_out, fna_in)
+  }
+
+  list(panaroo_input_files = out_lines, audit = audit)
+}
+
 #' Export a dyad-centric feature table
 #'
 #' Builds a one-row-per-dyad table linking protein-gene dyads to structural

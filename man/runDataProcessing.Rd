@@ -150,6 +150,11 @@ internal helpers (Dockerized tools where applicable) and records processing
 parameters and provenance in the dataset manifest.
 }
 \details{
+CDS that would translate entirely to unknown amino acids are automatically
+removed from copied Panaroo GFFs before clustering, with individual removals
+recorded in \code{panaroo_invalid_cds_audit.csv} in the Panaroo output directory.
+This check also runs when \code{panaroo_strip_pseudogenes = FALSE}.
+
 \strong{Docker & Platform Notes}
 \itemize{
 \item Panaroo, CD-HIT, and HMMER run inside Docker containers.

@@ -90,6 +90,10 @@ verifies that a valid pangenome has been produced, and updates the DuckDB with
 standardized table names consistent with downstream processing steps.
 }
 \details{
+CDS seqs that contain only unknown amino acids ('X') are automatically removed
+from copied GFFs before clustering. Originals and FASTA files are preserved.
+Each removal is recorded in \code{panaroo_invalid_cds_audit.csv} under the Panaroo
+output directory.
 \subsection{Panaroo Output Discovery}{
 
 After running \code{.runPanaroo()}, the function scans \code{output_path} for directories

@@ -382,6 +382,18 @@ if (!is.null(status) && status != 0L) {
 
   filtered_panaroo_input <- purrr::map_chr(split_files[valid_entries], paste, collapse = " ")
 
+  # Audit independently of pseudogene removal pre-batching
+  cleaned <- .removeAllXCDSGFFs(filtered_panaroo_input, output_path)
+  filtered_panaroo_input <- cleaned$panaroo_input_files
+  readr::write_csv(
+    cleaned$audit, file.path(output_path, "panaroo_invalid_cds_audit.csv")
+  )
+  .log_or_message(
+    log_path, verbose,
+    sprintf("CDS audit: %d genomes, %d removed all-X CDS.",
+            length(filtered_panaroo_input), nrow(cleaned$audit))
+  )
+
   total_lines <- length(filtered_panaroo_input)
   batch_size <- if (isTRUE(split_jobs)) ceiling(total_lines / 5) else total_lines
   panaroo_batches <- split(filtered_panaroo_input, ceiling(seq_along(filtered_panaroo_input) / batch_size))
@@ -899,6 +911,11 @@ if (!is.null(status) && status != 0L) {
 #' (either the single-run output or the merged `merge_output/` directory).
 #'
 #' @details
+#' CDS seqs that contain only unknown amino acids ('X') are automatically removed 
+#' from copied GFFs before clustering. Originals and FASTA files are preserved. 
+#' Each removal is recorded in `panaroo_invalid_cds_audit.csv` under the Panaroo 
+#' output directory.
+#'
 #' ### Panaroo Output Discovery
 #' After running `.runPanaroo()`, the function scans `output_path` for directories
 #' matching `panaroo_out_*` and identifies those containing a `final_graph.gml` file —
@@ -3288,6 +3305,11 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' }
 #'
 #' @details
+#' CDS that would translate entirely to unknown amino acids are automatically
+#' removed from copied Panaroo GFFs before clustering, with individual removals
+#' recorded in `panaroo_invalid_cds_audit.csv` in the Panaroo output directory.
+#' This check also runs when `panaroo_strip_pseudogenes = FALSE`.
+#'
 #' **Docker & Platform Notes**
 #' * Panaroo, CD-HIT, and HMMER run inside Docker containers.
 #' * HMMER databases are stored separately from individual bug directories and
@@ -3547,7 +3569,8 @@ runDataProcessing <- function(
         threads_used = threads,
         split_jobs = panaroo_split_jobs,
         refind_mode = panaroo_refind_mode,
-        strip_pseudogenes = panaroo_strip_pseudogenes
+        strip_pseudogenes = panaroo_strip_pseudogenes,
+        remove_all_x_cds = TRUE
       ),
       inputs = duckdb_path,
       tool = list(
@@ -3591,12 +3614,14 @@ runDataProcessing <- function(
         threads = threads,
         split_jobs = panaroo_split_jobs,
         refind_mode = panaroo_refind_mode,
-        strip_pseudogenes = panaroo_strip_pseudogenes
+        strip_pseudogenes = panaroo_strip_pseudogenes,
+        remove_all_x_cds = TRUE
       ),
       inputs = duckdb_path,
       outputs = c(
         pan_dir,
-        duckdb_path
+        duckdb_path,
+        file.path(paths$panaroo, "panaroo_invalid_cds_audit.csv")
       ),
       tool = list(
         name = "Panaroo",
