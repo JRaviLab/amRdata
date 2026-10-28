@@ -9,6 +9,7 @@ runDataProcessing(
   threads = 8,
   resume = FALSE,
   export_tabular_data = FALSE,
+  evidence_mode = NULL,
   panaroo_split_jobs = FALSE,
   panaroo_core_threshold = 0.9,
   panaroo_len_dif_percent = 0.95,
@@ -53,6 +54,13 @@ run, since they're fast and idempotent. Default: \code{FALSE}.}
 \item{export_tabular_data}{Logical. If TRUE, automatically call
 \code{\link[=exportProcessedData]{exportProcessedData()}} after the processing pipeline completes to create
 the default human-readable exports. Default: \code{FALSE}.}
+
+\item{evidence_mode}{Character or \code{NULL}. Which AMR evidence metadata
+cleaning keeps: \code{"lab_only"}, \code{"lab_or_comp"}, \code{"comp_only"}, or \code{"any"}.
+If \code{NULL} (default), uses the mode recorded by \code{\link[=prepareGenomes]{prepareGenomes()}} in the
+dataset manifest, or \code{"lab_only"} if none is recorded. A value that
+disagrees with the manifest is an error, so processing can't diverge from
+the genomes that were selected and downloaded.}
 
 \item{panaroo_split_jobs}{Logical. If \code{TRUE}, Panaroo runs in multiple batches
 that can be merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaroo runs once on all

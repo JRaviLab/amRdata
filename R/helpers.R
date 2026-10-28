@@ -1220,6 +1220,46 @@
     )
 }
 
+# Evidence mode for processing: the one prepareGenomes() recorded in the
+# manifest, unless the caller passes one. A conflicting explicit value stops, so
+# processing can't diverge from the genomes that were selected and downloaded.
+.amr_resolve_evidence_mode <- function(duckdb_path, evidence_mode = NULL) {
+  choices <- c("lab_only", "lab_or_comp", "comp_only", "any")
+  if (!is.null(evidence_mode)) {
+    evidence_mode <- match.arg(evidence_mode, choices)
+  }
+
+  recorded <- NULL
+  manifest_path <- .manifest_find_latest(duckdb_path)
+  manifest <- if (!is.null(manifest_path)) {
+    tryCatch(
+      jsonlite::read_json(manifest_path, simplifyVector = FALSE),
+      error = function(e) NULL
+    )
+  }
+  for (run in rev(manifest$runs %||% list())) {
+    stage <- .manifest_prior_stage(run, "download_genomes")
+    mode <- as.character(unlist(stage$parameters$evidence_mode))[1]
+    if (identical(stage$status, "success") && mode %in% choices) {
+      recorded <- mode
+      break
+    }
+  }
+
+  if (is.null(evidence_mode)) {
+    return(recorded %||% "lab_only")
+  }
+  if (!is.null(recorded) && !identical(evidence_mode, recorded)) {
+    stop(
+      "evidence_mode = '", evidence_mode, "' does not match the '", recorded,
+      "' used by prepareGenomes() for this dataset. Omit `evidence_mode` to ",
+      "use '", recorded, "', or rerun prepareGenomes() with the mode you want.",
+      call. = FALSE
+    )
+  }
+  evidence_mode
+}
+
 # Interactive selector function thing, very cool
 .amr_select_processing_dataset <- function() {
   if (!interactive()) {

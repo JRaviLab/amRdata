@@ -2732,10 +2732,16 @@ cas_hmm <- .amr_progress_step(
 #'   already contain the tables written by [prepareGenomes()] and the upstream
 #'   genome-processing steps.
 #' @param path the path to working directory
+#' @param evidence_mode Character or `NULL`. Which AMR evidence to keep:
+#'   `"lab_only"`, `"lab_or_comp"`, `"comp_only"`, or `"any"`. If `NULL`
+#'   (default), uses the mode recorded by [prepareGenomes()] in the dataset
+#'   manifest, or `"lab_only"` if none is recorded. An explicit value that
+#'   disagrees with the manifest is an error.
 #'
 #' @export
-cleanMetaData <- function(duckdb_path, path = NULL) {
+cleanMetaData <- function(duckdb_path, path = NULL, evidence_mode = NULL) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  evidence_mode <- .amr_resolve_evidence_mode(duckdb_path, evidence_mode)
   paths <- .amr_paths_from_duckdb(duckdb_path)
   if (is.null(path)) {
     path <- paths$orb
@@ -2750,15 +2756,12 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
-  # Define lab methods
-  lab_methods <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution", "Biofosun Gram-positive panels broth dilution",
-                  "Vitek_2-P607_card", "cation-adjusted Mueller-Hinton broth", "gradient_diffusion", "kirby-bauer_disc_diffusion")
-
   dplyr::tbl(con, "filtered") |>
     tibble::as_tibble() |>
     dplyr::select("genome.genome_id") |>
     dplyr::left_join(dplyr::tbl(con, "metadata") |>
       tibble::as_tibble(), by = dplyr::join_by("genome.genome_id" == "genome_drug.genome_id")) |>
+    .amr_filter_evidence(evidence_mode) |>
     dplyr::select(
       "genome.genome_id", "genome_drug.antibiotic",
       "genome_drug.genome_name", "genome_drug.evidence", "genome_drug.laboratory_typing_method",
@@ -2767,11 +2770,6 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
       "genome.isolation_country", "genome.host_common_name",
       "genome.isolation_source", "genome.species"
     ) |>
-    dplyr::mutate(genome_drug.evidence = dplyr::case_when(
-      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",
-      genome_drug.laboratory_typing_method == "Computational Prediction"  ~ "Computational Method",
-      TRUE ~ genome_drug.evidence)) |>
-    dplyr::filter(genome_drug.evidence == "Laboratory Method") |>
     dplyr::left_join(clean_drug, by = c("genome_drug.antibiotic" = "original_drug")) |>
     dplyr::filter(!is.na(cleaned_drug)) |>
     dplyr::left_join(drug_class, by = c("cleaned_drug" = "drug")) |>
@@ -3248,6 +3246,13 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'   [exportProcessedData()] after the processing pipeline completes to create
 #'   the default human-readable exports. Default: `FALSE`.
 #'
+#' @param evidence_mode Character or `NULL`. Which AMR evidence metadata
+#'   cleaning keeps: `"lab_only"`, `"lab_or_comp"`, `"comp_only"`, or `"any"`.
+#'   If `NULL` (default), uses the mode recorded by [prepareGenomes()] in the
+#'   dataset manifest, or `"lab_only"` if none is recorded. A value that
+#'   disagrees with the manifest is an error, so processing can't diverge from
+#'   the genomes that were selected and downloaded.
+#'
 #' @param panaroo_split_jobs Logical. If `TRUE`, Panaroo runs in multiple batches
 #'   that can be merged by [.mergePanaroo()]. If `FALSE`, Panaroo runs once on all
 #'   isolates. Default: `FALSE`.
@@ -3370,6 +3375,7 @@ runDataProcessing <- function(
     threads = 8,
     resume = FALSE,
     export_tabular_data = FALSE,
+    evidence_mode = NULL,
 
 
     # Panaroo
@@ -3416,6 +3422,7 @@ runDataProcessing <- function(
   requested_threads <- threads
   threads <- .resolve_workers(requested = threads)
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  evidence_mode <- .amr_resolve_evidence_mode(duckdb_path, evidence_mode)
   paths <- .amr_paths_from_duckdb(duckdb_path)
 
   purrr::walk(
@@ -3842,7 +3849,11 @@ runDataProcessing <- function(
 
   # 4) Clean metadata and export Parquet + Parquet-backed DuckDB
   .amr_progress_step("Building resource bundle", {
-      cleanMetaData(duckdb_path = duckdb_path, path = paths$orb)
+      cleanMetaData(
+        duckdb_path = duckdb_path,
+        path = paths$orb,
+        evidence_mode = evidence_mode
+      )
 
       cleanData(
         duckdb_path = duckdb_path,
@@ -4042,6 +4053,7 @@ runDataProcessing <- function(
     name = "clean_metadata_and_export",
     status = "success",
     parameters = list(
+      evidence_mode = evidence_mode,
       reference_data = c(
         "clean_drug",
         "drug_class",

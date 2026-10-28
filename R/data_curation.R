@@ -16,6 +16,49 @@
   )
 }
 
+#' Relabel AMR evidence and keep rows allowed by an evidence mode
+#'
+#' Shared by `.filterGenomes()` and `cleanMetaData()` so genome selection and
+#' phenotype cleaning use the same rule. Evidence is first relabeled from the
+#' laboratory typing method, then rows are kept by `evidence_mode`:
+#' `lab_only`, `comp_only`, `lab_or_comp` (lab or comp evidence; if evidence is
+#' NA/blank, a typing method or computational method must be present), or
+#' `any` (no filtering).
+#' @keywords internal
+.amr_filter_evidence <- function(md,
+                                 evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any")) {
+  evidence_mode <- match.arg(evidence_mode)
+
+  typing <- md[["genome_drug.laboratory_typing_method"]]
+  # The CLI metadata download does not fetch computational_method
+  comp_method <- if ("genome_drug.computational_method" %in% names(md)) {
+    md[["genome_drug.computational_method"]]
+  } else {
+    rep(NA_character_, nrow(md))
+  }
+  filled <- function(x) !is.na(x) & nzchar(trimws(x))
+
+  md[["genome_drug.evidence"]] <- dplyr::case_when(
+    typing %in% .amr_lab_methods() ~ "Laboratory Method",
+    typing == "Computational Prediction" ~ "Computational Method",
+    TRUE ~ md[["genome_drug.evidence"]]
+  )
+  evidence <- md[["genome_drug.evidence"]]
+
+  keep <- switch(
+    evidence_mode,
+    lab_only = evidence %in% "Laboratory Method",
+    comp_only = evidence %in% "Computational Method" |
+      filled(comp_method) |
+      typing %in% "Computational Prediction",
+    lab_or_comp = evidence %in% c("Laboratory Method", "Computational Method") |
+      (!filled(evidence) & (filled(typing) | filled(comp_method))),
+    any = rep(TRUE, nrow(md))
+  )
+
+  md[keep, , drop = FALSE]
+}
+
 #' Helps tag genomes with their AMR evidence for parsing
 #' @keywords internal
 .create_amr_tagged_view <- function(con) {
@@ -1554,7 +1597,9 @@ retrieveMetadata <- function(user_bacs,
 #'
 #' @param evidence_mode Character. One of:
 #'   "lab_only"   (default) -> only laboratory evidence
-#'   "lab_or_comp"          -> laboratory OR computational evidence
+#'   "lab_or_comp"          -> laboratory OR computational evidence; if the
+#'                             evidence column is NA/blank, a laboratory typing
+#'                             method or computational method must be present
 #'   "comp_only"            -> only computational evidence
 #'   "any"                  -> no AMR required (from genome_data; Good only)
 #' @return A path to a DuckDB database and table_name = "filtered"
@@ -1600,37 +1645,7 @@ retrieveMetadata <- function(user_bacs,
       return(NULL)
     }
 
-    # Assigning the text strings that exist for AMR phenotypes
-    lab_methods <- .amr_lab_methods()
-
-    md <- tibble::as_tibble(md) |>
-      dplyr::mutate(
-        `genome_drug.evidence` = dplyr::case_when(
-          `genome_drug.laboratory_typing_method` %in% lab_methods ~
-            "Laboratory Method",
-          `genome_drug.laboratory_typing_method` == "Computational Prediction" ~
-            "Computational Method",
-          TRUE ~ `genome_drug.evidence`
-        )
-      )
-
-    if (evidence_mode == "lab_only") {
-      md <- dplyr::filter(md, `genome_drug.evidence` == "Laboratory Method")
-    } else if (evidence_mode == "comp_only") {
-      md <- dplyr::filter(
-        md,
-        `genome_drug.evidence` == "Computational Method" |
-          (!is.na(`genome_drug.computational_method`) & nzchar(`genome_drug.computational_method`)) |
-          (`genome_drug.laboratory_typing_method` == "Computational Prediction")
-      )
-    } else {
-      md <- dplyr::filter(
-        md,
-        `genome_drug.evidence` %in% c("Laboratory Method", "Computational Method") |
-          (!is.na(`genome_drug.computational_method`) & nzchar(`genome_drug.computational_method`)) |
-          (`genome_drug.laboratory_typing_method` == "Computational Prediction")
-      )
-    }
+    md <- .amr_filter_evidence(tibble::as_tibble(md), evidence_mode)
 
     md <- md |>
       dplyr::filter(`genome.genome_quality` == "Good") |>
