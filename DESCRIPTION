@@ -49,6 +49,7 @@ Imports:
     parallelly,
     purrr,
     readr,
+    R.utils,
     stringr,
     tibble,
     tidyr
