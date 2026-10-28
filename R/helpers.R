@@ -1254,7 +1254,10 @@
     candidates$label,
     " [",
     candidates$dataset_id,
-    "]"
+    "]\n    ",
+    dirname(dirname(candidates$duckdb_path)),
+    "\n    last updated ",
+    format(candidates$modified, "%Y-%m-%d %H:%M")
   )
 
   selection <- utils::menu(
