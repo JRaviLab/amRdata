@@ -20,7 +20,7 @@
 "any"                  -> no AMR required (from genome_data; Good only)}
 }
 \value{
-A list with a DuckDB connection and table_name = "filtered"
+A path to a DuckDB database and table_name = "filtered"
 }
 \description{
 Preferred path: use per-selection DB "metadata" table (from retrieveMetadata()) and
