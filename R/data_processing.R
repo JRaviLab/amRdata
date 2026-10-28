@@ -268,10 +268,6 @@ if (!is.null(status) && status != 0L) {
   )
 }
 
-  if (inherits(res, "error")) {
-    stop(sprintf("Docker/Panaroo failed to launch: %s", res$message))
-  }
-
   invisible(res)
 }
 
@@ -386,6 +382,18 @@ if (!is.null(status) && status != 0L) {
 
   filtered_panaroo_input <- purrr::map_chr(split_files[valid_entries], paste, collapse = " ")
 
+  # Audit independently of pseudogene removal pre-batching
+  cleaned <- .removeAllXCDSGFFs(filtered_panaroo_input, output_path)
+  filtered_panaroo_input <- cleaned$panaroo_input_files
+  readr::write_csv(
+    cleaned$audit, file.path(output_path, "panaroo_invalid_cds_audit.csv")
+  )
+  .log_or_message(
+    log_path, verbose,
+    sprintf("CDS audit: %d genomes, %d removed all-X CDS.",
+            length(filtered_panaroo_input), nrow(cleaned$audit))
+  )
+
   total_lines <- length(filtered_panaroo_input)
   batch_size <- if (isTRUE(split_jobs)) ceiling(total_lines / 5) else total_lines
   panaroo_batches <- split(filtered_panaroo_input, ceiling(seq_along(filtered_panaroo_input) / batch_size))
@@ -441,7 +449,7 @@ if (!is.null(status) && status != 0L) {
 #' @param family_seq_identity Numeric. Gene family clustering identity (`-f`). Default `0.5`.
 #' @param threads Integer. Number of threads for Panaroo and parallel execution. Default `8`.
 #'
-#' @returns A a single combined pangenome.
+#' @returns A single combined pangenome.
 #'
 #' @keywords internal
 .mergePanaroo <- function(input_path,
@@ -512,150 +520,210 @@ if (!is.null(status) && status != 0L) {
 
 #' Load Panaroo gene presence/absence table into DuckDB
 #'
-#' Reads `gene_presence_absence.csv` and constructs a genome-by-gene count
-#' table, writing it into the DuckDB database as `gene_count`.
+#' Reads Panaroo's gene presence/absence and structural presence/absence files
+#' directly with DuckDB. Only occupied cells are retained to minimize size of
+#' pangenomes as dense genome-by-feature matrices in R or DuckDB.
 #'
 #' @param panaroo_output_path Path to a Panaroo result directory.
-#' @param duckdb_path Path to a DuckDB database file.
+#' @param duckdb_path Path to the per-selection DuckDB database.
 #'
-#' @return A tibble containing the gene count matrix.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
-.panaroo2geneTable <- function(panaroo_output_path, duckdb_path) {
-  filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
-  duckdb_path <- normalizePath(duckdb_path)
+.importPanarooTables <- function(panaroo_output_path, duckdb_path) {
+  panaroo_output_path <- normalizePath(panaroo_output_path, mustWork = TRUE)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+
+  gpa_path <- file.path(panaroo_output_path, "gene_presence_absence.csv")
+  struct_path <- file.path(panaroo_output_path, "struct_presence_absence.Rtab")
+
+  if (!file.exists(gpa_path)) {
+    stop("Panaroo gene presence/absence file not found: ", gpa_path, call. = FALSE)
+  }
+  if (!file.exists(struct_path)) {
+    stop("Panaroo structural presence/absence file not found: ", struct_path, call. = FALSE)
+  }
+
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  gene_count <- read.table(filepath, sep = ",", header = TRUE, fill = TRUE, quote = "") |>
-    tibble::as_tibble() |>
-    dplyr::select(-c(Non.unique.Gene.name, Annotation)) |>
-    tidyr::pivot_longer(cols = -1) |>
-    tidyr::pivot_wider(names_from = Gene, values_from = value) |>
-    dplyr::rename("genome_id" = "name") |>
-    dplyr::mutate(genome_id = stringr::str_replace_all(genome_id, c("^X" = "", "\\.PATRIC$" = ""))) |>
-    dplyr::mutate(across(-genome_id, ~ ifelse(. == "", 0, stringr::str_count(., ";") + 1)))
+  DBI::dbExecute(con, "SET preserve_insertion_order = false")
 
-  DBI::dbWriteTable(con, "gene_count", gene_count, overwrite = TRUE)
-  gene_count
+  gpa_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(gpa_path, winslash = "/", mustWork = TRUE)
+  )
+  struct_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(struct_path, winslash = "/", mustWork = TRUE)
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TEMP VIEW panaroo_gpa AS ",
+      "SELECT * FROM read_csv(", gpa_sql, ", ",
+      "header=true, delim=',', quote='\"', escape='\"', ",
+      "all_varchar=true, nullstr='', parallel=true)"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TEMP VIEW panaroo_struct AS ",
+      "SELECT * FROM read_csv(", struct_sql, ", ",
+      "header=true, delim='\\t', quote='\"', escape='\"', ",
+      "all_varchar=true, nullstr='', parallel=true)"
+    )
+  )
+
+  # Creating a single temp scan of the CSV from which we can hoover up
+  # gene counts, names, and protein mappings efficiently
+  gene_stage <- tempfile(
+    pattern = "panaroo_gene_cells_",
+    tmpdir = dirname(duckdb_path),
+    fileext = ".parquet"
+  )
+  on.exit(
+    if (file.exists(gene_stage)) unlink(gene_stage, force = TRUE),
+    add = TRUE
+  )
+
+  gene_stage_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(gene_stage, winslash = "/", mustWork = FALSE)
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "COPY (",
+      "SELECT Gene, Annotation, genome_raw, protein_ids ",
+      "FROM (",
+      "  UNPIVOT panaroo_gpa ",
+      "  ON COLUMNS(* EXCLUDE (\"Gene\", \"Non-unique Gene name\", \"Annotation\")) ",
+      "  INTO NAME genome_raw VALUE protein_ids",
+      ") ",
+      "WHERE protein_ids IS NOT NULL AND protein_ids <> ''",
+      ") TO ", gene_stage_sql, " ",
+      "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 1, PRESERVE_ORDER false)"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TABLE gene_names AS ",
+      "SELECT DISTINCT CAST(Gene AS VARCHAR) AS Gene, ",
+      "CAST(Annotation AS VARCHAR) AS Annotation ",
+      "FROM read_parquet(", gene_stage_sql, ")"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TABLE gene_count AS ",
+      "SELECT ",
+      "CAST(regexp_replace(regexp_replace(genome_raw, '^X', ''), '\\.PATRIC$', '') AS VARCHAR) AS genome_id, ",
+      "CAST(Gene AS VARCHAR) AS gene, ",
+      "CAST(length(protein_ids) - length(replace(protein_ids, ';', '')) + 1 AS INTEGER) AS value ",
+      "FROM read_parquet(", gene_stage_sql, ")"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TABLE genome_gene_protein AS ",
+      "WITH cells AS (",
+      "  SELECT DISTINCT ",
+      "    regexp_replace(regexp_replace(genome_raw, '^X', ''), '\\.PATRIC$', '') AS genome_ids, ",
+      "    Gene, protein_ids ",
+      "  FROM read_parquet(", gene_stage_sql, ")",
+      ") ",
+      "SELECT CAST(genome_ids AS VARCHAR) AS genome_ids, ",
+      "CAST(Gene AS VARCHAR) AS Gene, ",
+      "CAST(replace(replace(protein_id, '_pseudo', ''), '_len', '') AS VARCHAR) AS protein_ids ",
+      "FROM cells, UNNEST(string_split(protein_ids, ';')) AS split_protein(protein_id)"
+    )
+  )
+
+  unlink(gene_stage, force = TRUE)
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TABLE gene_struct AS
+     SELECT
+       CAST(
+         regexp_replace(
+           regexp_replace(genome_raw, '^X', ''),
+           '\\.PATRIC$',
+           ''
+         ) AS VARCHAR
+       ) AS genome_id,
+       CAST(Gene AS VARCHAR) AS struct,
+       CAST(value AS INTEGER) AS value
+     FROM (
+       UNPIVOT panaroo_struct
+       ON COLUMNS(* EXCLUDE (\"Gene\"))
+       INTO NAME genome_raw VALUE value
+     )
+     WHERE value IS NOT NULL
+       AND value <> ''
+       AND CAST(value AS INTEGER) <> 0"
+  )
+
+  invisible(TRUE)
 }
 
 
-#' Extract gene names and annotations from Panaroo outputs
+#' Import Panaroo reference sequences into DuckDB
 #'
-#' Reads Panaroo's `gene_presence_absence.csv` to extract gene identifiers
-#' and gene annotations, then writes them into the DuckDB table `gene_names`.
+#' @inheritParams .importPanarooTables
 #'
-#' @inheritParams .panaroo2geneTable
-#'
-#' @return A tibble with `Gene` and `Annotation` columns.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
-.panaroo2geneNames <- function(panaroo_output_path, duckdb_path) {
-  filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
-  duckdb_path <- normalizePath(duckdb_path)
+.importPanarooReference <- function(panaroo_output_path, duckdb_path) {
+  panaroo_output_path <- normalizePath(panaroo_output_path, mustWork = TRUE)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  fasta_path <- file.path(panaroo_output_path, "pan_genome_reference.fa")
+
+  if (!file.exists(fasta_path)) {
+    stop("Panaroo reference FASTA not found: ", fasta_path, call. = FALSE)
+  }
+
+  gene_fasta <- Biostrings::readDNAStringSet(filepath = fasta_path)
+
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  gene_names <- read.table(filepath, sep = ",", header = TRUE, fill = TRUE, quote = "") |>
-    tibble::as_tibble() |>
-    dplyr::select(c(Gene, Annotation))
-
-  DBI::dbWriteTable(con, "gene_names", gene_names, overwrite = TRUE)
-  gene_names
-}
-
-
-#' Create structural variant presence/absence table from Panaroo outputs
-#'
-#' Reads `struct_presence_absence.Rtab` and constructs a genome-by-struct
-#' presence/absence matrix, writing the result to `gene_struct` in DuckDB.
-#'
-#' @inheritParams .panaroo2geneTable
-#'
-#' @return A tibble containing the struct matrix.
-#'
-#' @keywords internal
-.panaroo2StructTable <- function(panaroo_output_path, duckdb_path) {
-  struct_filepath <- file.path(normalizePath(panaroo_output_path), "struct_presence_absence.Rtab")
-  duckdb_path <- normalizePath(duckdb_path)
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  gene_struct <- read.table(struct_filepath, sep = "\t", header = TRUE, fill = TRUE, quote = "") |>
-    tibble::as_tibble() |>
-    tidyr::pivot_longer(cols = -1) |>
-    tidyr::pivot_wider(names_from = Gene, values_from = value) |>
-    dplyr::rename("genome_id" = "name") |>
-    dplyr::mutate(genome_id = stringr::str_replace_all(genome_id, c("^X" = "", "\\.PATRIC$" = "")))
-
-  DBI::dbWriteTable(con, "gene_struct", gene_struct, overwrite = TRUE)
-  gene_struct
-}
-
-
-#' Import additional Panaroo reference outputs into DuckDB
-#'
-#' Loads reference sequences and long-format gene–protein mappings from
-#' Panaroo outputs and stores them into DuckDB (`gene_ref_seq`, `genome_gene_protein`).
-#'
-#' @inheritParams .panaroo2geneTable
-#'
-#' @return Invisibly returns TRUE.
-#'
-#' @keywords internal
-.panaroo2OtherTables <- function(panaroo_output_path, duckdb_path) {
-  panaroo_output_path <- normalizePath(panaroo_output_path)
-  duckdb_path <- normalizePath(duckdb_path)
-  fasta_filepath <- file.path(panaroo_output_path, "pan_genome_reference.fa")
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  gene_fasta <- Biostrings::readDNAStringSet(filepath = fasta_filepath)
-  DBI::dbWriteTable(con, "gene_ref_seq",
+  DBI::dbWriteTable(
+    con,
+    "gene_ref_seq",
     tibble::tibble(
       name = names(gene_fasta),
       sequence = as.character(gene_fasta)
     ),
     overwrite = TRUE
   )
-  # col_types = FALSE reduces console spam
-  readr::read_csv(file.path(panaroo_output_path, "gene_presence_absence.csv"), show_col_types = FALSE) |>
-    dplyr::select(-`Non-unique Gene name`) |>
-    tidyr::pivot_longer(-c("Gene", "Annotation"),
-      names_to = "genome_ids",
-      values_to = "protein_ids"
-    ) |>
-    dplyr::mutate(genome_ids = sub("\\.PATRIC\\.\\.\\..*$", "", genome_ids)) |>
-    dplyr::select(genome_ids, Gene, protein_ids) |>
-    dplyr::distinct() |>
-    dplyr::filter(!is.na(protein_ids)) |>
-    tidyr::separate_rows(protein_ids, sep = ";") |>
-    # dplyr::filter(!stringr::str_detect(protein_ids, "_pseudo")) |>
-    dplyr::mutate(protein_ids = gsub("_pseudo", "", protein_ids)) |>
-    dplyr::mutate(protein_ids = gsub("_len", "", protein_ids)) |>
-    DBI::dbWriteTable(conn = con, name = "genome_gene_protein", overwrite = TRUE)
+
+  invisible(TRUE)
 }
 
 
 #' Import all Panaroo-derived outputs into DuckDB
 #'
-#' Wrapper that loads gene counts, gene names, struct tables, and reference
-#' sequence tables from a Panaroo output directory into a DuckDB database.
+#' Stores gene and structural counts as sparse long relations and imports the
+#' Panaroo reference sequences.
 #'
-#' @inheritParams .panaroo2geneTable
+#' @inheritParams .importPanarooTables
 #'
-#' @return Invisibly returns TRUE.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
 .panaroo2duckdb <- function(panaroo_output_path, duckdb_path) {
-  panaroo_output_path <- normalizePath(panaroo_output_path)
-  duckdb_path <- normalizePath(duckdb_path)
-
-  .panaroo2geneTable(panaroo_output_path, duckdb_path)
-  .panaroo2geneNames(panaroo_output_path, duckdb_path)
-  .panaroo2StructTable(panaroo_output_path, duckdb_path)
-  .panaroo2OtherTables(panaroo_output_path, duckdb_path)
+  .importPanarooTables(panaroo_output_path, duckdb_path)
+  .importPanarooReference(panaroo_output_path, duckdb_path)
   invisible(TRUE)
 }
 
@@ -762,6 +830,11 @@ if (!is.null(status) && status != 0L) {
   })
   .log_tool_output(log_path, "CD-HIT", output)
 
+  status <- attr(output, "status")
+  if (!is.null(status) && status != 0L) {
+    stop(sprintf("cd-hit failed with exit status %s:\n%s", status, paste(output, collapse = "\n")))
+  }
+
   if (!file.exists(clustered_faa)) {
     stop("CD-HIT failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
   }
@@ -804,7 +877,7 @@ if (!is.null(status) && status != 0L) {
 #'   `prepareGenomes()`. Must contain a `files` table with Panaroo input file paths.
 #' @param output_path Character or `NULL`. Directory where Panaroo outputs
 #'   (`panaroo_out_*` or merged `merge_output/`) will be written. If `NULL`,
-#'   defaults to `dirname(duckdb_path)`.
+#'   defaults to the dataset's `panaroo/` directory.
 #'
 #' @param core_threshold Numeric. Panaroo `--core_threshold` parameter.
 #'   Default: `0.90`.
@@ -828,6 +901,13 @@ if (!is.null(status) && status != 0L) {
 #'   `"strict"`). See [.processPanaroo()] for what refinding does and the runtime
 #'   caveat behind the current default. Default `"off"`.
 #'
+#' @param strip_pseudogenes Logical. Whether to remove pseudogene features from
+#'    GFF files before running Panaroo.
+#' @param pseudogene_clean_dir Character. Subdirectory used for cleaned GFFs.
+#' @param write_pseudogene_audit Logical. Whether to write the pseudogene
+#'   cleaning audit to record what was removed from where.
+#' @param log_path Character or `NULL`. Optional processing log path.
+#'
 #' @param verbose Logical. Print status messages during Panaroo execution,
 #'   merging, and DuckDB import. Default: `TRUE`.
 #'
@@ -836,6 +916,11 @@ if (!is.null(status) && status != 0L) {
 #' (either the single-run output or the merged `merge_output/` directory).
 #'
 #' @details
+#' CDS seqs that contain only unknown amino acids ('X') are automatically removed 
+#' from copied GFFs before clustering. Originals and FASTA files are preserved. 
+#' Each removal is recorded in `panaroo_invalid_cds_audit.csv` under the Panaroo 
+#' output directory.
+#'
 #' ### Panaroo Output Discovery
 #' After running `.runPanaroo()`, the function scans `output_path` for directories
 #' matching `panaroo_out_*` and identifies those containing a `final_graph.gml` file —
@@ -963,129 +1048,182 @@ runPanaroo2Duckdb <- function(duckdb_path,
 }
 
 
-#' Parse CD-HIT `.clstr` output into a long-format mapping
+#' Stream CD-HIT `.clstr` output to staging file
 #'
-#' Reads a CD-HIT `.clstr` file and constructs a mapping of clusters to genome IDs.
+#' Reads CD-HIT cluster file in bounded chunks so Big Data (tm) never needs to be
+#' materialized as one R object. The staging file is consumed immediately by
+#' DuckDB and neatly deleted by [CDHIT2duckdb()].
 #'
-#' @param clustered_faa Base path to CD-HIT output (without `.clstr` extension).
+#' @param clustered_faa Base path to CD-HIT output (without `.clstr`).
+#' @param stage_path Temporary TSV path.
+#' @param chunk_lines Number of input lines read per chunk.
 #'
-#' @return A data.table with columns `cluster` and `genome_id`.
-#'
+#' @return Invisibly returns the number of parsed member records.
 #' @keywords internal
-.parseProteinClusters <- function(clustered_faa) {
+.streamProteinClusters <- function(clustered_faa, stage_path, chunk_lines = 250000L) {
   clstr <- paste0(clustered_faa, ".clstr")
   if (!file.exists(clstr)) {
-    stop(
-      "CD-HIT cluster file not found: ", clstr,
-      "\nEnsure .runCDHIT() completed successfully and produced the .clstr file."
-    )
+    stop("CD-HIT cluster file not found: ", clstr, call. = FALSE)
   }
 
-  lines <- data.table::fread(clstr, sep = "\n", header = FALSE)$V1
-  cluster_ids <- grep("^>Cluster", lines)
-  cluster_map <- data.table::data.table()
+  if (file.exists(stage_path)) unlink(stage_path, force = TRUE)
 
-  for (i in seq_along(cluster_ids)) {
-    start <- cluster_ids[i] + 1
-    end <- if (i < length(cluster_ids)) cluster_ids[i + 1] - 1 else length(lines)
-    cluster_lines <- lines[start:end]
+  input <- file(clstr, open = "r")
+  on.exit(close(input), add = TRUE)
 
-    # This finds the reference cluster ID and names the cluster with it
-    ref_line <- grep("\\*$", cluster_lines, value = TRUE)
-    ref_id <- if (length(ref_line) > 0) {
-      stringr::str_extract(ref_line, "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+")
+  current_cluster <- NA_integer_
+  row_index <- 0L
+  first_write <- TRUE
+
+  repeat {
+    lines <- readLines(input, n = chunk_lines, warn = FALSE)
+    if (!length(lines)) break
+
+    is_header <- startsWith(lines, ">Cluster ")
+    cluster_index <- rep.int(NA_integer_, length(lines))
+
+    if (any(is_header)) {
+      cluster_index[is_header] <- suppressWarnings(
+        as.integer(sub("^>Cluster\\s+", "", lines[is_header]))
+      )
+    }
+
+    if (!is.na(current_cluster)) {
+      cluster_index <- data.table::nafill(
+        c(current_cluster, cluster_index),
+        type = "locf"
+      )[-1L]
     } else {
-      paste0("Cluster_", i - 1)
+      cluster_index <- data.table::nafill(cluster_index, type = "locf")
     }
 
-    # Pull genome IDs
-    genome_matches <- stringr::str_match(
-      cluster_lines,
-      "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+"
-    )[, 2]
-    genome_matches <- genome_matches[!is.na(genome_matches)]
+    known <- cluster_index[!is.na(cluster_index)]
+    if (length(known)) current_cluster <- known[[length(known)]]
 
-    if (length(genome_matches) > 0) {
-      cluster_map <- data.table::rbindlist(list(
-        cluster_map,
-        data.table::data.table(cluster = ref_id, genome_id = genome_matches)
-      ), use.names = TRUE)
-    }
-  }
+    member_idx <- which(!is_header & !is.na(cluster_index))
+    if (!length(member_idx)) next
 
-  cluster_map
-}
-
-#' Parse CD-HIT `.clstr` output into a long-format mapping
-#'
-#' Reads a CD-HIT `.clstr` file and constructs a mapping of clusters to member feature ids.
-#'
-#' @param clustered_faa Base path to CD-HIT output (without `.clstr` extension).
-#'
-#' @return A tibble with columns `cluster` and `member`.
-#'
-#' @keywords internal
-.extractMembersInClusters <- function(clustered_faa) {
-  clstr <- paste0(clustered_faa, ".clstr")
-  if (!file.exists(clstr)) {
-    stop(
-      "CD-HIT cluster file not found: ", clstr,
-      "\nEnsure .runCDHIT() completed successfully and produced the .clstr file."
+    member_lines <- lines[member_idx]
+    member <- stringr::str_extract(
+      member_lines,
+      "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+"
     )
+    keep <- !is.na(member)
+    if (!any(keep)) next
+
+    member <- member[keep]
+    member_lines <- member_lines[keep]
+    member_cluster <- cluster_index[member_idx][keep]
+    n <- length(member)
+
+    out <- data.table::data.table(
+      row_index = seq.int(row_index + 1L, row_index + n),
+      cluster_index = member_cluster,
+      member = member,
+      genome_id = stringr::str_match(
+        member,
+        "^fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+$"
+      )[, 2L],
+      is_representative = grepl("\\*\\s*$", member_lines)
+    )
+
+    row_index <- row_index + n
+
+    data.table::fwrite(
+      out,
+      file = stage_path,
+      sep = "\t",
+      append = !first_write,
+      col.names = first_write,
+      quote = FALSE,
+      na = ""
+    )
+    first_write <- FALSE
   }
 
-  lines <- data.table::fread(clstr, sep = "\n", header = FALSE)$V1
-  cluster_ids <- grep("^>Cluster", lines)
-  cluster_member <- data.table::data.table()
-
-  for (i in seq_along(cluster_ids)) {
-    start <- cluster_ids[i] + 1
-    end <- if (i < length(cluster_ids)) cluster_ids[i + 1] - 1 else length(lines)
-    cluster_lines <- lines[start:end]
-
-    # This finds the reference cluster ID and names the cluster with it
-    ref_line <- grep("\\*$", cluster_lines, value = TRUE)
-    ref_id <- if (length(ref_line) > 0) {
-      stringr::str_extract(ref_line, "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+")
-    } else {
-      paste0("Cluster_", i - 1)
-    }
-
-    # Pull genome IDs
-    members <- stringr::str_match(
-      cluster_lines,
-      "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+"
-    )[, 1]
-    members <- members[!is.na(members)]
-
-    if (length(members) > 0) {
-      cluster_member <- data.table::rbindlist(list(
-        cluster_member,
-        data.table::data.table(cluster = ref_id, member = members)
-      ), use.names = TRUE)
-    }
+  if (first_write) {
+    stop("No CD-HIT member records were parsed from: ", clstr, call. = FALSE)
   }
 
-  tibble::as_tibble(cluster_member)
+  invisible(row_index)
 }
 
-#' Build genome-by-protein-cluster count matrix
+#' Import streamed CD-HIT members into DuckDB
 #'
-#' Converts a long-format cluster mapping from `.parseProteinClusters()`
-#' into a genome-by-cluster count matrix.
+#' Resolves representative proteins in DuckDB and writes the two working tables
+#' needed downstream.
 #'
-#' @param cluster_map A data.table with `cluster` and `genome_id`.
+#' @param con Open DuckDB connection.
+#' @param stage_path TSV produced by [.streamProteinClusters()].
 #'
-#' @return A wide-format matrix as a data.frame.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
-.buildProtMatrices <- function(cluster_map) {
-  cluster_map[, count := 1]
-  reshape2::dcast(cluster_map, genome_id ~ cluster, value.var = "count", fun.aggregate = sum, fill = 0)
-}
-# Back-compat wrapper (older external name)
-buildMatrices <- function(cluster_map) .buildProtMatrices(cluster_map)
+.importProteinClusters <- function(con, stage_path) {
+  stage_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(stage_path, winslash = "/", mustWork = TRUE)
+  )
 
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TEMP TABLE cdhit_raw AS ",
+      "SELECT * FROM read_csv(", stage_sql, ", delim='\\t', header=true, columns={",
+      "'row_index':'BIGINT',",
+      "'cluster_index':'BIGINT',",
+      "'member':'VARCHAR',",
+      "'genome_id':'VARCHAR',",
+      "'is_representative':'BOOLEAN'})"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TEMP TABLE cdhit_membership AS
+     WITH refs AS (
+       SELECT
+         cluster_index,
+         max(CASE WHEN is_representative THEN member END) AS cluster
+       FROM cdhit_raw
+       GROUP BY cluster_index
+     )
+     SELECT
+       m.row_index,
+       COALESCE(
+         r.cluster,
+         'Cluster_' || CAST(m.cluster_index AS VARCHAR)
+       ) AS cluster,
+       m.member,
+       m.genome_id
+     FROM cdhit_raw m
+     LEFT JOIN refs r USING (cluster_index)"
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TABLE protein_members AS
+     SELECT cluster, member
+     FROM cdhit_membership
+     ORDER BY row_index"
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TABLE protein_count AS
+     SELECT
+       CAST(genome_id AS VARCHAR) AS genome_id,
+       CAST(cluster AS VARCHAR) AS protein,
+       CAST(count(*) AS INTEGER) AS value
+     FROM cdhit_membership
+     WHERE genome_id IS NOT NULL
+     GROUP BY genome_id, cluster"
+  )
+
+  DBI::dbExecute(con, "DROP TABLE cdhit_membership")
+  DBI::dbExecute(con, "DROP TABLE cdhit_raw")
+
+  invisible(TRUE)
+}
 
 #' Extract per-cluster protein names from CD-HIT cluster FASTA
 #'
@@ -1149,13 +1287,25 @@ CDHIT2duckdb <- function(duckdb_path,
     log_path = log_path
   )
 
-  cluster_map <- .parseProteinClusters(cdhit_outputs$clustered_faa)
-  cluster_count <- .buildProtMatrices(cluster_map)
-
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  DBI::dbWriteTable(con, "protein_count", cluster_count, overwrite = TRUE)
+  stage_path <- tempfile(
+    pattern = paste0(output_prefix, "_membership_"),
+    tmpdir = output_path,
+    fileext = ".tsv"
+  )
+  on.exit(
+    if (file.exists(stage_path)) unlink(stage_path, force = TRUE),
+    add = TRUE
+  )
+
+  .streamProteinClusters(
+    cdhit_outputs$clustered_faa,
+    stage_path = stage_path
+  )
+  .importProteinClusters(con, stage_path)
+  unlink(stage_path, force = TRUE)
 
   cluster_fasta <- cdhit_outputs$cdhit_input_faa
   cluster_name <- .clusterNames(cluster_fasta)
@@ -1170,9 +1320,6 @@ CDHIT2duckdb <- function(duckdb_path,
     overwrite = TRUE
   )
 
-  cluster_member <- .extractMembersInClusters(cdhit_outputs$clustered_faa)
-  DBI::dbWriteTable(con, "protein_members", cluster_member, overwrite = TRUE)
-
   invisible(TRUE)
 }
 
@@ -1184,9 +1331,10 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   prepared separately by the DefenseFinder/CasFinder workflow.
 #' @param docker_image Character. Docker image containing HMMER tools used to
 #'   press the prepared databases. Default: `"staphb/hmmer"`.
-#' @param hmmer_db_url NON-FUNCTIONAL. Character or `NULL`. URL used to download
-#'   a custom HMMER database when `databases` contains names not covered by the
-#'   built-in database definitions. This function is not currently active!
+#' @param hmmer_db_url EXPERIMENTAL. Character or `NULL`. URL used to download
+#'   a custom HMMER database when `databases` contains a name outside the
+#'   built-in database definitions. Custom database support has NOT YET BEEN
+#'   VALIDATED and is not part of the current, supported workflow.
 #' @param verbose Logical. Print status messages while checking, downloading,
 #'   combining, and pressing databases. Default: `TRUE`.
 #' @param log_path Character or `NULL`. Optional path for database preparation
@@ -1194,9 +1342,9 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @param progress Logical. Show download progress when HMM database archives
 #'   must be retrieved. Default: `TRUE`.
 #'
-#' @return A named list containing the prepared HMM path and associated files
-#'   for each requested database..
-#'
+#' @return A named list for each requested database containing the prepared
+#'   HMM path, pressed HMMER files, cached profile-metadata Parquet path,
+#'   source metadata, and BiocFileCache identifiers.
 #' @keywords internal
 .prepareHmmerDatabases <- function(
     hmmer_db_dir,
@@ -1476,7 +1624,9 @@ CDHIT2duckdb <- function(duckdb_path,
 
       .log_tool_output(log_path, "HMMER", output)
 
-      if (!all(file.exists(pressed_files))) {
+      status <- attr(output, "status")
+
+      if ((!is.null(status) && status != 0L) || !all(file.exists(pressed_files))) {
         stop(
           "hmmpress failed for ",
           db_name,
@@ -1492,13 +1642,22 @@ CDHIT2duckdb <- function(duckdb_path,
       hmm_path = hmm_file
     )
 
+    profile_resource <- .hmmer_profile_cache(
+      hmm_file = hmm_file,
+      database = db_name,
+      verbose = verbose
+    )
+
     db_paths[[db_name]] <- list(
       hmm = hmm_file,
+      profiles = profile_resource$path,
       source = db$url,
       type = db$type,
       pressed = pressed_files,
       bfc_rid = bfc_resource$rid,
-      bfc_rname = bfc_resource$rname
+      bfc_rname = bfc_resource$rname,
+      profiles_bfc_rid = profile_resource$rid,
+      profiles_bfc_rname = profile_resource$rname
     )
 
     if (verbose) {
@@ -1882,7 +2041,7 @@ CDHIT2duckdb <- function(duckdb_path,
             purrr::map(arrow::read_parquet) |>
             dplyr::bind_rows() |>
             dplyr::left_join(
-              .parse_hmmer_profiles(db_paths[[database_name]]$hmm) |>
+              arrow::read_parquet(db_paths[[database_name]]$profiles) |>
                 dplyr::select(query_name = profile_name, description = profile_description),
               by = "query_name"
             )
@@ -1925,10 +2084,12 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @param databases Character vector of HMMER database names to process.
 #'   Each database must correspond to a `protein_<database>` annotation table
 #'   already present in the DuckDB.
-#' @param output_path Character. Directory where the genome-by-annotation
-#'   Parquet files will be written. Defaults to `dirname(duckdb_path)`.
+#' @param output_path Character or `NULL`. Directory where genome-by-annotation
+#'   Parquet files are written. If `NULL`, defaults to the dataset's `orb/`
+#'   directory.
 #'
-#' @return Invisibly returns the path to the written count Parquet file.
+#' @return Invisibly returns a named list of count-Parquet paths, indexed by
+#'   database.
 #'
 #' @seealso [CDHIT2duckdb()], [runDataProcessing()]
 #'
@@ -1941,89 +2102,53 @@ CDHIT2duckdb <- function(duckdb_path,
 ) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
   paths <- .amr_paths_from_duckdb(duckdb_path)
+
   if (is.null(output_path)) {
     output_path <- paths$orb
   }
 
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- normalizePath(output_path, mustWork = TRUE)
-  duckdb_path <- .docker_path(duckdb_path)
+
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  protein_long <- DBI::dbReadTable(
-    con,
-    "protein_count"
-  ) |>
-    tibble::as_tibble() |>
-    tidyr::pivot_longer(
-      cols = -genome_id,
-      names_to = "protein",
-      values_to = "count"
-    ) |>
-    dplyr::filter(count > 0) |>
-    dplyr::mutate(
-      protein = stringr::str_replace(
-        protein,
-        "^fig\\.",
-        "fig|"
-      )
-    )
 
   count_paths <- list()
 
   for (database in databases) {
-
-    annotation_table <- paste0(
-      "protein_",
-      database
-    )
+    annotation_table <- paste0("protein_", database)
 
     if (!DBI::dbExistsTable(con, annotation_table)) {
-
-      warning(
-        annotation_table,
-        " not found in DuckDB. Skipping."
-      )
-
+      warning(annotation_table, " not found in DuckDB. Skipping.")
       next
     }
 
     if (isTRUE(verbose)) {
-      message(
-        "Processing ",
-        annotation_table
-      )
+      message("Processing ", annotation_table)
     }
 
-    annotation <- DBI::dbReadTable(
+    annotation_sql <- DBI::dbQuoteIdentifier(
       con,
       annotation_table
-    ) |>
-      tibble::as_tibble() |>
-      dplyr::distinct(
-        protein,
-        query_name
-      )
+    )
 
-    genome_annot_matrix <- protein_long |>
-      dplyr::inner_join(
-        annotation |>
-          dplyr::select(
-            protein,
-            query_name
-          ),
-        by = "protein",
-        relationship = "many-to-many"
-      ) |>
-      dplyr::group_by(
-        genome_id,
-        query_name
-      ) |>
-      dplyr::summarise(
-        count = sum(count),
-        .groups = "drop"
-      ) |>
+    genome_annot_matrix <- DBI::dbGetQuery(
+      con,
+      paste0(
+        "SELECT ",
+        "pc.genome_id, ",
+        "a.query_name, ",
+        "CAST(sum(pc.value) AS INTEGER) AS count ",
+        "FROM protein_count pc ",
+        "JOIN (",
+        "  SELECT DISTINCT protein, query_name ",
+        "  FROM ", annotation_sql,
+        ") a ON pc.protein = a.protein ",
+        "WHERE pc.value > 0 ",
+        "  AND a.query_name IS NOT NULL ",
+        "GROUP BY pc.genome_id, a.query_name"
+      )
+    ) |>
       tidyr::pivot_wider(
         names_from = query_name,
         values_from = count,
@@ -2037,10 +2162,7 @@ CDHIT2duckdb <- function(duckdb_path,
 
     count_path <- file.path(
       output_path,
-      paste0(
-        count_table,
-        ".parquet"
-      )
+      paste0(count_table, ".parquet")
     )
 
     arrow::write_parquet(
@@ -2058,10 +2180,7 @@ CDHIT2duckdb <- function(duckdb_path,
     count_paths[[database]] <- count_path
 
     if (isTRUE(verbose)) {
-      message(
-        "Created ",
-        count_table
-      )
+      message("Created ", count_table)
     }
   }
 
@@ -2075,7 +2194,8 @@ CDHIT2duckdb <- function(duckdb_path,
 #' sequences in the selected dataset, and writes the resulting annotations for
 #' downstream processing.
 #'
-#' Prepared model files are reused when already present.
+#' Prepared combined HMMs, pressed indexes, and profile metadata are reused when
+#' already present.
 #'
 #' @param defense_db_dir Character. Directory used to cache DefenseFinder and
 #'   CasFinder model files.
@@ -2091,7 +2211,9 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @param progress Logical. Show download progress when DefenseFinder or
 #'   CasFinder model archives must be retrieved. Default: `TRUE`.
 #'
-#' @return Invisibly returns the path to the DefenseCas annotation Parquet file.
+#' @return Invisibly returns a list containing prepared DefenseFinder and
+#'   CasFinder HMM/profile-cache metadata and the DefenseCas annotation Parquet
+#'   path.
 #' @keywords internal
 .defenseHMMER <- function(
     defense_db_dir,
@@ -2174,6 +2296,32 @@ CDHIT2duckdb <- function(duckdb_path,
     db_name
   ) {
 
+    combined_hmm <- file.path(
+      repo_dir,
+      paste0(
+        db_name,
+        ".hmm"
+      )
+    )
+
+    pressed_files <- paste0(
+      combined_hmm,
+      c(
+        ".h3m",
+        ".h3i",
+        ".h3f",
+        ".h3p"
+      )
+    )
+
+    prepared <- file.exists(combined_hmm) &&
+      all(file.exists(pressed_files)) &&
+      all(file.info(pressed_files)$mtime >= file.info(combined_hmm)$mtime)
+
+    if (prepared) {
+      return(combined_hmm)
+    }
+
     profile_dirs <- list.dirs(
       repo_dir,
       recursive = TRUE,
@@ -2184,7 +2332,6 @@ CDHIT2duckdb <- function(duckdb_path,
       basename(profile_dirs) == "profiles"
     ]
 
-    # moving to purrr implementation
     hmm_files <- profile_dirs |>
       purrr::map(\(x) list.files(x,
                                  pattern = "\\.hmm$",
@@ -2230,17 +2377,11 @@ CDHIT2duckdb <- function(duckdb_path,
       )
     }
 
-    combined_hmm <- file.path(
-      repo_dir,
-      paste0(
-        db_name,
-        ".hmm"
-      )
+    # Rebuild combined HMMs and all pressed indexes as one cached unit
+    unlink(
+      c(combined_hmm, pressed_files),
+      force = TRUE
     )
-
-    if (file.exists(combined_hmm)) {
-      unlink(combined_hmm)
-    }
 
     file.create(combined_hmm)
 
@@ -2252,66 +2393,59 @@ CDHIT2duckdb <- function(duckdb_path,
       )
     }
 
-    pressed_files <- paste0(
-      combined_hmm,
-      c(
-        ".h3m",
-        ".h3i",
-        ".h3f",
-        ".h3p"
-      )
+    .log_or_message(
+      log_path,
+      verbose,
+      "Running hmmpress for ",
+      db_name
     )
 
-    if (!all(file.exists(pressed_files))) {
+    stderr_file <- tempfile(
+      pattern = paste0(
+        "hmmpress_",
+        db_name,
+        "_"
+      ),
+      fileext = ".stderr"
+    )
 
-      .log_or_message(log_path, verbose, "Running hmmpress for ", db_name)
+    on.exit(
+      unlink(
+        stderr_file,
+        force = TRUE
+      ),
+      add = TRUE
+    )
 
-      stderr_file <- tempfile(
-        pattern = paste0(
-          "hmmpress_",
+    status <- tryCatch(
+      system2(
+        "docker",
+        args = c(
+          "run",
+          "--rm",
+          "-v",
+          paste0(dirname(combined_hmm), ":/db"),
+          docker_image,
+          "hmmpress",
+          file.path("/db", basename(combined_hmm))
+        ),
+        stdout = FALSE,
+        stderr = stderr_file
+      ),
+      error = function(e) {
+        stop(
+          "hmmpress execution failed for ",
           db_name,
-          "_"
-        ),
-        fileext = ".stderr"
-      )
+          ": ",
+          e$message
+        )
+      }
+    )
 
-      on.exit(
-        unlink(
-          stderr_file,
-          force = TRUE
-        ),
-        add = TRUE
-      )
-
-      status <- tryCatch(
-        system2(
-          "docker",
-          args = c(
-            "run",
-            "--rm",
-            "-v",
-            paste0(dirname(combined_hmm), ":/db"),
-            docker_image,
-            "hmmpress",
-            file.path("/db", basename(combined_hmm))
-          ),
-          stdout = FALSE,
-          stderr = stderr_file
-        ),
-        error = function(e) {
-          stop(
-            "hmmpress execution failed for ",
-            db_name,
-            ": ",
-            e$message
-          )
-        }
-      )
-
-      if (
-        !identical(status, 0L) ||
-        !all(file.exists(pressed_files))
-      ) {
+    if (
+      !identical(status, 0L) ||
+      !all(file.exists(pressed_files))
+    ) {
 
         diagnostics <- if (file.exists(stderr_file)) {
           readLines(
@@ -2340,7 +2474,6 @@ CDHIT2duckdb <- function(duckdb_path,
           call. = FALSE
         )
       }
-    }
 
     combined_hmm
   }
@@ -2383,6 +2516,20 @@ cas_hmm <- .amr_progress_step(
     hmm_path = cas_hmm
   )
 
+  defense_profiles <- .hmmer_profile_cache(
+    hmm_file = defense_hmm,
+    database = "DefenseCas",
+    verbose = verbose,
+    component = "DefenseFinder"
+  )
+
+  cas_profiles <- .hmmer_profile_cache(
+    hmm_file = cas_hmm,
+    database = "DefenseCas",
+    verbose = verbose,
+    component = "CasFinder"
+  )
+
   ####################################################################
   # load proteins
   ####################################################################
@@ -2416,26 +2563,26 @@ cas_hmm <- .amr_progress_step(
   ####################################################################
 
   databases <- list(
-    DefenseFinder = defense_hmm,
-    CasFinder = cas_hmm
+    DefenseFinder = list(
+      hmm = defense_hmm,
+      profiles = defense_profiles$path
+    ),
+    CasFinder = list(
+      hmm = cas_hmm,
+      profiles = cas_profiles$path
+    )
   )
 
   combined_tbl <- purrr::imap_dfr(
-    databases, function(hmm_file, db_name) {
+    databases, function(database, db_name) {
+    .log_or_message(log_path, verbose, "Running ", db_name)
 
-      .log_or_message(log_path, verbose, "Running ", db_name)
+    hmm_file <- database$hmm
 
-      tbl_file <- file.path(output_path, paste0("protein_", db_name, ".tbl")
-      )
+    tbl_file <- file.path(output_path, paste0("protein_", db_name, ".tbl"))
 
-      stderr_file <- tempfile(
-        pattern = paste0(
-          "hmmer_",
-          db_name,
-          "_"
-        ),
-        fileext = ".stderr"
-      )
+    stderr_file <- tempfile(pattern = paste0("hmmer_", db_name, "_"),
+                            fileext = ".stderr")
 
       status <- .amr_progress_step(
                   paste0("Running ", db_name, " HMMER"),
@@ -2459,14 +2606,8 @@ cas_hmm <- .amr_progress_step(
                         "--domZ",
                         total_proteins,
                         "--domtblout",
-                        file.path(
-                          "/work",
-                          basename(tbl_file)
-                        ),
-                        file.path(
-                          "/db",
-                          basename(hmm_file)
-                        ),
+                        file.path("/work", basename(tbl_file)),
+                        file.path("/db", basename(hmm_file)),
                         "/work/protein_DefenseCas.faa"
                       ),
                       stdout = FALSE,
@@ -2537,7 +2678,7 @@ cas_hmm <- .amr_progress_step(
           database = db_name
         ) |>
         dplyr::left_join(
-          .parse_hmmer_profiles(hmm_file) |>
+          arrow::read_parquet(database$profiles) |>
             dplyr::select(
               query_name = profile_name,
               query_accession = profile_accession,
@@ -2571,13 +2712,19 @@ cas_hmm <- .amr_progress_step(
     databases = list(
       DefenseFinder = list(
         hmm = defense_hmm,
+        profiles = defense_profiles$path,
         bfc_rid = defense_bfc$rid,
-        bfc_rname = defense_bfc$rname
+        bfc_rname = defense_bfc$rname,
+        profiles_bfc_rid = defense_profiles$rid,
+        profiles_bfc_rname = defense_profiles$rname
       ),
       CasFinder = list(
         hmm = cas_hmm,
+        profiles = cas_profiles$path,
         bfc_rid = cas_bfc$rid,
-        bfc_rname = cas_bfc$rname
+        bfc_rname = cas_bfc$rname,
+        profiles_bfc_rid = cas_profiles$rid,
+        profiles_bfc_rname = cas_profiles$rname
       )
     ),
     output = parquet_file
@@ -2592,10 +2739,16 @@ cas_hmm <- .amr_progress_step(
 #'   already contain the tables written by [prepareGenomes()] and the upstream
 #'   genome-processing steps.
 #' @param path the path to working directory
+#' @param evidence_mode Character or `NULL`. Which AMR evidence to keep:
+#'   `"lab_only"`, `"lab_or_comp"`, `"comp_only"`, or `"any"`. If `NULL`
+#'   (default), uses the mode recorded by [prepareGenomes()] in the dataset
+#'   manifest, or `"lab_only"` if none is recorded. An explicit value that
+#'   disagrees with the manifest is an error.
 #'
 #' @export
-cleanMetaData <- function(duckdb_path, path = NULL) {
+cleanMetaData <- function(duckdb_path, path = NULL, evidence_mode = NULL) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  evidence_mode <- .amr_resolve_evidence_mode(duckdb_path, evidence_mode)
   paths <- .amr_paths_from_duckdb(duckdb_path)
   if (is.null(path)) {
     path <- paths$orb
@@ -2610,15 +2763,12 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
-  # Define lab methods
-  lab_methods <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution", "Biofosun Gram-positive panels broth dilution",
-                  "Vitek_2-P607_card", "cation-adjusted Mueller-Hinton broth", "gradient_diffusion", "kirby-bauer_disc_diffusion")
-
   dplyr::tbl(con, "filtered") |>
     tibble::as_tibble() |>
     dplyr::select("genome.genome_id") |>
     dplyr::left_join(dplyr::tbl(con, "metadata") |>
       tibble::as_tibble(), by = dplyr::join_by("genome.genome_id" == "genome_drug.genome_id")) |>
+    .amr_filter_evidence(evidence_mode) |>
     dplyr::select(
       "genome.genome_id", "genome_drug.antibiotic",
       "genome_drug.genome_name", "genome_drug.evidence", "genome_drug.laboratory_typing_method",
@@ -2627,17 +2777,26 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
       "genome.isolation_country", "genome.host_common_name",
       "genome.isolation_source", "genome.species"
     ) |>
-    dplyr::mutate(genome_drug.evidence = dplyr::case_when(
-      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",
-      genome_drug.laboratory_typing_method == "Computational Prediction"  ~ "Computational Method",
-      TRUE ~ genome_drug.evidence)) |>
-    dplyr::filter(genome_drug.evidence == "Laboratory Method") |>
     dplyr::left_join(clean_drug, by = c("genome_drug.antibiotic" = "original_drug")) |>
     dplyr::filter(!is.na(cleaned_drug)) |>
     dplyr::left_join(drug_class, by = c("cleaned_drug" = "drug")) |>
     dplyr::left_join(drug_abbr, by = c("cleaned_drug" = "drug")) |>
     dplyr::left_join(class_abbr, by = "drug_class") |>
     dplyr::filter(genome_drug.resistant_phenotype %in% c("Resistant", "Susceptible")) |>
+    DBI::dbWriteTable(conn = con, name = "filtered_metadata", overwrite = TRUE)
+
+  # Exclude genome-drug pairs with conflicting resistance phenotypes
+  # We could save the phentoype conflicts out as a Parquet later if we want!
+  filtered_metadata <- DBI::dbReadTable(con, "filtered_metadata")
+  conflicts <- filtered_metadata |>
+    dplyr::group_by(genome.genome_id, drug_abbr) |>
+    dplyr::filter(dplyr::n_distinct(genome_drug.resistant_phenotype) > 1L) |>
+    dplyr::ungroup()
+
+  DBI::dbWriteTable(con, "metadata_phenotype_conflicts", conflicts, overwrite = TRUE)
+
+  dplyr::anti_join(filtered_metadata, conflicts,
+                   by = c("genome.genome_id", "drug_abbr")) |>
     DBI::dbWriteTable(conn = con, name = "filtered_metadata", overwrite = TRUE)
 
   resistance_summary <- DBI::dbReadTable(con, "filtered_metadata") |>
@@ -2696,16 +2855,6 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
   metadata_qc_rejections_parquet <- file.path(path, "metadata_qc_rejections.parquet")
   selected_genomes_parquet <- file.path(path,"selected_genomes.parquet")
 
-  writeCompressedParquet <- function(df, path) {
-    arrow::write_parquet(
-      df,
-      path,
-      compression = "zstd",
-      compression_level = 9,
-      use_dictionary = TRUE
-    )
-  }
-
   db_name <- file.path(path, paste0(tools::file_path_sans_ext(basename(duckdb_path)), "_parquet.duckdb"))
 
   con_new <- .amr_connect_dataset_db(db_name)
@@ -2713,7 +2862,7 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
 
   # Cleaned analysis metadata
   DBI::dbReadTable(con,"cleaned_metadata") |>
-    writeCompressedParquet(metadata_parquet)
+    .write_compressed_parquet(metadata_parquet)
 
   DBI::dbExecute(con_new,sprintf(
       "CREATE OR REPLACE VIEW metadata AS SELECT * FROM read_parquet('%s')",
@@ -2723,11 +2872,11 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
 
   # Original metadata tables retained in the ORB
   DBI::dbReadTable(con, "amr_phenotype") |>
-    writeCompressedParquet(amr_phenotype_parquet)
+    .write_compressed_parquet(amr_phenotype_parquet)
   DBI::dbReadTable(con, "genome_data") |>
-    writeCompressedParquet(genome_data_parquet)
+    .write_compressed_parquet(genome_data_parquet)
   DBI::dbReadTable(con, "metadata") |>
-    writeCompressedParquet(original_metadata_parquet)
+    .write_compressed_parquet(original_metadata_parquet)
   DBI::dbExecute(con_new, sprintf(
       "CREATE OR REPLACE VIEW amr_phenotype AS SELECT * FROM read_parquet('%s')",
       basename(amr_phenotype_parquet)
@@ -2747,9 +2896,9 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
 
   # Metadata QC audit
   DBI::dbReadTable(con, "metadata_qc") |>
-    writeCompressedParquet(metadata_qc_parquet)
+    .write_compressed_parquet(metadata_qc_parquet)
   DBI::dbReadTable(con, "metadata_qc_rejections") |>
-    writeCompressedParquet(metadata_qc_rejections_parquet)
+    .write_compressed_parquet(metadata_qc_rejections_parquet)
   DBI::dbExecute(con_new, sprintf(
       "CREATE OR REPLACE VIEW metadata_qc AS SELECT * FROM read_parquet('%s')",
       basename(metadata_qc_parquet)
@@ -2778,7 +2927,7 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
     dplyr::distinct() |>
     dplyr::arrange(genome_id)
 
-  writeCompressedParquet(selected_genomes, selected_genomes_parquet)
+  .write_compressed_parquet(selected_genomes, selected_genomes_parquet)
 
   DBI::dbExecute(con_new,sprintf(
       "CREATE OR REPLACE VIEW selected_genomes AS SELECT * FROM read_parquet('%s')",
@@ -2796,6 +2945,7 @@ cleanMetaData <- function(duckdb_path, path = NULL) {
 #'   already contain the tables written by [prepareGenomes()] and the upstream
 #'   genome-processing steps.
 #' @param path the path to working directory
+#' @param verbose Logical. Print status messages during feature export. Default 'TRUE'.
 #'
 #' @export
 cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
@@ -2880,13 +3030,18 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
   protein_cluster_seq_parquet <- file.path(path, "protein_seqs.parquet")
   protein_cluster_member_parquet <- file.path(path, "protein_members.parquet")
 
-  writeCompressedParquet <- function(df, path) {
-    arrow::write_parquet(
-      df,
-      path,
-      compression = "zstd",
-      compression_level = 9,
-      use_dictionary = TRUE
+  writeDuckDBParquet <- function(sql, path) {
+    path_sql <- DBI::dbQuoteString(
+      con,
+      normalizePath(path, winslash = "/", mustWork = FALSE)
+    )
+
+    DBI::dbExecute(
+      con,
+      paste0(
+        "COPY (", sql, ") TO ", path_sql,
+        " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9, PRESERVE_ORDER false)"
+      )
     )
   }
 
@@ -2903,20 +3058,19 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
   con_new <- .amr_connect_dataset_db(db_name)
   on.exit(try(DBI::dbDisconnect(con_new), silent = TRUE), add = TRUE)
 
-  # gene_count -> long parquet + view
-  DBI::dbReadTable(con, "gene_count") |>
-    tidyr::pivot_longer(-genome_id, names_to = "gene", values_to = "value") |>
-    dplyr::filter(!is.na(value) & value != "") |>
-    dplyr::mutate(value = as.integer(value)) |>
-    writeCompressedParquet(genes_parquet)
+  # Introducing the sparse ORB! Absence of a row means zero going forward.
+  # This previously happened in amRml for subset matrices, but we can do it early
+  # and save space, time, and compute.
+  writeDuckDBParquet(
+    "SELECT CAST(genome_id AS VARCHAR) AS genome_id, CAST(gene AS VARCHAR) AS gene, CAST(value AS INTEGER) AS value FROM gene_count WHERE value <> 0",
+    genes_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_count AS SELECT * FROM read_parquet('%s')", basename(genes_parquet)))
 
-  # protein_count -> long parquet + view
-  DBI::dbReadTable(con, "protein_count") |>
-    tidyr::pivot_longer(-genome_id, names_to = "protein", values_to = "value") |>
-    dplyr::filter(!is.na(value) & value != "") |>
-    dplyr::mutate(value = as.integer(value)) |>
-    writeCompressedParquet(proteins_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(genome_id AS VARCHAR) AS genome_id, CAST(protein AS VARCHAR) AS protein, CAST(value AS INTEGER) AS value FROM protein_count WHERE value <> 0",
+    proteins_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_count AS SELECT * FROM read_parquet('%s')", basename(proteins_parquet)))
 
   # HMMER annotation counts -> long Parquet + views per database in manifest
@@ -2942,7 +3096,8 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
       dplyr::rename(!!database := annotation) |>
       dplyr::filter(!is.na(value) & value != "") |>
       dplyr::mutate(value = as.integer(value)) |>
-      writeCompressedParquet(count_parquet)
+      dplyr::filter(!is.na(value) & value != 0L) |>
+      .write_compressed_parquet(count_parquet)
 
     DBI::dbExecute(
       con_new,
@@ -2954,21 +3109,23 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
     )
   }
 
-  # gene_struct -> long parquet + view
-  DBI::dbReadTable(con, "gene_struct") |>
-    tidyr::pivot_longer(-genome_id, names_to = "struct", values_to = "value") |>
-    dplyr::filter(!is.na(value) & value != "") |>
-    dplyr::mutate(value = as.integer(value)) |>
-    writeCompressedParquet(struct_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(genome_id AS VARCHAR) AS genome_id, CAST(struct AS VARCHAR) AS struct, CAST(value AS INTEGER) AS value FROM gene_struct WHERE value <> 0",
+    struct_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW struct AS SELECT * FROM read_parquet('%s')", basename(struct_parquet)))
 
   # names/seq tables -> parquet + views
-  DBI::dbReadTable(con, "gene_names") |> writeCompressedParquet(gene_names_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(Gene AS VARCHAR) AS Gene, CAST(Annotation AS VARCHAR) AS Annotation FROM gene_names",
+    gene_names_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_names AS SELECT * FROM read_parquet('%s')", basename(gene_names_parquet)))
 
-  DBI::dbReadTable(con, "protein_names") |>
-    dplyr::select(-locus_tag) |>
-    writeCompressedParquet(protein_names_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(proteinID AS VARCHAR) AS proteinID, CAST(proteinName AS VARCHAR) AS proteinName FROM protein_names",
+    protein_names_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_names AS SELECT * FROM read_parquet('%s')", basename(protein_names_parquet)))
 
   # Parsing through the different HMMER result Parquets
@@ -2985,7 +3142,7 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
     )
 
     DBI::dbReadTable(con, annotation_table) |>
-      writeCompressedParquet(annotation_parquet)
+      .write_compressed_parquet(annotation_parquet)
 
     DBI::dbExecute(
       con_new,
@@ -2997,16 +3154,28 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
     )
   }
 
-  DBI::dbReadTable(con, "gene_ref_seq") |> writeCompressedParquet(gene_ref_seq_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(name AS VARCHAR) AS name, CAST(sequence AS VARCHAR) AS sequence FROM gene_ref_seq",
+    gene_ref_seq_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_seqs AS SELECT * FROM read_parquet('%s')", basename(gene_ref_seq_parquet)))
 
-  DBI::dbReadTable(con, "protein_cluster_seq") |> writeCompressedParquet(protein_cluster_seq_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(name AS VARCHAR) AS name, CAST(sequence AS VARCHAR) AS sequence FROM protein_cluster_seq",
+    protein_cluster_seq_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_seqs AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_seq_parquet)))
 
-  DBI::dbReadTable(con, "protein_members") |> writeCompressedParquet(protein_cluster_member_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(cluster AS VARCHAR) AS cluster, CAST(member AS VARCHAR) AS member FROM protein_members",
+    protein_cluster_member_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_members AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_member_parquet)))
 
-  DBI::dbReadTable(con, "genome_gene_protein") |> writeCompressedParquet(genome_gene_protein_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(genome_ids AS VARCHAR) AS genome_ids, CAST(Gene AS VARCHAR) AS Gene, CAST(protein_ids AS VARCHAR) AS protein_ids FROM genome_gene_protein",
+    genome_gene_protein_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_gene_protein AS SELECT * FROM read_parquet('%s')", basename(genome_gene_protein_parquet)))
 
   invisible(TRUE)
@@ -3035,14 +3204,14 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' \enumerate{
 #'   \item **Panaroo** via [runPanaroo2Duckdb()] -> writes:
 #'     \itemize{
-#'       \item `gene_count` (genome x gene counts)\cr
+#'       \item `gene_count` (sparse long genome-gene counts)\cr
 #'       \item `gene_names`\cr
-#'       \item `gene_struct` (structural variants)\cr
+#'       \item `gene_struct` (sparse long struct variants)\cr
 #'       \item `gene_ref_seq`, `genome_gene_protein`
 #'     }
 #'   \item **CD-HIT** via [CDHIT2duckdb()] -> writes:
 #'     \itemize{
-#'       \item `protein_count` (genome x protein-cluster counts)\cr
+#'       \item `protein_count` (sparse long genome-protein-cluster counts)\cr
 #'       \item `protein_names`\cr
 #'       \item `protein_cluster_seq` (representative sequences)\cr
 #'       \item `protein_members`
@@ -3057,8 +3226,8 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'         Parquet files to `output_path`, and builds a **Parquet-backed DuckDB**
 #'         (`*_parquet.duckdb`) with views over those Parquets.
 #'
-#'   \item **Dyad feature mapping** via [buildDyadFeatureMap()] -> writes the
-#'         protein-gene dyad feature network used for downstream graph analysis.
+#'   \item **Dyad feature mapping** via [buildDyadFeatureMap()] -> writes a compact
+#'         `dyads.parquet` and registers virtual graph views in the ORB DuckDB.
 #' }
 #'
 #' @param duckdb_path Character. Path to the **per-selection DuckDB** produced by
@@ -3083,6 +3252,13 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' @param export_tabular_data Logical. If TRUE, automatically call
 #'   [exportProcessedData()] after the processing pipeline completes to create
 #'   the default human-readable exports. Default: `FALSE`.
+#'
+#' @param evidence_mode Character or `NULL`. Which AMR evidence metadata
+#'   cleaning keeps: `"lab_only"`, `"lab_or_comp"`, `"comp_only"`, or `"any"`.
+#'   If `NULL` (default), uses the mode recorded by [prepareGenomes()] in the
+#'   dataset manifest, or `"lab_only"` if none is recorded. A value that
+#'   disagrees with the manifest is an error, so processing can't diverge from
+#'   the genomes that were selected and downloaded.
 #'
 #' @param panaroo_split_jobs Logical. If `TRUE`, Panaroo runs in multiple batches
 #'   that can be merged by [.mergePanaroo()]. If `FALSE`, Panaroo runs once on all
@@ -3141,6 +3317,11 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' }
 #'
 #' @details
+#' CDS that would translate entirely to unknown amino acids are automatically
+#' removed from copied Panaroo GFFs before clustering, with individual removals
+#' recorded in `panaroo_invalid_cds_audit.csv` in the Panaroo output directory.
+#' This check also runs when `panaroo_strip_pseudogenes = FALSE`.
+#'
 #' **Docker & Platform Notes**
 #' * Panaroo, CD-HIT, and HMMER run inside Docker containers.
 #' * HMMER databases are stored separately from individual bug directories and
@@ -3172,10 +3353,11 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' **Resuming a Failed Run**
 #' * Set `resume = TRUE` to avoid re-running stages that already completed
 #'   successfully in the most recent prior attempt (per the dataset manifest).
-#' * Resuming is driven entirely by the manifest plus a check that the
-#'   previously recorded output files still exist --- it does not re-validate
-#'   the contents of those outputs, so don't rely on it if files may have
-#'   been altered or deleted since the failed run.
+#' * Reuse requires that parameters that would affect results match the prior run.
+#'   Changed or missing parameters will rerun that stage and downstream stages.
+#'   Adjusting thread and worker counts does not invalidate reuse. Resuming does 
+#'   not re-validate the contents of prior outputs, so don't rely on it if files 
+#'   may have been altered or deleted since the failed run.
 #'
 #' @seealso
 #' [prepareGenomes()], [runPanaroo2Duckdb()], [CDHIT2duckdb()], [cleanMetaData()],
@@ -3200,6 +3382,7 @@ runDataProcessing <- function(
     threads = 8,
     resume = FALSE,
     export_tabular_data = FALSE,
+    evidence_mode = NULL,
 
 
     # Panaroo
@@ -3246,6 +3429,7 @@ runDataProcessing <- function(
   requested_threads <- threads
   threads <- .resolve_workers(requested = threads)
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  evidence_mode <- .amr_resolve_evidence_mode(duckdb_path, evidence_mode)
   paths <- .amr_paths_from_duckdb(duckdb_path)
 
   purrr::walk(
@@ -3315,7 +3499,48 @@ runDataProcessing <- function(
   } else {
     NULL
   }
-  resume_completed <- .resume_plan(prev_run, stage_order)
+  if (is.null(hmmer_db_dir)) hmmer_db_dir <- .defaultHmmerDbDir()
+  dir.create(hmmer_db_dir, recursive = TRUE, showWarnings = FALSE)
+  hmmer_db_dir <- normalizePath(hmmer_db_dir, mustWork = TRUE)
+
+  # Compare results-affecting parameters
+  stage_parameters <- list(
+    panaroo = list(
+      core_threshold = panaroo_core_threshold,
+      len_dif_percent = panaroo_len_dif_percent,
+      cluster_threshold = panaroo_cluster_threshold,
+      family_seq_identity = panaroo_family_seq_identity,
+      split_jobs = panaroo_split_jobs,
+      refind_mode = panaroo_refind_mode,
+      strip_pseudogenes = panaroo_strip_pseudogenes,
+      remove_all_x_cds = TRUE
+    ),
+    cdhit = list(
+      identity = cdhit_identity,
+      word_length = cdhit_word_length,
+      extra_args = cdhit_extra_args,
+      output_prefix = cdhit_output_prefix
+    ),
+    hmmer = list(
+      databases = hmmer_databases,
+      database_dir = hmmer_db_dir,
+      database_cache = "BiocFileCache",
+      docker_image = hmmer_docker_image
+    )
+  )
+  resume_completed <- .resume_plan(prev_run, stage_order, stage_parameters)
+
+  reuse_stage <- function(manifest, name) {
+    prior <- .manifest_prior_stage(prev_run, name)
+    .manifest_stage(
+      manifest, name = name, status = "success",
+      parameters = prior$parameters,
+      inputs = duckdb_path,
+      outputs = purrr::map_chr(prior$outputs, "path"),
+      tool = prior$tool, metrics = prior$metrics,
+      message = "Resumed: reused successful output from a previous run."
+    )
+  }
 
   if (any(resume_completed)) {
     status(
@@ -3370,38 +3595,15 @@ runDataProcessing <- function(
 
     pan_dir <- .manifest_prior_stage(prev_run, "panaroo")$outputs[[1]]$path
 
-    manifest <- .manifest_stage(
-      manifest,
-      name = "panaroo",
-      status = "skipped",
-      inputs = duckdb_path,
-      outputs = c(
-        pan_dir,
-        duckdb_path
-      ),
-      tool = list(
-        name = "Panaroo",
-        docker_image = "staphb/panaroo:1.7.0"
-      ),
-      message = "Resumed: reused successful output from a previous run."
-    )
+    manifest <- reuse_stage(manifest, "panaroo")
   } else {
     # Log!
     manifest <- .manifest_stage(
       manifest,
       name = "panaroo",
       status = "running",
-      parameters = list(
-        core_threshold = panaroo_core_threshold,
-        len_dif_percent = panaroo_len_dif_percent,
-        cluster_threshold = panaroo_cluster_threshold,
-        family_seq_identity = panaroo_family_seq_identity,
-        threads_requested = requested_threads,
-        threads_used = threads,
-        split_jobs = panaroo_split_jobs,
-        refind_mode = panaroo_refind_mode,
-        strip_pseudogenes = panaroo_strip_pseudogenes
-      ),
+      parameters = c(stage_parameters$panaroo,
+                     list(threads_requested = requested_threads, threads_used = threads)),
       inputs = duckdb_path,
       tool = list(
         name = "Panaroo",
@@ -3436,20 +3638,12 @@ runDataProcessing <- function(
       manifest,
       name = "panaroo",
       status = "success",
-      parameters = list(
-        core_threshold = panaroo_core_threshold,
-        len_dif_percent = panaroo_len_dif_percent,
-        cluster_threshold = panaroo_cluster_threshold,
-        family_seq_identity = panaroo_family_seq_identity,
-        threads = threads,
-        split_jobs = panaroo_split_jobs,
-        refind_mode = panaroo_refind_mode,
-        strip_pseudogenes = panaroo_strip_pseudogenes
-      ),
+      parameters = c(stage_parameters$panaroo, list(threads = threads)),
       inputs = duckdb_path,
       outputs = c(
         pan_dir,
-        duckdb_path
+        duckdb_path,
+        file.path(paths$panaroo, "panaroo_invalid_cds_audit.csv")
       ),
       tool = list(
         name = "Panaroo",
@@ -3463,37 +3657,14 @@ runDataProcessing <- function(
   if (resume_completed[["cdhit"]]) {
     status("Skipping CD-HIT (resume): reusing output from the previous run.")
 
-    manifest <- .manifest_stage(
-      manifest,
-      name = "cdhit",
-      status = "skipped",
-      inputs = duckdb_path,
-      outputs = c(
-        file.path(paths$cdhit, paste0(cdhit_output_prefix, "_input.fa")),
-        file.path(paths$cdhit, paste0(cdhit_output_prefix, "_proteins")),
-        file.path(duckdb_path)
-      ),
-      tool = list(
-        name = "CD-HIT",
-        version = "4.8.1",
-        docker_image = "weizhongli1987/cdhit:4.8.1"
-      ),
-      message = "Resumed: reused successful output from a previous run."
-    )
+    manifest <- reuse_stage(manifest, "cdhit")
   } else {
     # Log!
     manifest <- .manifest_stage(
       manifest,
       name = "cdhit",
       status = "running",
-      parameters = list(
-        identity = cdhit_identity,
-        word_length = cdhit_word_length,
-        memory = cdhit_memory,
-        threads = threads,
-        extra_args = cdhit_extra_args,
-        output_prefix = cdhit_output_prefix
-      ),
+      parameters = c(stage_parameters$cdhit, list(memory = cdhit_memory, threads = threads)),
       inputs = duckdb_path,
       tool = list(
         name = "CD-HIT",
@@ -3525,14 +3696,7 @@ runDataProcessing <- function(
       manifest,
       name = "cdhit",
       status = "success",
-      parameters = list(
-        identity = cdhit_identity,
-        word_length = cdhit_word_length,
-        memory = cdhit_memory,
-        threads = threads,
-        extra_args = cdhit_extra_args,
-        output_prefix = cdhit_output_prefix
-      ),
+      parameters = c(stage_parameters$cdhit, list(memory = cdhit_memory, threads = threads)),
       inputs = duckdb_path,
       outputs = c(
         file.path(paths$cdhit, paste0(cdhit_output_prefix, "_input.fa")),
@@ -3548,35 +3712,13 @@ runDataProcessing <- function(
   }
 
   # 3) HMMER -> write HMM-based match tables for desired databases
-  hmmer_db_dir <- if (is.null(hmmer_db_dir)) {
-    .defaultHmmerDbDir()
-  } else {
-    normalizePath(hmmer_db_dir, mustWork = FALSE)
-  }
-
-  dir.create(
-    hmmer_db_dir,
-    recursive = TRUE,
-    showWarnings = FALSE
-  )
-
   hmmer_result <- NULL
   defense_result <- NULL
 
   if (resume_completed[["hmmer"]]) {
     status("Skipping HMMER (resume): reusing output from the previous run.")
 
-    manifest <- .manifest_stage(
-      manifest,
-      name = "hmmer",
-      status = "skipped",
-      inputs = duckdb_path,
-      tool = list(
-        name = "HMMER",
-        docker_image = hmmer_docker_image
-      ),
-      message = "Resumed: reused successful output from a previous run."
-    )
+    manifest <- reuse_stage(manifest, "hmmer")
   } else {
     status("Running HMMER with databases: ", paste(hmmer_databases, collapse = ", "))
 
@@ -3584,15 +3726,9 @@ runDataProcessing <- function(
       manifest,
       name = "hmmer",
       status = "running",
-      parameters = list(
-        databases = hmmer_databases,
-        database_dir = hmmer_db_dir,
-        database_cache = "BiocFileCache",
-        docker_image = hmmer_docker_image,
-        threads = threads,
-        num_of_splits = hmmer_num_splits,
-        workers = hmmer_workers
-      ),
+      parameters = c(stage_parameters$hmmer,
+                     list(threads = threads, num_of_splits = hmmer_num_splits,
+                          workers = hmmer_workers)),
       inputs = duckdb_path,
       tool = list(
         name = "HMMER",
@@ -3662,16 +3798,13 @@ runDataProcessing <- function(
 
   missing_tables <- local({
     con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-
+    
     on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
+    
     expected_tables[
-      !vapply(
+      !purrr::map_lgl(
         expected_tables,
-        function(tbl) {
-          DBI::dbExistsTable(con, tbl)
-        },
-        logical(1)
+        ~ DBI::dbExistsTable(con, .x)
       )
     ]
   })
@@ -3688,15 +3821,9 @@ runDataProcessing <- function(
       manifest,
       name = "hmmer",
       status = "success",
-      parameters = list(
-        databases = hmmer_databases,
-        database_dir = hmmer_db_dir,
-        database_cache = "BiocFileCache",
-        docker_image = hmmer_docker_image,
-        threads = threads,
-        num_of_splits = hmmer_num_splits,
-        workers = hmmer_workers
-      ),
+      parameters = c(stage_parameters$hmmer,
+                     list(threads = threads, num_of_splits = hmmer_num_splits,
+                          workers = hmmer_workers)),
       inputs = duckdb_path,
       outputs = c(
         file.path(
@@ -3729,7 +3856,11 @@ runDataProcessing <- function(
 
   # 4) Clean metadata and export Parquet + Parquet-backed DuckDB
   .amr_progress_step("Building resource bundle", {
-      cleanMetaData(duckdb_path = duckdb_path, path = paths$orb)
+      cleanMetaData(
+        duckdb_path = duckdb_path,
+        path = paths$orb,
+        evidence_mode = evidence_mode
+      )
 
       cleanData(
         duckdb_path = duckdb_path,
@@ -3744,38 +3875,17 @@ runDataProcessing <- function(
 
   parquet_duckdb_path <- paths$parquet_duckdb
 
-  dyad_parquet <- .amr_progress_step(
-    "Building protein-gene dyad map",
+  dyads_parquet <- .amr_progress_step(
+    "Building virtual protein-gene dyad map",
     buildDyadFeatureMap(
       duckdb_path = duckdb_path,
-      output_path = paths$orb
+      output_path = paths$orb,
+      threads = min(threads, 4L)
     ),
     progress = progress,
     verbose = verbose,
     log_path = log_path
   )
-
-  local({
-    con_orb <- .amr_connect_dataset_db(
-      paths$parquet_duckdb
-    )
-
-    on.exit(
-      try(
-        DBI::dbDisconnect(con_orb),
-        silent = TRUE
-      ),
-      add = TRUE
-    )
-
-    DBI::dbExecute(
-      con_orb,
-      sprintf(
-        "CREATE OR REPLACE VIEW dyad_feature AS SELECT * FROM read_parquet('%s')",
-        basename(dyad_parquet)
-      )
-    )
-  })
 
   parquet_duckdb_path <- normalizePath(
     parquet_duckdb_path,
@@ -3826,8 +3936,17 @@ runDataProcessing <- function(
       "_count"
     ),
 
-    "dyad_feature"
-  )
+    "dyads",
+    "genome_dyad",
+    "dyad_protein_cluster",
+    "struct_gene",
+    "dyad_struct",
+      purrr::map_chr(
+        .dyadHmmerSpecs(hmmer_databases),
+        "dyad_view"
+      ),
+      "dyad_feature"
+    )
 
   local({
     con_orb <- .amr_connect_dataset_db(
@@ -3911,8 +4030,8 @@ runDataProcessing <- function(
       paste0("protein_", hmmer_databases, "_count.parquet")
     ),
 
-    # Dyad feature map
-    file.path(paths$orb, "dyad_feature.parquet")
+    # Compact dyad dimension; feature edges remain virtual in the ORB DuckDB
+    dyads_parquet
   )
 
   missing_parquet_files <- parquet_files[!file.exists(parquet_files)]
@@ -3941,6 +4060,7 @@ runDataProcessing <- function(
     name = "clean_metadata_and_export",
     status = "success",
     parameters = list(
+      evidence_mode = evidence_mode,
       reference_data = c(
         "clean_drug",
         "drug_class",
@@ -3972,7 +4092,11 @@ runDataProcessing <- function(
       metadata_qc_rejections_parquet =
         "metadata_qc_rejections.parquet",
       selected_genomes_parquet =
-        "selected_genomes.parquet"
+        "selected_genomes.parquet",
+      dyads_parquet = "dyads.parquet",
+      dyad_representation = "virtual",
+      dyad_feature_relation = "dyad_feature",
+      dyad_hmmer_mapping = "protein_members.member_to_cluster"
     )
   )
 
@@ -4432,10 +4556,23 @@ exportProcessedData <- function(duckdb_path = NULL,
     "genome_gene_protein"
   )
 
+  dyad_relations <- unique(c(
+    "dyads",
+    "genome_dyad",
+    "member_dyads",
+    "genome_cluster_dyad",
+    "struct_gene",
+    grep(
+      "^dyad_",
+      available_tables,
+      value = TRUE
+    )
+  ))
+
   default_exclusions <- c(
     "amr_phenotype",
     sequence_tables,
-    "dyad_feature"
+    dyad_relations
   )
 
   if (is.null(tables)) {
@@ -5417,7 +5554,7 @@ removeLocalFiles <- function(
         "protein_seqs.parquet",
         "protein_members.parquet",
 
-        "dyad_feature.parquet"
+        "dyads.parquet"
       )
     ),
 
@@ -5468,21 +5605,19 @@ removeLocalFiles <- function(
   ]
 
   reclaimed_bytes <- sum(
-    vapply(
+    purrr::map_dbl(
       remove_paths,
-      path_bytes,
-      numeric(1)
+      path_bytes
     )
   )
 
   retained_bytes <- sum(
-    vapply(
+    purrr::map_dbl(
       c(
         paths$orb,
         paths$exports
       ),
-      path_bytes,
-      numeric(1)
+      path_bytes
     )
   )
 

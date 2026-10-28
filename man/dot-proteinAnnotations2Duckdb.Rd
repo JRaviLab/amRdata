@@ -19,11 +19,13 @@ containing the \code{protein_count} table created by \code{\link[=CDHIT2duckdb]{
 Each database must correspond to a \verb{protein_<database>} annotation table
 already present in the DuckDB.}
 
-\item{output_path}{Character. Directory where the genome-by-annotation
-Parquet files will be written. Defaults to \code{dirname(duckdb_path)}.}
+\item{output_path}{Character or \code{NULL}. Directory where genome-by-annotation
+Parquet files are written. If \code{NULL}, defaults to the dataset's \verb{orb/}
+directory.}
 }
 \value{
-Invisibly returns the path to the written count Parquet file.
+Invisibly returns a named list of count-Parquet paths, indexed by
+database.
 }
 \description{
 Reads a Parquet file of HMMER hits (produced by \code{\link[=.runHMMER]{.runHMMER()}}), joins the

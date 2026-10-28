@@ -51,16 +51,11 @@ A one-row tibble summarizing genome, AMR, QC, and collection metadata
 availability for the requested taxon.
 }
 \description{
-Internal worker used by \code{checkDataAvailability()}. Each call resolves and
-summarizes a taxon independently.
+Internal worker used by \code{checkDataAvailability()}. Resolves one taxon to
+available BV-BRC genomes and summarizes genome metadata, AMR phenotype
+availability, collection years, genome statistics, and metadata QC.
 }
 \details{
-Summarize BV-BRC data availability for one taxon
-
-Resolves one taxon to available BV-BRC genomes and summarizes genome
-metadata, AMR phenotype availability, collection years, genome statistics,
-and the number of genomes passing the requested metadata QC thresholds.
-
 Metadata can be retrieved through the BV-BRC Data API or the legacy CLI/cache
 workflow.
 }
