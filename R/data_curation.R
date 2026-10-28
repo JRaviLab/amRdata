@@ -628,7 +628,7 @@
 }
 
 # Get rid of genomes that are missing files
-.purge_genome_files <- function(genome_path, genome_ids, log_file = ftp_log) {
+.purge_genome_files <- function(genome_path, genome_ids, log_file = NULL) {
   genome_ids <- unique(as.character(genome_ids))
   if (!length(genome_ids)) {
     return(invisible(0L))
