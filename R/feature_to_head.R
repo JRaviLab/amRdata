@@ -104,8 +104,10 @@
 #'
 #' @details
 #' The canonical `dyads.parquet` contains distinct `(protein, gene)` pairs,
-#' where `protein` is a CD-HIT protein-cluster representative and `gene` is a
-#' gene-cluster identifier. A `dyad_type` column records how each dyad arose:
+#' where `protein` is the representative protein ID of a CD-HIT cluster (a
+#' `fig|...` ID that is itself a member of that cluster) and `gene` is the
+#' Panaroo gene cluster: its `group_N` ID or given gene name, with `~` written
+#' as `.`. A `dyad_type` column records how each dyad arose:
 #' `paired` (both clusters), `gene_only` (a gene cluster with no protein
 #' cluster; `protein` is NULL) or `protein_only` (a protein cluster with no gene
 #' cluster; `gene` is NULL). Every dyad has at least one side. Orphans are
