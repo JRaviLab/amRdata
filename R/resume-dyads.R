@@ -175,11 +175,19 @@ resumeDyads <- function(orb_dir, threads = 4L) {
       DBI::dbGetQuery(con, paste("SELECT * FROM",
         DBI::dbQuoteIdentifier(con, relation), "LIMIT 0"))
     }
+    # A dyad needs a protein cluster, a gene cluster, or both. A non-NULL
+    # protein must be a CD-HIT cluster, and dyad_type must agree with the sides
     invalid <- DBI::dbGetQuery(con, "
       SELECT count(*) AS n FROM dyads d
       LEFT JOIN (SELECT DISTINCT cluster FROM protein_members) p
         ON d.protein = p.cluster
-      WHERE p.cluster IS NULL OR d.gene IS NULL OR d.protein IS NULL
+      WHERE (d.protein IS NOT NULL AND p.cluster IS NULL)
+         OR (d.protein IS NULL AND d.gene IS NULL)
+         OR d.dyad_type IS NULL
+         OR d.dyad_type <> CASE
+              WHEN d.protein IS NULL THEN 'gene_only'
+              WHEN d.gene IS NULL THEN 'protein_only'
+              ELSE 'paired' END
     ")$n[[1L]]
     n_pairs <- DBI::dbGetQuery(con, "SELECT count(*) AS n FROM dyads")$n[[1L]]
     repeated <- DBI::dbGetQuery(con, "
@@ -189,7 +197,7 @@ resumeDyads <- function(orb_dir, threads = 4L) {
       )
     ")$n[[1L]]
     if (invalid > 0L || n_pairs < 1L || repeated > 0L) {
-      stop("The dyad graph is empty, duplicated, or contains non-cluster protein IDs.", call. = FALSE)
+      stop("The dyad graph is empty, duplicated, or contains non-cluster protein IDs or dyads with neither side.", call. = FALSE)
     }
   })
 

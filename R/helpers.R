@@ -3190,9 +3190,10 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
   result_sql <- paste0(
     "SELECT\n",
-    "      d.protein || '|' || d.gene AS dyad,\n",
+    "      ", .dyadIdSql("d.protein", "d.gene"), " AS dyad,\n",
     "      d.protein,\n",
-    "      d.gene",
+    "      d.gene,\n",
+    "      d.dyad_type",
     select_features,
     "\n    FROM dyads d\n",
     "    LEFT JOIN dyad_protein_cluster pc\n",

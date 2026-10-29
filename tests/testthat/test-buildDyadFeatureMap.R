@@ -27,6 +27,21 @@ test_that("buildDyadFeatureMap() errors when no provenance manifest is found", {
   )
 })
 
+test_that(".dyadIdSql() gives a non-NULL ID for paired and orphan dyads", {
+  con <- DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  ids <- DBI::dbGetQuery(
+    con,
+    paste0(
+      "SELECT ", .dyadIdSql(), " AS dyad FROM (VALUES ",
+      "('P1', 'G1'), ('P2', NULL), (NULL, 'G3')) t(protein, gene)"
+    )
+  )$dyad
+
+  expect_equal(ids, c("P1|G1", "P2|orphan", "orphan|G3"))
+})
+
 # TODO (Bioconductor): add an end-to-end test that runs buildDyadFeatureMap()
 # against a small fixture DuckDB + manifest + annotation Parquets and checks the
 # resulting edge list (source/target columns, dyad format, type prefixes).

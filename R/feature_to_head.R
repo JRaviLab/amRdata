@@ -69,6 +69,22 @@
     })
 }
 
+#' SQL expression for a dyad ID
+#'
+#' A dyad has a protein cluster, a gene cluster, or both. A plain `||` returns
+#' NULL when one side is missing, so the missing side is written as `orphan`:
+#' `P|G` (paired), `P|orphan` (protein-only), `orphan|G` (gene-only). Protein IDs
+#' themselves contain `|`, so use `dyad_type`, not the ID, to tell the kinds
+#' apart.
+#'
+#' @param protein,gene Character. SQL column expressions for the two sides.
+#'
+#' @return A SQL expression string.
+#' @keywords internal
+.dyadIdSql <- function(protein = "protein", gene = "gene") {
+  paste0("COALESCE(", protein, ", 'orphan') || '|' || COALESCE(", gene, ", 'orphan')")
+}
+
 #' Build virtual protein cluster-gene cluster dyad features using DuckDB
 #'
 #' Creates a compact protein cluster-gene cluster dyad Parquet and registers virtual 
@@ -89,8 +105,13 @@
 #' @details
 #' The canonical `dyads.parquet` contains distinct `(protein, gene)` pairs,
 #' where `protein` is a CD-HIT protein-cluster representative and `gene` is a
-#' gene-cluster identifier.
-#' 
+#' gene-cluster identifier. A `dyad_type` column records how each dyad arose:
+#' `paired` (both clusters), `gene_only` (a gene cluster with no protein
+#' cluster; `protein` is NULL) or `protein_only` (a protein cluster with no gene
+#' cluster; `gene` is NULL). Every dyad has at least one side. Orphans are
+#' gene or protein clusters that appear in no paired dyad. Protein-only
+#' clusters have no members in `genome_gene_protein`, so they link to no genome.
+#'
 #' `member_dyads` and `genome_dyad` preserve protein-member provenance, and
 #' `genome_cluster_dyad` links genomes to cluster-pair dyads.
 #' `dyad_feature` retains the two-column API (`dyad`, `feature`) as a virtual
@@ -442,18 +463,44 @@ buildDyadFeatureMap <- function(
     con,
     paste0(
       "COPY (",
-      "SELECT DISTINCT ",
+      "WITH paired AS (",
+      "  SELECT DISTINCT ",
       # `protein` means the cluster representative, not a specific member ID.
       # DISTINCT collapses repeated genomes & members into a single cluster pair
-      "pc.cluster AS protein, ",
-      "CAST(REPLACE(g.Gene, '~', '.') AS VARCHAR) AS gene ",
-      "FROM genome_gene_protein g ",
-      "JOIN dyad_protein_cluster pc ",
-      "  ON CAST(g.protein_ids AS VARCHAR) = pc.protein ",
-      "WHERE g.protein_ids IS NOT NULL ",
-      "  AND g.protein_ids <> '' ",
-      "  AND g.Gene IS NOT NULL ",
-      "  AND g.Gene <> ''",
+      "    pc.cluster AS protein, ",
+      "    CAST(REPLACE(g.Gene, '~', '.') AS VARCHAR) AS gene ",
+      "  FROM genome_gene_protein g ",
+      "  JOIN dyad_protein_cluster pc ",
+      "    ON CAST(g.protein_ids AS VARCHAR) = pc.protein ",
+      "  WHERE g.protein_ids IS NOT NULL ",
+      "    AND g.protein_ids <> '' ",
+      "    AND g.Gene IS NOT NULL ",
+      "    AND g.Gene <> ''",
+      "), ",
+      # Orphans are clusters in no paired dyad: a gene cluster whose proteins
+      # have no CD-HIT cluster, or a CD-HIT cluster with no gene cluster
+      "gene_only AS (",
+      "  SELECT DISTINCT ",
+      "    CAST(NULL AS VARCHAR) AS protein, ",
+      "    CAST(REPLACE(g.Gene, '~', '.') AS VARCHAR) AS gene ",
+      "  FROM genome_gene_protein g ",
+      "  WHERE g.Gene IS NOT NULL AND g.Gene <> '' ",
+      "    AND NOT EXISTS (",
+      "      SELECT 1 FROM paired p ",
+      "      WHERE p.gene = CAST(REPLACE(g.Gene, '~', '.') AS VARCHAR))",
+      "), ",
+      "protein_only AS (",
+      "  SELECT DISTINCT ",
+      "    pc.cluster AS protein, ",
+      "    CAST(NULL AS VARCHAR) AS gene ",
+      "  FROM dyad_protein_cluster pc ",
+      "  WHERE NOT EXISTS (SELECT 1 FROM paired p WHERE p.protein = pc.cluster)",
+      ") ",
+      "SELECT protein, gene, 'paired' AS dyad_type FROM paired ",
+      "UNION ALL ",
+      "SELECT protein, gene, 'gene_only' AS dyad_type FROM gene_only ",
+      "UNION ALL ",
+      "SELECT protein, gene, 'protein_only' AS dyad_type FROM protein_only",
       ") TO ",
       dyads_sql,
       " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 3, PRESERVE_ORDER false)"
@@ -491,6 +538,18 @@ buildDyadFeatureMap <- function(
       ")"
     )
   )
+
+  empty_dyads <- DBI::dbGetQuery(
+    con,
+    "SELECT count(*) AS n FROM dyads WHERE protein IS NULL AND gene IS NULL"
+  )$n[[1L]]
+
+  if (empty_dyads > 0L) {
+    stop(
+      empty_dyads,
+      " dyad(s) have neither a protein cluster nor a gene cluster."
+    )
+  }
 
   DBI::dbExecute(
     con,
@@ -530,18 +589,31 @@ buildDyadFeatureMap <- function(
        pc.cluster AS protein,
        g.gene
      FROM genome_dyad g
-     JOIN dyad_protein_cluster pc ON g.protein = pc.protein"
+     JOIN dyad_protein_cluster pc ON g.protein = pc.protein
+     UNION
+     -- Genomes carrying a gene-only dyad's gene cluster (no protein cluster)
+     SELECT DISTINCT
+       CAST(g.genome_ids AS VARCHAR) AS genome_id,
+       CAST(NULL AS VARCHAR) AS protein,
+       d.gene
+     FROM genome_gene_protein g
+     JOIN dyads d
+       ON d.protein IS NULL
+      AND d.gene = CAST(REPLACE(g.Gene, '~', '.') AS VARCHAR)
+     WHERE g.genome_ids IS NOT NULL
+       AND g.genome_ids <> ''"
   )
 
   created_edge_views <- character()
+  dyad_id <- .dyadIdSql()
   compatibility_parts <- c(
-    # Cluster-level self-edge
-    "SELECT protein || '|' || gene AS dyad, 'protein_cluster:' || protein AS feature FROM dyads",
-    "SELECT protein || '|' || gene AS dyad, 'gene:' || gene AS feature FROM dyads",
-    # Preserve protein member predictor key. JOIN to member_dyads (not just the 
-    # protein cluster) so that a member is linked only to genes actually observed. 
+    # Cluster-level self-edge; an orphan only has an edge for the side it has
+    paste0("SELECT ", dyad_id, " AS dyad, 'protein_cluster:' || protein AS feature FROM dyads WHERE protein IS NOT NULL"),
+    paste0("SELECT ", dyad_id, " AS dyad, 'gene:' || gene AS feature FROM dyads WHERE gene IS NOT NULL"),
+    # Preserve protein member predictor key. JOIN to member_dyads (not just the
+    # protein cluster) so that a member is linked only to genes actually observed.
     # Dyad ID is a pair of clusters & may have several protein member edges
-    "SELECT pc.cluster || '|' || md.gene AS dyad, 'protein:' || md.protein AS feature FROM member_dyads md JOIN dyad_protein_cluster pc ON md.protein = pc.protein"
+    paste0("SELECT ", .dyadIdSql("pc.cluster", "md.gene"), " AS dyad, 'protein:' || md.protein AS feature FROM member_dyads md JOIN dyad_protein_cluster pc ON md.protein = pc.protein")
   )
 
   if (
@@ -584,7 +656,7 @@ buildDyadFeatureMap <- function(
 
     compatibility_parts <- c(
       compatibility_parts,
-      "SELECT protein || '|' || gene AS dyad, 'struct:' || feature AS feature FROM dyad_struct"
+      paste0("SELECT ", dyad_id, " AS dyad, 'struct:' || feature AS feature FROM dyad_struct")
     )
   }
 
@@ -663,7 +735,7 @@ buildDyadFeatureMap <- function(
     compatibility_parts <- c(
       compatibility_parts,
       paste0(
-        "SELECT protein || '|' || gene AS dyad, '",
+        "SELECT ", dyad_id, " AS dyad, '",
         spec$prefix,
         ":' || feature AS feature FROM ",
         dyad_view_sql
