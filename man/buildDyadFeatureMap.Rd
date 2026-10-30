@@ -2,78 +2,62 @@
 % Please edit documentation in R/feature_to_head.R
 \name{buildDyadFeatureMap}
 \alias{buildDyadFeatureMap}
-\title{Build a protein-gene dyad feature network using DuckDB}
+\title{Build virtual protein cluster-gene cluster dyad features using DuckDB}
 \usage{
 buildDyadFeatureMap(
   duckdb_path,
   additional_feature_scales = NULL,
-  output_path = NULL
+  output_path = NULL,
+  threads = 4L
 )
 }
 \arguments{
-\item{duckdb_path}{Character. Path to the source per-selection DuckDB. The
-associated Parquet files and provenance manifest are expected to live
-alongside it. This is the same \code{duckdb_path} produced by
-\code{\link{runDataProcessing}}.}
+\item{duckdb_path}{Character. Path to the working DuckDB or the existing
+Parquet-backed ORB DuckDB. Either can be used when the ORB and its
+provenance manifest already exist.}
 
 \item{additional_feature_scales}{Character vector of optional feature types to
 include. If \code{NULL}, all HMMER databases recorded in the manifest are used,
 plus \code{struct} to include pangenome graph triplets. If a character vector is
 supplied, individual feature scales can be selected.}
 
-\item{output_path}{Character or NULL. Directory where the output Parquet file
-will be written. If NULL, the output is written alongside the source DuckDB.}
+\item{output_path}{Character or NULL. Directory where \code{dyads.parquet} is
+written. If NULL, the dataset ORB directory is used.}
+
+\item{threads}{Integer. Maximum DuckDB threads used while building the compact
+dyad dimension. Default \code{4}.}
 }
 \value{
-Invisibly returns the path to the generated
-\code{dyad_feature.parquet} file.
+Invisibly returns the path to the generated \code{dyads.parquet} file.
 }
 \description{
-Constructs a two-mode (bipartite) network in which every node is either a
-protein-gene dyad or a biological feature, and every edge links a dyad to one
-of its features. Features include the dyad's own protein and gene, structural
-(pangenome graph) gene arrangements, and HMMER annotations: protein domains
-(Pfam), COGs, phage-defense systems (including Cas), and antimicrobial
-resistance genes.
+Creates a compact protein cluster-gene cluster dyad Parquet and registers virtual
+graph relations in the Parquet-backed ORB DuckDB.
 }
 \details{
-The function performs the following steps:
-\enumerate{
-\item Creates a protein-gene mapping from
-\code{genome_gene_protein.parquet}.
-\item Constructs a unique protein-gene dyad identifier of the form
-\code{"protein|gene"}.
-\item Optionally loads structural and HMMER annotations.
-\item Generates a network edge list linking each dyad to its associated
-features.
-\item Writes the resulting edge list to a compressed Parquet file.
-}
+The canonical \code{dyads.parquet} contains distinct \verb{(protein, gene)} pairs,
+where \code{protein} is the representative protein ID of a CD-HIT cluster (a
+\code{fig|...} ID that is itself a member of that cluster) and \code{gene} is the
+Panaroo gene cluster: its \code{group_N} ID or given gene name, with \code{~} written
+as \code{.}. A \code{dyad_type} column records how each dyad arose:
+\code{paired} (both clusters), \code{gene_only} (a gene cluster with no protein
+cluster; \code{protein} is NULL) or \code{protein_only} (a protein cluster with no gene
+cluster; \code{gene} is NULL). Every dyad has at least one side. Orphans are
+gene or protein clusters that appear in no paired dyad. Protein-only
+clusters have no members in \code{genome_gene_protein}, so they link to no genome.
 
-Every edge runs from a \code{protein|gene} dyad to a type-prefixed feature node:
-
-\preformatted{
-protein|gene --> protein:PROTEIN_ID
-protein|gene --> gene:GENE_ID
-protein|gene --> pfam:PFXXXXX
-protein|gene --> cog:COGXXXX
-protein|gene --> amr:GENE_NAME
-protein|gene --> defense:DEFENSE_SYSTEM
-protein|gene --> struct:STRUCTURE
-}
-
-The type prefix on each feature keeps feature namespaces separate, so a
-generic feature name cannot collide across scales downstream.
-
-The output edge list contains two columns:
-\describe{
-\item{dyad}{Protein-gene dyad identifier.}
-\item{feature}{Feature node identifier prefixed by feature type.}
-}
+\code{member_dyads} and \code{genome_dyad} preserve protein-member provenance, and
+\code{genome_cluster_dyad} links genomes to cluster-pair dyads.
+\code{dyad_feature} retains the two-column API (\code{dyad}, \code{feature}) as a virtual
+view. It maps existing \verb{protein:<member>} feature keys to cluster-pair
+dyads via their observed member/gene pair, and exposes the
+\verb{protein_cluster:<representative>} key for cluster-level features.
+HMMER and struct edges remain virtual.
 }
 \examples{
 \dontrun{
 buildDyadFeatureMap(
-  duckdb_path = "data/Staphylococcus_argenteus/Sar.duckdb"
+  duckdb_path = "data/Staphylococcus_argenteus/work/Sar.duckdb"
 )
 }
 

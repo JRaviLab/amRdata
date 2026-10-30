@@ -2,7 +2,7 @@
 % Please edit documentation in R/data_processing.R
 \name{.defenseHMMER}
 \alias{.defenseHMMER}
-\title{Prepare DefenseFinder and CasFinder HMMs and annotate proteins}
+\title{Prepare DefenseFinder and CasFinder HMMs and search proteins}
 \usage{
 .defenseHMMER(
   defense_db_dir,
@@ -38,15 +38,18 @@ Default: \code{TRUE}.}
 CasFinder model archives must be retrieved. Default: \code{TRUE}.}
 }
 \value{
-Invisibly returns the path to the DefenseCas annotation Parquet file.
+Invisibly returns a list containing prepared DefenseFinder and
+CasFinder HMM/profile-cache metadata (\code{databases}) and their unfiltered
+hit Parquet files (\code{hits}).
 }
 \description{
 Downloads and prepares the DefenseFinder and CasFinder model collections,
-combines their HMM profiles, runs HMMER against the representative protein
-sequences in the selected dataset, and writes the resulting annotations for
-downstream processing.
+combines their HMM profiles, and runs HMMER against the representative
+protein sequences in the selected dataset. Unfiltered hits are written for
+\code{\link[=.filterHMMER]{.filterHMMER()}}.
 }
 \details{
-Prepared model files are reused when already present.
+Prepared combined HMMs, pressed indexes, and profile metadata are reused when
+already present.
 }
 \keyword{internal}
