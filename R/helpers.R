@@ -3514,25 +3514,32 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #' Parsing HMM database to extract profile names, accessions and descriptions
 #'
 #' Streams through an HMM database in bounded line chunks and retains only the
-#' `NAME`, `ACC`, and `DESC` fields needed during annotation finalization.
+#' `NAME`, `ACC`, `DESC`, and score cutoff (`GA`, `TC`, `NC`) fields needed
+#' during annotation finalization.
 #'
 #' @param hmm_file Path to the HMM database file (`.hmm`).
 #' @param chunk_lines Number of lines to read per chunk.
 #'
-#' @returns A tibble with one row per HMM profile.
+#' @returns A tibble with one row per HMM profile. `ga_seq`/`ga_dom`,
+#'   `tc_seq`/`tc_dom` and `nc_seq`/`nc_dom` are the per-sequence and per-domain
+#'   bit score cutoffs, `NA` when the profile does not define them.
 #'
 #' @keywords internal
 .parse_hmmer_profiles <- function(hmm_file, chunk_lines = 100000L) {
   input <- file(hmm_file, open = "r")
   on.exit(close(input), add = TRUE)
 
+  cutoff_fields <- c("GA", "TC", "NC")
+
   names_out <- character()
   accessions_out <- character()
   descriptions_out <- character()
+  cutoffs_out <- list()
 
   current_name <- NA_character_
   current_accession <- NA_character_
   current_description <- NA_character_
+  current_cutoffs <- rep(NA_real_, 2L * length(cutoff_fields))
 
   flush_profile <- function() {
     if (is.na(current_name)) {
@@ -3542,6 +3549,7 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     names_out <<- c(names_out, current_name)
     accessions_out <<- c(accessions_out, current_accession)
     descriptions_out <<- c(descriptions_out, current_description)
+    cutoffs_out[[length(cutoffs_out) + 1L]] <<- current_cutoffs
 
     invisible(NULL)
   }
@@ -3550,7 +3558,7 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     lines <- readLines(input, n = chunk_lines, warn = FALSE)
     if (!length(lines)) break
 
-    relevant <- lines[grepl("^(NAME|ACC|DESC)\\s+", lines)]
+    relevant <- lines[grepl("^(NAME|ACC|DESC|GA|TC|NC)\\s+", lines)]
     if (!length(relevant)) next
 
     for (line in relevant) {
@@ -3559,6 +3567,7 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
         current_name <- sub("^NAME\\s+", "", line)
         current_accession <- NA_character_
         current_description <- NA_character_
+        current_cutoffs <- rep(NA_real_, 2L * length(cutoff_fields))
       } else if (grepl("^ACC\\s+", line) &&
                  !is.na(current_name) &&
                  is.na(current_accession)) {
@@ -3567,16 +3576,39 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
                  !is.na(current_name) &&
                  is.na(current_description)) {
         current_description <- sub("^DESC\\s+", "", line)
+      } else if (!is.na(current_name) &&
+                 grepl("^(GA|TC|NC)\\s+", line)) {
+        # e.g. "GA    27.00 27.00;" -> sequence and domain bit scores
+        field <- match(substr(line, 1L, 2L), cutoff_fields)
+        values <- suppressWarnings(as.numeric(strsplit(
+          trimws(sub(";.*$", "", sub("^(GA|TC|NC)\\s+", "", line))),
+          "\\s+"
+        )[[1L]]))
+        if (length(values) == 2L) {
+          current_cutoffs[(2L * field - 1L):(2L * field)] <- values
+        }
       }
     }
   }
 
   flush_profile()
 
+  cutoffs <- if (length(cutoffs_out)) {
+    do.call(rbind, cutoffs_out)
+  } else {
+    matrix(NA_real_, nrow = 0L, ncol = 2L * length(cutoff_fields))
+  }
+
   tibble::tibble(
     profile_name = names_out,
     profile_accession = accessions_out,
-    profile_description = descriptions_out
+    profile_description = descriptions_out,
+    ga_seq = cutoffs[, 1L],
+    ga_dom = cutoffs[, 2L],
+    tc_seq = cutoffs[, 3L],
+    tc_dom = cutoffs[, 4L],
+    nc_seq = cutoffs[, 5L],
+    nc_dom = cutoffs[, 6L]
   )
 }
 
@@ -3584,7 +3616,8 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #'
 #' Stores the small profile lookup table beside the prepared HMM database so
 #' dataset finalization does not need to rescan the full HMM file. The sidecar
-#' is rebuilt when it is missing or older than the HMM database and is registered
+#' is rebuilt when it is missing, older than the HMM database, or lacks the
+#' score cutoff columns, and is registered
 #' as a component of the database in the shared BiocFileCache registry.
 #'
 #' @param hmm_file Path to the prepared HMM database.
@@ -3612,6 +3645,14 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   if (!rebuild) {
     rebuild <- isTRUE(
       file.info(profile_path)$mtime < file.info(hmm_file)$mtime
+    )
+  }
+
+  # Sidecars written before the score cutoffs were parsed lack these columns
+  if (!rebuild) {
+    rebuild <- tryCatch(
+      !"ga_seq" %in% names(arrow::read_parquet(profile_path, as_data_frame = FALSE)),
+      error = function(e) TRUE
     )
   }
 
@@ -3748,6 +3789,31 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   )
 
   table
+}
+
+#' Prepare a parsed HMMER table for saving
+#'
+#' Keeps the columns that any of the later hit cutoffs may need, so cutoffs can
+#' change without re-running HMMER, and adds two coverage columns calculated per
+#' domain hit: `profile_coverage`, the fraction of the profile (query) the hit
+#' aligns to, and `target_coverage`, the fraction of the protein (target).
+#'
+#' @param hits A tibble from [.parseHMMEROutput()].
+#'
+#' @return `hits` with the saved columns.
+#' @keywords internal
+.hmmerHits <- function(hits) {
+  hits |>
+    dplyr::mutate(
+      profile_coverage = (hmm_to - hmm_from + 1) / qlen,
+      target_coverage = (ali_to - ali_from + 1) / tlen
+    ) |>
+    dplyr::select(
+      "protein", "query_name", "query_accession", "target_description",
+      "tlen", "qlen", "sequence_evalue", "sequence_score", "domain_num",
+      "i_evalue", "domain_score", "hmm_from", "hmm_to", "ali_from", "ali_to",
+      "env_from", "env_to", "profile_coverage", "target_coverage"
+    )
 }
 
 #' Write a data frame to a compressed Parquet file

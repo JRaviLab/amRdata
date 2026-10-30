@@ -36,8 +36,10 @@ graph relations in the Parquet-backed ORB DuckDB.
 }
 \details{
 The canonical \code{dyads.parquet} contains distinct \verb{(protein, gene)} pairs,
-where \code{protein} is a CD-HIT protein-cluster representative and \code{gene} is a
-gene-cluster identifier. A \code{dyad_type} column records how each dyad arose:
+where \code{protein} is the representative protein ID of a CD-HIT cluster (a
+\code{fig|...} ID that is itself a member of that cluster) and \code{gene} is the
+Panaroo gene cluster: its \code{group_N} ID or given gene name, with \code{~} written
+as \code{.}. A \code{dyad_type} column records how each dyad arose:
 \code{paired} (both clusters), \code{gene_only} (a gene cluster with no protein
 cluster; \code{protein} is NULL) or \code{protein_only} (a protein cluster with no gene
 cluster; \code{gene} is NULL). Every dyad has at least one side. Orphans are

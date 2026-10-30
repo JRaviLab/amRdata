@@ -29,6 +29,7 @@ runDataProcessing(
   hmmer_docker_image = "staphb/hmmer",
   hmmer_num_splits = 8L,
   hmmer_workers = 8L,
+  cog_evalue = 1e-04,
   verbose = FALSE,
   progress = getOption("amRdata.progress", TRUE)
 )
@@ -115,6 +116,14 @@ Default: \code{"staphb/hmmer"}.}
 Default: \code{8}.}
 
 \item{hmmer_workers}{Integer. Number of parallel HMMER workers. Default: \code{8}.}
+
+\item{cog_evalue}{Numeric. E-value that COG hits must meet (sequence and
+domain independent E-values), because COG profiles define no bit score
+cutoffs. Hits to Pfam, AMRFinder, DefenseFinder and CasFinder profiles are
+judged on the curator-defined bit score cutoff instead (\code{GA}, or \code{TC} for
+AMRFinder), and a CasFinder profile without one accepts any hit. Default:
+\code{1e-4}, the E-value NCBI uses to assign proteins to COGs (COG database
+update 2024).}
 
 \item{verbose}{Logical. Print persistent status and diagnostic messages.
 Routine workflow output is suppressed when \code{FALSE}; warnings and errors are

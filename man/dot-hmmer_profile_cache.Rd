@@ -22,7 +22,8 @@ A list containing the sidecar path and BiocFileCache identifiers.
 \description{
 Stores the small profile lookup table beside the prepared HMM database so
 dataset finalization does not need to rescan the full HMM file. The sidecar
-is rebuilt when it is missing or older than the HMM database and is registered
+is rebuilt when it is missing, older than the HMM database, or lacks the
+score cutoff columns, and is registered
 as a component of the database in the shared BiocFileCache registry.
 }
 \keyword{internal}

@@ -12,10 +12,13 @@
 \item{chunk_lines}{Number of lines to read per chunk.}
 }
 \value{
-A tibble with one row per HMM profile.
+A tibble with one row per HMM profile. \code{ga_seq}/\code{ga_dom},
+\code{tc_seq}/\code{tc_dom} and \code{nc_seq}/\code{nc_dom} are the per-sequence and per-domain
+bit score cutoffs, \code{NA} when the profile does not define them.
 }
 \description{
 Streams through an HMM database in bounded line chunks and retains only the
-\code{NAME}, \code{ACC}, and \code{DESC} fields needed during annotation finalization.
+\code{NAME}, \code{ACC}, \code{DESC}, and score cutoff (\code{GA}, \code{TC}, \code{NC}) fields needed
+during annotation finalization.
 }
 \keyword{internal}

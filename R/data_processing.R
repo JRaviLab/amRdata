@@ -1680,8 +1680,8 @@ CDHIT2duckdb <- function(duckdb_path,
 #'
 #' Runs `hmmsearch` for one protein FASTA chunk against one prepared HMM
 #' database. The available CPU budget is divided across concurrently running
-#' HMMER workers. Raw HMMER output is parsed and written to a Parquet file for
-#' later combination by [.runHMMER()].
+#' HMMER workers. Raw HMMER output is parsed and written, unfiltered, to a
+#' Parquet file for later combination by [.runHMMER()].
 #'
 #' @param JOB_NAME Character. Unique name for this HMMER job, used to name
 #'   intermediate and output files.
@@ -1776,17 +1776,9 @@ CDHIT2duckdb <- function(duckdb_path,
          call. = FALSE)
   }
 
-  # Adding an E value cutoff here
-  hmmer_tbl <- .parseHMMEROutput(hmmer_output) |>
-    dplyr::filter(i_evalue <= 1e-5) |>
-    dplyr::select(
-      protein,
-      query_name,
-      query_accession,
-      target_description,
-      i_evalue,
-      domain_score
-    )
+  # Hits are written unfiltered; cutoffs are applied once per database after
+  # the chunks are combined (see .filterHMMER())
+  hmmer_tbl <- .hmmerHits(.parseHMMEROutput(hmmer_output))
 
   hmmer_tbl_filename <- file.path(
     dirname(hmmer_output),
@@ -1803,8 +1795,8 @@ CDHIT2duckdb <- function(duckdb_path,
 #'
 #' Splits representative protein-cluster sequences into FASTA chunks and runs
 #' HMMER searches against each requested reference database. Chunks for each
-#' database are processed in parallel, then combined into database-specific
-#' Parquet files and DuckDB tables.
+#' database are processed in parallel, then combined into one unfiltered hit
+#' Parquet file per database.
 #'
 #' HMM databases are prepared automatically when needed. Progress reports the
 #' number of completed chunks for the database currently being processed.
@@ -1832,8 +1824,9 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   tool output logging.
 #' @param progress Logical. Show temporary completed-chunk progress.
 #'   Default: `TRUE`.
-#' @return Invisibly returns a list containing the prepared database paths and
-#'   final HMMER output Parquet files.
+#' @return Invisibly returns a list containing the prepared database paths
+#'   (`databases`) and the unfiltered hit Parquet file of each database
+#'   (`hits`). Hit cutoffs are applied afterwards by [.filterHMMER()].
 #'
 #' @keywords internal
 .runHMMER <- function(duckdb_path,
@@ -2014,54 +2007,44 @@ CDHIT2duckdb <- function(duckdb_path,
 
   parquet_tbl <- tibble::tibble(parquet = parquet_files, db = job_list$DB)
 
-  final_parquets <- .amr_with_progress(
+  # One unfiltered hit file per database. Cutoffs are applied afterwards by
+  # .filterHMMER(), and keeping this file lets them change without a new search
+  hits_parquets <- .amr_with_progress(
     {
       p <- .amr_progressor(steps = length(databases),
                            progress = progress,
-                           message = "Finalizing HMMER annotations")
+                           message = "Combining HMMER hits")
 
-      con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+      con <- DBI::dbConnect(duckdb::duckdb())
 
-      on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+      on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
 
       purrr::set_names(databases) |>
         purrr::map(function(database_name) {
-
-          progress_message <- paste0("Finalizing HMMER annotations: ", database_name)
-
-          p(amount = 0, message = progress_message)
-
-          .log_or_message(log_path, verbose, "Combining ", database_name)
+          p(amount = 0, message = paste0("Combining HMMER hits: ", database_name))
 
           db_files <- parquet_tbl |>
             dplyr::filter(db == database_name) |>
             dplyr::pull(parquet)
 
-          combined_tbl <- db_files |>
-            purrr::map(arrow::read_parquet) |>
-            dplyr::bind_rows() |>
-            dplyr::left_join(
-              arrow::read_parquet(db_paths[[database_name]]$profiles) |>
-                dplyr::select(query_name = profile_name, description = profile_description),
-              by = "query_name"
-            )
+          hits_parquet <- file.path(output_path, paste0("protein_", database_name, "_hits.parquet"))
 
-          final_parquet <- file.path(output_path, paste0("protein_", database_name, ".parquet"))
-
-          .write_compressed_parquet(combined_tbl, final_parquet)
-
-          DBI::dbWriteTable(
+          DBI::dbExecute(
             con,
-            name = paste0("protein_", database_name),
-            value = combined_tbl,
-            overwrite = TRUE
+            paste0(
+              "COPY (SELECT * FROM read_parquet([",
+              paste(DBI::dbQuoteString(con, normalizePath(db_files, winslash = "/")), collapse = ", "),
+              "], union_by_name = true)) TO ",
+              DBI::dbQuoteString(con, normalizePath(hits_parquet, winslash = "/", mustWork = FALSE)),
+              " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 3)"
+            )
           )
+          unlink(db_files, force = TRUE)
 
-          .log_or_message(log_path, verbose, "Created ", basename(final_parquet))
+          .log_or_message(log_path, verbose, "Combined ", database_name, " hits")
+          p(message = paste0("Combined ", database_name))
 
-          p(message = paste0("Finalized ", database_name))
-
-          final_parquet
+          hits_parquet
         })
     }, progress = progress, type = "steps")
 
@@ -2069,7 +2052,7 @@ CDHIT2duckdb <- function(duckdb_path,
     list.files(output_path, pattern = "^protein_chunk_.*\\.(fasta|tbl|parquet)$", full.names = TRUE)
   )
 
-  invisible(list(databases = db_paths, outputs = final_parquets))
+  invisible(list(databases = db_paths, hits = hits_parquets))
 }
 
 #' Map HMMER protein annotations to genome-level count matrix and load into DuckDB
@@ -2187,12 +2170,12 @@ CDHIT2duckdb <- function(duckdb_path,
   invisible(count_paths)
 }
 
-#' Prepare DefenseFinder and CasFinder HMMs and annotate proteins
+#' Prepare DefenseFinder and CasFinder HMMs and search proteins
 #'
 #' Downloads and prepares the DefenseFinder and CasFinder model collections,
-#' combines their HMM profiles, runs HMMER against the representative protein
-#' sequences in the selected dataset, and writes the resulting annotations for
-#' downstream processing.
+#' combines their HMM profiles, and runs HMMER against the representative
+#' protein sequences in the selected dataset. Unfiltered hits are written for
+#' [.filterHMMER()].
 #'
 #' Prepared combined HMMs, pressed indexes, and profile metadata are reused when
 #' already present.
@@ -2212,8 +2195,8 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   CasFinder model archives must be retrieved. Default: `TRUE`.
 #'
 #' @return Invisibly returns a list containing prepared DefenseFinder and
-#'   CasFinder HMM/profile-cache metadata and the DefenseCas annotation Parquet
-#'   path.
+#'   CasFinder HMM/profile-cache metadata (`databases`) and their unfiltered
+#'   hit Parquet files (`hits`).
 #' @keywords internal
 .defenseHMMER <- function(
     defense_db_dir,
@@ -2573,7 +2556,7 @@ cas_hmm <- .amr_progress_step(
     )
   )
 
-  combined_tbl <- purrr::imap_dfr(
+  purrr::iwalk(
     databases, function(database, db_name) {
     .log_or_message(log_path, verbose, "Running ", db_name)
 
@@ -2669,40 +2652,13 @@ cas_hmm <- .amr_progress_step(
         force = TRUE
       )
 
-      .parseHMMEROutput(tbl_file) |>
-        dplyr::select(
-          protein,
-          query_name
-        ) |>
-        dplyr::mutate(
-          database = db_name
-        ) |>
-        dplyr::left_join(
-          arrow::read_parquet(database$profiles) |>
-            dplyr::select(
-              query_name = profile_name,
-              query_accession = profile_accession,
-              description = profile_description
-            ),
-          by = "query_name"
-        )
+      # Keep the unfiltered hits; cutoffs are applied by .filterHMMER()
+      .write_compressed_parquet(
+        .hmmerHits(.parseHMMEROutput(tbl_file)),
+        file.path(output_path, paste0("protein_", db_name, "_hits.parquet"))
+      )
     }
   )
-
-  parquet_file <- file.path(output_path, "protein_DefenseCas.parquet")
-
-  .write_compressed_parquet(combined_tbl, parquet_file)
-
-  local({
-    con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-
-    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-    DBI::dbWriteTable(con, "protein_DefenseCas", combined_tbl, overwrite = TRUE)
-  })
-
-  .log_or_message(log_path, verbose, "Created protein_DefenseCas")
-
 
   unlink(
     c(fasta_file, file.path(output_path, paste0("protein_", names(databases), ".tbl")))
@@ -2727,8 +2683,194 @@ cas_hmm <- .amr_progress_step(
         profiles_bfc_rname = cas_profiles$rname
       )
     ),
-    output = parquet_file
+    hits = file.path(output_path, paste0("protein_", names(databases), "_hits.parquet"))
   ))
+}
+
+
+#' Filter HMMER hits and write the annotation tables
+#'
+#' Applies the hit cutoffs to the unfiltered hits saved by [.runHMMER()] and
+#' [.defenseHMMER()], then writes one annotation Parquet file and DuckDB table
+#' per database (`protein_<database>`). Because the unfiltered hits are kept,
+#' this can be run again with other cutoffs without re-running HMMER. Filtering
+#' runs in DuckDB, so the full hit table never has to fit in R memory.
+#'
+#' Pfam, AMRFinder, DefenseFinder and CasFinder hits are judged on the bit score
+#' cutoff their curators define in each profile (`GA`, or `TC` for AMRFinder):
+#' both the sequence and the domain score must reach it. A profile that defines
+#' no cutoff, which affects some CasFinder profiles, accepts any hit HMMER
+#' reports.
+#'
+#' COG profiles define no cutoffs, so COG hits must have a sequence and a domain
+#' E-value at or below `cog_evalue`. The default, 1e-4, is the cutoff NCBI uses to
+#' assign proteins to COGs (COG database update 2024, Nucleic Acids Res
+#' 53:D356). NCBI also keeps only the highest-scoring non-overlapping footprints
+#' of a protein, so a COG hit is dropped when it shares more than `cog_overlap`
+#' of its length with a better hit (lower E-value, then higher score) on the same
+#' protein. Two COGs on different regions, as in fused enzymes, are both kept.
+#'
+#' Hits to related profiles that overlap are otherwise kept: each profile is its
+#' own count column downstream, so removing them would change those counts.
+#'
+#' @param duckdb_path Character. Path to the working dataset DuckDB, where the
+#'   `protein_<database>` tables are written.
+#' @param output_path Character. Directory holding the `protein_<name>_hits.parquet`
+#'   files, and where the `protein_<database>.parquet` files are written.
+#' @param databases Character vector of HMMER database names. `DefenseCas` stands
+#'   for the DefenseFinder and CasFinder searches.
+#' @param profiles Named character vector of profile metadata Parquet files (from
+#'   [.hmmer_profile_cache()]), named by searched database: `Pfam`, `COG`,
+#'   `AMRFinder`, `DefenseFinder`, `CasFinder`. They carry the `GA`/`TC` cutoffs
+#'   and the profile descriptions.
+#' @param cog_evalue Numeric. E-value for COG hits. Default: `1e-4`.
+#' @param cog_overlap Numeric between 0 and 1. Share of a COG hit's length that
+#'   it may overlap a better COG hit on the same protein. Default: `0.1`, which
+#'   tolerates the few residues two fused domains can share.
+#' @param tolerance Numeric. Bit score slack for the one-decimal rounding of
+#'   scores in HMMER's output: a hit scoring exactly at a cutoff can print up to
+#'   0.05 below it. Default: `0.05`.
+#' @param verbose Logical. Print progress messages.
+#' @param log_path Character or `NULL`. Optional processing log.
+#'
+#' @return Invisibly returns the annotation Parquet file of each database.
+#' @keywords internal
+.filterHMMER <- function(duckdb_path,
+                         output_path,
+                         databases,
+                         profiles,
+                         cog_evalue = 1e-4,
+                         cog_overlap = 0.1,
+                         tolerance = 0.05,
+                         verbose = TRUE,
+                         log_path = NULL) {
+  if (!is.numeric(cog_evalue) || length(cog_evalue) != 1L || is.na(cog_evalue) || cog_evalue <= 0) {
+    stop("`cog_evalue` must be a single number greater than 0.", call. = FALSE)
+  }
+
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  output_path <- normalizePath(output_path, mustWork = TRUE)
+
+  duck <- DBI::dbConnect(duckdb::duckdb())
+  on.exit(try(DBI::dbDisconnect(duck, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  file_sql <- function(path) {
+    DBI::dbQuoteString(duck, normalizePath(path, winslash = "/", mustWork = FALSE))
+  }
+
+  # The hits of one searched database that pass its cutoffs
+  gate <- function(name) {
+    hits <- file.path(output_path, paste0("protein_", name, "_hits.parquet"))
+    cutoff <- switch(name, COG = NA_character_, AMRFinder = "tc", "ga")
+
+    keep_sql <- if (is.na(cutoff)) {
+      sprintf("h.sequence_evalue <= %1$.10g AND h.i_evalue <= %1$.10g", cog_evalue)
+    } else {
+      seq_col <- paste0("p.", cutoff, "_seq")
+      dom_col <- paste0("p.", cutoff, "_dom")
+
+      # The curated bit scores decide; a profile without them accepts the hit
+      sprintf(
+        "(%1$s IS NULL OR %2$s IS NULL OR (h.sequence_score >= %1$s - %3$.10g AND h.domain_score >= %2$s - %3$.10g))",
+        seq_col, dom_col, tolerance + 1e-6
+      )
+    }
+
+    kept <- DBI::dbGetQuery(
+      duck,
+      paste0(
+        "SELECT h.* FROM read_parquet(", file_sql(hits), ") h ",
+        "LEFT JOIN (",
+        "SELECT profile_name, max(ga_seq) AS ga_seq, max(ga_dom) AS ga_dom, ",
+        "max(tc_seq) AS tc_seq, max(tc_dom) AS tc_dom ",
+        "FROM read_parquet(", file_sql(profiles[[name]]), ") GROUP BY profile_name",
+        ") p ON h.query_name = p.profile_name ",
+        "WHERE ", keep_sql
+      )
+    )
+
+    n_hits <- DBI::dbGetQuery(
+      duck,
+      paste0("SELECT count(*) AS n FROM read_parquet(", file_sql(hits), ")")
+    )$n[[1L]]
+
+    .log_or_message(log_path, verbose, name, ": kept ", nrow(kept), " of ", n_hits, " hits")
+
+    tibble::as_tibble(kept)
+  }
+
+  # Drop a hit that shares more than `cog_overlap` of its length with a better
+  # hit on the same protein
+  best_hit_per_region <- function(hits) {
+    hits <- hits[order(hits$protein, hits$i_evalue, -hits$domain_score), ]
+    keep <- rep(TRUE, nrow(hits))
+
+    for (rows in Filter(function(r) length(r) > 1L, split(seq_len(nrow(hits)), hits$protein))) {
+      kept_from <- hits$env_from[rows[[1L]]]
+      kept_to <- hits$env_to[rows[[1L]]]
+
+      for (r in rows[-1L]) {
+        from <- hits$env_from[r]
+        to <- hits$env_to[r]
+        shared <- max(pmax(0, pmin(to, kept_to) - pmax(from, kept_from) + 1))
+
+        if (shared / (to - from + 1) > cog_overlap) {
+          keep[r] <- FALSE
+        } else {
+          kept_from <- c(kept_from, from)
+          kept_to <- c(kept_to, to)
+        }
+      }
+    }
+
+    hits[keep, ]
+  }
+
+  descriptions <- function(name) {
+    arrow::read_parquet(profiles[[name]]) |>
+      dplyr::select(
+        query_name = profile_name,
+        query_accession = profile_accession,
+        description = profile_description
+      )
+  }
+
+  purrr::set_names(databases) |>
+    purrr::map(function(database) {
+      annotation <- if (identical(database, "DefenseCas")) {
+        purrr::map(c("DefenseFinder", "CasFinder"), function(name) {
+          gate(name) |>
+            dplyr::select(protein, query_name) |>
+            dplyr::mutate(database = name) |>
+            dplyr::left_join(descriptions(name), by = "query_name")
+        }) |>
+          dplyr::bind_rows()
+      } else {
+        hits <- gate(database)
+
+        if (identical(database, "COG")) {
+          hits <- best_hit_per_region(hits)
+          .log_or_message(log_path, verbose, "COG: ", nrow(hits), " hits after keeping the best hit per region")
+        }
+
+        hits |>
+          dplyr::select(protein, query_name, target_description, i_evalue, domain_score) |>
+          dplyr::left_join(descriptions(database), by = "query_name") |>
+          dplyr::relocate(query_accession, .after = query_name)
+      }
+
+      parquet <- file.path(output_path, paste0("protein_", database, ".parquet"))
+
+      .write_compressed_parquet(annotation, parquet)
+      DBI::dbWriteTable(con, paste0("protein_", database), annotation, overwrite = TRUE)
+
+      .log_or_message(log_path, verbose, "Created ", basename(parquet))
+
+      parquet
+    })
 }
 
 
@@ -3297,6 +3439,13 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' @param hmmer_num_splits Integer. Number of protein-sequence chunks for HMMER.
 #'   Default: `8`.
 #' @param hmmer_workers Integer. Number of parallel HMMER workers. Default: `8`.
+#' @param cog_evalue Numeric. E-value that COG hits must meet (sequence and
+#'   domain independent E-values), because COG profiles define no bit score
+#'   cutoffs. Hits to Pfam, AMRFinder, DefenseFinder and CasFinder profiles are
+#'   judged on the curator-defined bit score cutoff instead (`GA`, or `TC` for
+#'   AMRFinder), and a CasFinder profile without one accepts any hit. Default:
+#'   `1e-4`, the E-value NCBI uses to assign proteins to COGs (COG database
+#'   update 2024).
 #'
 #' @param verbose Logical. Print persistent status and diagnostic messages.
 #'   Routine workflow output is suppressed when `FALSE`; warnings and errors are
@@ -3414,12 +3563,17 @@ runDataProcessing <- function(
     hmmer_docker_image = "staphb/hmmer",
     hmmer_num_splits = 8L,
     hmmer_workers = 8L,
+    cog_evalue = 1e-4,
 
     # Metadata cleaning
     verbose = FALSE,
     progress = getOption("amRdata.progress", TRUE)
 ) {
   panaroo_refind_mode <- match.arg(panaroo_refind_mode)
+  if (!is.numeric(cog_evalue) || length(cog_evalue) != 1L ||
+      is.na(cog_evalue) || cog_evalue <= 0) {
+    stop("`cog_evalue` must be a single number greater than 0.", call. = FALSE)
+  }
 
   # User supplied nothing? Go fetch what's eligible to run
   if (is.null(duckdb_path)) {
@@ -3525,7 +3679,12 @@ runDataProcessing <- function(
       databases = hmmer_databases,
       database_dir = hmmer_db_dir,
       database_cache = "BiocFileCache",
-      docker_image = hmmer_docker_image
+      docker_image = hmmer_docker_image,
+      cutoffs = list(
+        cog_evalue = cog_evalue,
+        bit_score_tolerance = formals(.filterHMMER)$tolerance,
+        cog_overlap = formals(.filterHMMER)$cog_overlap
+      )
     )
   )
   resume_completed <- .resume_plan(prev_run, stage_order, stage_parameters)
@@ -3773,6 +3932,25 @@ runDataProcessing <- function(
     progress = progress
   )
 }
+
+    # Apply the hit cutoffs to the unfiltered hits and write the annotation tables
+    status("Filtering HMMER hits")
+
+    .filterHMMER(
+      duckdb_path = duckdb_path,
+      output_path = paths$hmmer,
+      databases = hmmer_databases,
+      profiles = unlist(
+        c(
+          purrr::map(hmmer_result$databases, "profiles"),
+          purrr::map(defense_result$databases, "profiles")
+        ),
+        use.names = TRUE
+      ),
+      cog_evalue = cog_evalue,
+      verbose = verbose,
+      log_path = log_path
+    )
   }
 
   # Verify expected outputs regardless of whether HMMER just ran or was skipped
