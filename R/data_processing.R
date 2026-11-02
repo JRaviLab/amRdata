@@ -1734,6 +1734,7 @@ CDHIT2duckdb <- function(duckdb_path,
     docker_image,
     "hmmsearch",
     "--notextw",
+    .hmmerReportingArgs(),
     "--cpu", as.character(threads_per_job),
     "-Z", total_proteins,
     "--domZ", total_proteins,
@@ -2582,6 +2583,7 @@ cas_hmm <- .amr_progress_step(
                         docker_image,
                         "hmmsearch",
                         "--notextw",
+                        .hmmerReportingArgs(),
                         "--cpu",
                         as.character(threads),
                         "-Z",
@@ -2688,6 +2690,21 @@ cas_hmm <- .amr_progress_step(
 }
 
 
+# Retain candidates passing HMMER's acceleration filters, including scores whose
+# E-values exceed the default reporting limit
+.hmmerReportingArgs <- function() c("-T", "-1e6", "--domT", "-1e6")
+
+.checkHmmerFallback <- function(evalue, coverage) {
+  if (!is.numeric(evalue) || length(evalue) != 1L ||
+      !is.finite(evalue) || evalue <= 0) {
+    stop("`hmmer_fallback_evalue` must be a finite number greater than 0.", call. = FALSE)
+  }
+  if (!is.numeric(coverage) || length(coverage) != 1L ||
+      !is.finite(coverage) || coverage <= 0 || coverage > 1) {
+    stop("`hmmer_fallback_coverage` must be a number in (0, 1].", call. = FALSE)
+  }
+}
+
 #' Filter HMMER hits and write the annotation tables
 #'
 #' Applies the hit cutoffs to the unfiltered hits saved by [.runHMMER()] and
@@ -2699,8 +2716,8 @@ cas_hmm <- .amr_progress_step(
 #' Pfam, AMRFinder, DefenseFinder and CasFinder hits are judged on the bit score
 #' cutoff their curators define in each profile (`GA`, or `TC` for AMRFinder):
 #' both the sequence and the domain score must reach it. A profile that defines
-#' no cutoff, which affects some CasFinder profiles, accepts any hit HMMER
-#' reports.
+#' no cutoff uses the configurable E-value and profile-coverage fallback.
+#' Unknown profile names and incomplete cutoff pairs are errors.
 #'
 #' COG profiles define no cutoffs, so COG hits must have a sequence and a domain
 #' E-value at or below `cog_evalue`. The default, 1e-4, is the cutoff NCBI uses to
@@ -2733,6 +2750,10 @@ cas_hmm <- .amr_progress_step(
 #' @param verbose Logical. Print progress messages.
 #' @param log_path Character or `NULL`. Optional processing log.
 #'
+#' @param fallback_evalue Maximum sequence and independent-domain E-values
+#'   when neither curated cutoff is present. Default: `1e-3`.
+#' @param fallback_coverage Minimum profile coverage for the fallback. Default: `0.5`.
+#'
 #' @return Invisibly returns the annotation Parquet file of each database.
 #' @keywords internal
 .filterHMMER <- function(duckdb_path,
@@ -2743,7 +2764,10 @@ cas_hmm <- .amr_progress_step(
                          cog_overlap = 0.1,
                          tolerance = 0.05,
                          verbose = TRUE,
-                         log_path = NULL) {
+                         log_path = NULL,
+                         fallback_evalue = 1e-3,
+                         fallback_coverage = 0.5) {
+  .checkHmmerFallback(fallback_evalue, fallback_coverage)
   if (!is.numeric(cog_evalue) || length(cog_evalue) != 1L || is.na(cog_evalue) || cog_evalue <= 0) {
     stop("`cog_evalue` must be a single number greater than 0.", call. = FALSE)
   }
@@ -2764,6 +2788,24 @@ cas_hmm <- .amr_progress_step(
   # The hits of one searched database that pass its cutoffs
   gate <- function(name) {
     hits <- file.path(output_path, paste0("protein_", name, "_hits.parquet"))
+    if (!name %in% names(profiles)) {
+      stop("Missing profile metadata for ", name, ".", call. = FALSE)
+    }
+    profile_join <- paste0(
+      " FROM read_parquet(", file_sql(hits), ") h LEFT JOIN (",
+      "SELECT profile_name, max(ga_seq) AS ga_seq, max(ga_dom) AS ga_dom, ",
+      "max(tc_seq) AS tc_seq, max(tc_dom) AS tc_dom ",
+      "FROM read_parquet(", file_sql(profiles[[name]]), ") GROUP BY profile_name",
+      ") p ON h.query_name = p.profile_name "
+    )
+    unknown <- DBI::dbGetQuery(duck, paste0(
+      "SELECT DISTINCT h.query_name", profile_join,
+      "WHERE p.profile_name IS NULL LIMIT 5"
+    ))
+    if (nrow(unknown)) {
+      stop("Unknown HMMER profile(s) in ", name, ": ",
+           paste(unknown$query_name, collapse = ", "), call. = FALSE)
+    }
     cutoff <- switch(name, COG = NA_character_, AMRFinder = "tc", "ga")
 
     keep_sql <- if (is.na(cutoff)) {
@@ -2772,23 +2814,30 @@ cas_hmm <- .amr_progress_step(
       seq_col <- paste0("p.", cutoff, "_seq")
       dom_col <- paste0("p.", cutoff, "_dom")
 
-      # The curated bit scores decide; a profile without them accepts the hit
+      partial <- DBI::dbGetQuery(duck, paste0(
+        "SELECT DISTINCT h.query_name", profile_join, "WHERE (",
+        seq_col, " IS NULL) <> (", dom_col, " IS NULL) LIMIT 5"
+      ))
+      if (nrow(partial)) {
+        stop("Incomplete curated cutoff pair in ", name, ": ",
+             paste(partial$query_name, collapse = ", "), call. = FALSE)
+      }
       sprintf(
-        "(%1$s IS NULL OR %2$s IS NULL OR (h.sequence_score >= %1$s - %3$.10g AND h.domain_score >= %2$s - %3$.10g))",
-        seq_col, dom_col, tolerance + 1e-6
+        paste0(
+          "((%1$s IS NOT NULL AND %2$s IS NOT NULL AND ",
+          "h.sequence_score >= %1$s - %3$.10g AND h.domain_score >= %2$s - %3$.10g) OR ",
+          "(%1$s IS NULL AND %2$s IS NULL AND ",
+          "h.sequence_evalue <= %4$.10g AND h.i_evalue <= %4$.10g AND ",
+          "h.profile_coverage >= %5$.10g))"
+        ),
+        seq_col, dom_col, tolerance + 1e-6, fallback_evalue, fallback_coverage
       )
     }
 
     kept <- DBI::dbGetQuery(
       duck,
       paste0(
-        "SELECT h.* FROM read_parquet(", file_sql(hits), ") h ",
-        "LEFT JOIN (",
-        "SELECT profile_name, max(ga_seq) AS ga_seq, max(ga_dom) AS ga_dom, ",
-        "max(tc_seq) AS tc_seq, max(tc_dom) AS tc_dom ",
-        "FROM read_parquet(", file_sql(profiles[[name]]), ") GROUP BY profile_name",
-        ") p ON h.query_name = p.profile_name ",
-        "WHERE ", keep_sql
+        "SELECT h.*", profile_join, "WHERE ", keep_sql
       )
     )
 
@@ -3443,9 +3492,13 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'   domain independent E-values), because COG profiles define no bit score
 #'   cutoffs. Hits to Pfam, AMRFinder, DefenseFinder and CasFinder profiles are
 #'   judged on the curator-defined bit score cutoff instead (`GA`, or `TC` for
-#'   AMRFinder), and a CasFinder profile without one accepts any hit. Default:
+#'   AMRFinder). Profiles without cutoffs use the fallback below. Default:
 #'   `1e-4`, the E-value NCBI uses to assign proteins to COGs (COG database
-#'   update 2024).
+#'   update 2024); the original NCBI method uses PSI-BLAST/PSSMs.
+#' @param hmmer_fallback_evalue Maximum sequence and independent-domain E-values
+#'   for profiles without GA/TC. Provisional default: `1e-3`.
+#' @param hmmer_fallback_coverage Minimum profile coverage for profiles without
+#'   GA/TC. Provisional default: `0.5`.
 #'
 #' @param verbose Logical. Print persistent status and diagnostic messages.
 #'   Routine workflow output is suppressed when `FALSE`; warnings and errors are
@@ -3567,8 +3620,11 @@ runDataProcessing <- function(
 
     # Metadata cleaning
     verbose = FALSE,
-    progress = getOption("amRdata.progress", TRUE)
+    progress = getOption("amRdata.progress", TRUE),
+    hmmer_fallback_evalue = 1e-3,
+    hmmer_fallback_coverage = 0.5
 ) {
+  .checkHmmerFallback(hmmer_fallback_evalue, hmmer_fallback_coverage)
   panaroo_refind_mode <- match.arg(panaroo_refind_mode)
   if (!is.numeric(cog_evalue) || length(cog_evalue) != 1L ||
       is.na(cog_evalue) || cog_evalue <= 0) {
@@ -3682,6 +3738,9 @@ runDataProcessing <- function(
       docker_image = hmmer_docker_image,
       cutoffs = list(
         cog_evalue = cog_evalue,
+        fallback_evalue = hmmer_fallback_evalue,
+        fallback_coverage = hmmer_fallback_coverage,
+        reporting_args = .hmmerReportingArgs(),
         bit_score_tolerance = formals(.filterHMMER)$tolerance,
         cog_overlap = formals(.filterHMMER)$cog_overlap
       )
@@ -3948,6 +4007,8 @@ runDataProcessing <- function(
         use.names = TRUE
       ),
       cog_evalue = cog_evalue,
+      fallback_evalue = hmmer_fallback_evalue,
+      fallback_coverage = hmmer_fallback_coverage,
       verbose = verbose,
       log_path = log_path
     )

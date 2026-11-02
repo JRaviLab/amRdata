@@ -41,6 +41,7 @@ profile_row <- function(profile_name, ga = c(NA_real_, NA_real_),
 run_filter <- function(hits, profiles, databases = names(hits), ...) {
   dir <- tempfile("hmmer-")
   dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
 
   for (name in names(hits)) {
     arrow::write_parquet(
@@ -148,7 +149,7 @@ test_that("AMRFinder uses the TC cutoff", {
   expect_equal(run_filter(hits, profiles)$AMRFinder$protein, "p_pass")
 })
 
-test_that("a CasFinder profile without GA accepts any hit", {
+test_that("a CasFinder profile without GA uses the fallback", {
   hits <- list(CasFinder = list(
     hit_row("p_strong", "CAS_NOGA"),
     hit_row("p_weak", "CAS_NOGA", sequence_score = 1, domain_score = 1,
@@ -156,7 +157,7 @@ test_that("a CasFinder profile without GA accepts any hit", {
   ))
   profiles <- list(CasFinder = profile_row("CAS_NOGA"))
 
-  expect_setequal(run_filter(hits, profiles)$CasFinder$protein, c("p_strong", "p_weak"))
+  expect_setequal(run_filter(hits, profiles)$CasFinder$protein, "p_strong")
 })
 
 test_that("overlapping hits to related profiles are all kept for curated databases", {
@@ -198,7 +199,7 @@ test_that("COG keeps the best hit per region and both COGs of a fused protein", 
     hit_row("p_fused", "COG_D", i_evalue = 1e-50, sequence_evalue = 1e-50, env_from = 1L, env_to = 464L),
     hit_row("p_fused", "COG_E", i_evalue = 1e-30, sequence_evalue = 1e-30, env_from = 463L, env_to = 815L)
   ))
-  profiles <- list(COG = profile_row("COG_X"))
+  profiles <- list(COG = lapply(unique(vapply(hits$COG, function(h) h$query_name, character(1))), profile_row))
 
   result <- run_filter(hits, profiles)$COG
 
@@ -212,7 +213,7 @@ test_that("the COG overlap allowance is a parameter", {
     # shares 30 of its 100 residues with the better hit
     hit_row("p1", "COG_B", i_evalue = 1e-20, sequence_evalue = 1e-20, env_from = 71L, env_to = 170L)
   ))
-  profiles <- list(COG = profile_row("COG_X"))
+  profiles <- list(COG = lapply(unique(vapply(hits$COG, function(h) h$query_name, character(1))), profile_row))
 
   expect_equal(nrow(run_filter(hits, profiles)$COG), 1L)
   expect_equal(nrow(run_filter(hits, profiles, cog_overlap = 0.3)$COG), 2L)
@@ -246,4 +247,77 @@ test_that(".filterHMMER() writes the annotation columns", {
     c("protein", "query_name", "query_accession", "target_description",
       "i_evalue", "domain_score", "description")
   )
+})
+
+
+test_that("missing and incomplete profile metadata are errors", {
+  hits <- list(Pfam = list(hit_row("p1", "PF_MISSING")))
+  profiles <- list(Pfam = profile_row("PF_OTHER", ga = c(20, 20)))
+  expect_error(run_filter(hits, profiles), "Unknown HMMER profile.*Pfam.*PF_MISSING")
+  profiles <- list(Pfam = profile_row("PF_MISSING", ga = c(20, NA_real_)))
+  expect_error(run_filter(hits, profiles), "Incomplete curated cutoff pair")
+})
+
+test_that("the fallback checks sequence E-value, domain E-value and coverage", {
+  good <- hit_row("boundary", "CAS", sequence_evalue = 1e-3, i_evalue = 1e-3)
+  good$profile_coverage <- 0.5
+  short <- hit_row("short", "CAS")
+  short$profile_coverage <- 0.49
+  hits <- list(CasFinder = list(good, short,
+    hit_row("weak_sequence", "CAS", sequence_evalue = 0.01),
+    hit_row("weak_domain", "CAS", i_evalue = 0.01)))
+  profiles <- list(CasFinder = profile_row("CAS"))
+  expect_equal(run_filter(hits, profiles)$CasFinder$protein, "boundary")
+  expect_equal(nrow(run_filter(hits, profiles, fallback_evalue = 0.01,
+                              fallback_coverage = 0.49)$CasFinder), 4L)
+  good$profile_coverage <- NA_real_
+  expect_equal(nrow(run_filter(list(CasFinder = list(good)), profiles)$CasFinder), 0L)
+})
+
+test_that("curated cutoffs are not subjected to fallback coverage or E-values", {
+  hit <- hit_row("curated", "PF1", sequence_score = 40, domain_score = 40,
+                 sequence_evalue = 50, i_evalue = 50)
+  hit$profile_coverage <- 0.1
+  expect_equal(run_filter(list(Pfam = list(hit)),
+    list(Pfam = profile_row("PF1", ga = c(30, 30))))$Pfam$protein, "curated")
+})
+
+test_that("fallback settings are validated before workflow side effects", {
+  for (value in list(NA_real_, Inf, 0, -1, c(1, 2))) {
+    expect_error(runDataProcessing(hmmer_fallback_evalue = value),
+                 "hmmer_fallback_evalue")
+  }
+  for (value in list(NA_real_, Inf, 0, -1, 1.01, c(0.5, 0.6))) {
+    expect_error(runDataProcessing(hmmer_fallback_coverage = value),
+                 "hmmer_fallback_coverage")
+  }
+})
+
+
+test_that("HMMER job requests score-based reporting and saves high-E-value candidates", {
+  out <- tempfile("hmmer-command-")
+  dir.create(out)
+  on.exit(unlink(out, recursive = TRUE), add = TRUE)
+  captured <- NULL
+  run <- .runHmmerJob
+  boundary <- new.env(parent = environment(run))
+  boundary$system2 <- function(command, args, ...) {
+    captured <<- args
+    writeLines(paste(
+      "p1 - 300 PF1 - 100 50 40 0 1 1 50 50 40 0",
+      "1 100 1 100 1 100 0.9 candidate"
+    ), file.path(out, "job.tbl"))
+    0L
+  }
+  environment(run) <- boundary
+  saved <- run("job", "input.faa", "Pfam", total_proteins = 1000L,
+    output_path = out, db_paths = list(Pfam = list(hmm = file.path(out, "db.hmm"))))
+  expect_true(all(c("-T", "--domT") %in% captured))
+  expect_lt(as.numeric(captured[match("-T", captured) + 1L]), 0)
+  expect_lt(as.numeric(captured[match("--domT", captured) + 1L]), 0)
+  hits <- arrow::read_parquet(saved)
+  expect_equal(hits$sequence_evalue, 50)
+  expect_equal(hits$i_evalue, 50)
+  profiles <- list(Pfam = profile_row("PF1", ga = c(30, 30)))
+  expect_equal(run_filter(list(Pfam = list(hits)), profiles)$Pfam$protein, "p1")
 })

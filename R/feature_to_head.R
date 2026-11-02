@@ -112,7 +112,7 @@
 #' cluster; `protein` is NULL) or `protein_only` (a protein cluster with no gene
 #' cluster; `gene` is NULL). Every dyad has at least one side. Orphans are
 #' gene or protein clusters that appear in no paired dyad. Protein-only
-#' clusters have no members in `genome_gene_protein`, so they link to no genome.
+#' clusters recover their genome links from positive `protein_count` rows.
 #'
 #' `member_dyads` and `genome_dyad` preserve protein-member provenance, and
 #' `genome_cluster_dyad` links genomes to cluster-pair dyads.
@@ -348,7 +348,8 @@ buildDyadFeatureMap <- function(
 
   required_relations <- c(
     "genome_gene_protein",
-    "protein_members"
+    "protein_members",
+    "protein_count"
   )
 
   missing_required <- setdiff(
@@ -580,7 +581,12 @@ buildDyadFeatureMap <- function(
        CAST(REPLACE(Gene, '~', '.') AS VARCHAR) AS gene
      FROM genome_gene_protein
      WHERE protein_ids IS NOT NULL AND protein_ids <> ''
-       AND Gene IS NOT NULL AND Gene <> ''"
+       AND Gene IS NOT NULL AND Gene <> ''
+     UNION
+     SELECT pc.protein, CAST(NULL AS VARCHAR) AS gene
+     FROM dyad_protein_cluster pc
+     JOIN dyads d ON d.protein = pc.cluster
+     WHERE d.gene IS NULL"
   )
 
   DBI::dbExecute(
@@ -593,7 +599,6 @@ buildDyadFeatureMap <- function(
      FROM genome_dyad g
      JOIN dyad_protein_cluster pc ON g.protein = pc.protein
      UNION
-     -- Genomes carrying a gene-only dyad's gene cluster (no protein cluster)
      SELECT DISTINCT
        CAST(g.genome_ids AS VARCHAR) AS genome_id,
        CAST(NULL AS VARCHAR) AS protein,
@@ -603,7 +608,18 @@ buildDyadFeatureMap <- function(
        ON d.protein IS NULL
       AND d.gene = CAST(REPLACE(g.Gene, '~', '.') AS VARCHAR)
      WHERE g.genome_ids IS NOT NULL
-       AND g.genome_ids <> ''"
+       AND g.genome_ids <> ''
+     UNION
+     SELECT DISTINCT
+       CAST(pc.genome_id AS VARCHAR) AS genome_id,
+       d.protein,
+       CAST(NULL AS VARCHAR) AS gene
+     FROM protein_count pc
+     JOIN dyads d ON d.protein = CAST(pc.protein AS VARCHAR)
+     WHERE d.gene IS NULL
+       AND pc.value > 0
+       AND pc.genome_id IS NOT NULL
+       AND pc.genome_id <> ''"
   )
 
   created_edge_views <- character()
