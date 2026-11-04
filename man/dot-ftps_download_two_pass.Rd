@@ -11,7 +11,8 @@
   workers_second = 8L,
   log_file = NULL,
   verbose = TRUE,
-  progress = TRUE
+  progress = TRUE,
+  skip_existing = TRUE
 )
 }
 \arguments{
@@ -33,6 +34,9 @@ Default: \code{TRUE}.}
 
 \item{progress}{Logical. Show transient genome download counters.
 Default: \code{TRUE}.}
+
+\item{skip_existing}{Logical. Reuse complete local files. If FALSE, refresh
+files on both download passes. Default: TRUE.}
 }
 \value{
 Character vector of genome IDs with complete file sets after both

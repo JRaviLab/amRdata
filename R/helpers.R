@@ -1220,6 +1220,46 @@
     )
 }
 
+# Evidence mode for processing: the one prepareGenomes() recorded in the
+# manifest, unless the caller passes one. A conflicting explicit value stops, so
+# processing can't diverge from the genomes that were selected and downloaded.
+.amr_resolve_evidence_mode <- function(duckdb_path, evidence_mode = NULL) {
+  choices <- c("lab_only", "lab_or_comp", "comp_only", "any")
+  if (!is.null(evidence_mode)) {
+    evidence_mode <- match.arg(evidence_mode, choices)
+  }
+
+  recorded <- NULL
+  manifest_path <- .manifest_find_latest(duckdb_path)
+  manifest <- if (!is.null(manifest_path)) {
+    tryCatch(
+      jsonlite::read_json(manifest_path, simplifyVector = FALSE),
+      error = function(e) NULL
+    )
+  }
+  for (run in rev(manifest$runs %||% list())) {
+    stage <- .manifest_prior_stage(run, "download_genomes")
+    mode <- as.character(unlist(stage$parameters$evidence_mode))[1]
+    if (identical(stage$status, "success") && mode %in% choices) {
+      recorded <- mode
+      break
+    }
+  }
+
+  if (is.null(evidence_mode)) {
+    return(recorded %||% "lab_only")
+  }
+  if (!is.null(recorded) && !identical(evidence_mode, recorded)) {
+    stop(
+      "evidence_mode = '", evidence_mode, "' does not match the '", recorded,
+      "' used by prepareGenomes() for this dataset. Omit `evidence_mode` to ",
+      "use '", recorded, "', or rerun prepareGenomes() with the mode you want.",
+      call. = FALSE
+    )
+  }
+  evidence_mode
+}
+
 # Interactive selector function thing, very cool
 .amr_select_processing_dataset <- function() {
   if (!interactive()) {
@@ -1254,8 +1294,10 @@
     candidates$label,
     " [",
     candidates$dataset_id,
-    "] - ",
-    candidates$duckdb_path
+    "]\n    ",
+    dirname(dirname(candidates$duckdb_path)),
+    "\n    last updated ",
+    format(candidates$modified, "%Y-%m-%d %H:%M")
   )
 
   selection <- utils::menu(
@@ -1345,14 +1387,9 @@
 
 #' Check BV-BRC data availability for a single taxon
 #'
-#' Internal worker used by `checkDataAvailability()`. Each call resolves and
-#' summarizes a taxon independently.
-#'
-#' Summarize BV-BRC data availability for one taxon
-#'
-#' Resolves one taxon to available BV-BRC genomes and summarizes genome
-#' metadata, AMR phenotype availability, collection years, genome statistics,
-#' and the number of genomes passing the requested metadata QC thresholds.
+#' Internal worker used by `checkDataAvailability()`. Resolves one taxon to
+#' available BV-BRC genomes and summarizes genome metadata, AMR phenotype
+#' availability, collection years, genome statistics, and metadata QC.
 #'
 #' Metadata can be retrieved through the BV-BRC Data API or the legacy CLI/cache
 #' workflow.
@@ -2480,11 +2517,13 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #'
 #' @param prev_run A single run entry from a manifest's `runs` list, or `NULL`.
 #' @param stage_order Character vector of stage names, in pipeline order.
+#' @param parameters Optional named list of current results-affecting parameters
+#'   per stage. Missing or changed recorded parameters prevent reuse.
 #'
 #' @return Named logical vector (named by `stage_order`) marking which
 #'   stages are safe to skip.
 #' @keywords internal
-.resume_plan <- function(prev_run, stage_order) {
+.resume_plan <- function(prev_run, stage_order, parameters = NULL) {
   completed <- stats::setNames(rep(FALSE, length(stage_order)), stage_order)
 
   for (name in stage_order) {
@@ -2492,6 +2531,20 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
     if (is.null(stage) || !identical(stage$status, "success")) {
       break
+    }
+
+    if (!is.null(parameters)) {
+      expected <- parameters[[name]]
+      if (is.null(expected) ||
+          !all(names(expected) %in% names(stage$parameters))) break
+      same <- purrr::map_lgl(names(expected), ~ {
+        isTRUE(all.equal(
+          as.list(unlist(stage$parameters[[.x]], use.names = FALSE)),
+          as.list(unlist(expected[[.x]], use.names = FALSE)),
+          check.attributes = FALSE, tolerance = 0
+        ))
+      })
+      if (!all(same)) break
     }
 
     out_paths <- purrr::map_chr(stage$outputs, "path")
@@ -2797,25 +2850,122 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   )
 }
 
+
+#' Remove CDS records that translate entirely to unknown amino acids
+#'
+#' Screen CDS using paired FASTA sequences before Panaroo, which accepts all-X 
+#' translations during preprocessing, then crashes in validation.
+#'
+#' @inheritParams .stripPseudogeneGFFs
+#' @param clean_dir Subdirectory for changed GFF copies.
+#' @return A list with rewritten \code{panaroo_input_files} and an \code{audit}
+#'   tibble containing one row per removed CDS, including its genome, annotation
+#'   ID, coordinates, sequence lengths, input paths, and removal reason.
+#' @details
+#' Matches Panaroo's default translation: any codon containing a base other than 
+#' ACGT becomes X, even if ambiguous codons could be resolved. CDS already 
+#' rejected by Panaroo for length or internal stops are left to existing filter.
+#' Original GFF and FASTA files are preserved.
+#' @keywords internal
+.removeAllXCDSGFFs <- function(panaroo_input_files,
+                               output_path,
+                               clean_dir = "gff_invalid_cds_clean") {
+  out_lines <- as.character(panaroo_input_files)
+  audit <- tibble::tibble(
+    genome_id = character(), annotation_id = character(),
+    gff_in = character(), gff_out = character(), fna_in = character(),
+    gff_line = integer(), contig = character(), start = integer(),
+    end = integer(), strand = character(), dna_length = integer(),
+    protein_length = integer(), reason = character()
+  )
+
+  for (i in seq_along(out_lines)) {
+    parts <- strsplit(trimws(out_lines[[i]]), "\\s+")[[1]]
+    if (length(parts) != 2L) {
+      stop("Broken Panaroo input line: ", out_lines[[i]], call. = FALSE)
+    }
+    gff_in <- .docker_path(parts[[1L]])
+    fna_in <- .docker_path(parts[[2L]])
+    lines <- readLines(gff_in, warn = FALSE)
+    rows <- which(!startsWith(lines, "#") & nzchar(trimws(lines)))
+    fields <- strsplit(lines[rows], "\t", fixed = TRUE)
+    cds <- purrr::map_lgl(fields, ~ {
+      length(.x) >= 9L && grepl("CDS", .x[[3L]], fixed = TRUE) && .x[[8L]] == "0"
+    })
+    rows <- rows[cds]
+    fields <- fields[cds]
+    if (!length(rows)) next
+
+    fasta <- Biostrings::readDNAStringSet(fna_in)
+    names(fasta) <- sub("\\s.*$", "", names(fasta))
+    contigs <- sub("^accn\\|", "", purrr::map_chr(fields, 1L))
+    starts <- suppressWarnings(as.integer(purrr::map_chr(fields, 4L)))
+    ends <- suppressWarnings(as.integer(purrr::map_chr(fields, 5L)))
+    strands <- purrr::map_chr(fields, 7L)
+    index <- match(contigs, names(fasta))
+    ends_used <- pmin(ends, Biostrings::width(fasta)[index])
+    lengths <- ends_used - starts + 1L
+    eligible <- which(!is.na(index) & !is.na(lengths) & starts >= 1L &
+                        lengths >= 34L & lengths %% 3L == 0L)
+    if (!length(eligible)) next
+
+    dna <- Biostrings::subseq(
+      fasta[index[eligible]], start = starts[eligible], end = ends_used[eligible]
+    )
+    ambiguous <- rowSums(Biostrings::letterFrequency(dna, c("A", "C", "G", "T"))) <
+      lengths[eligible]
+    eligible <- eligible[ambiguous]
+    dna <- dna[ambiguous]
+    if (!length(eligible)) next
+    reverse <- strands[eligible] == "-"
+    dna[reverse] <- Biostrings::reverseComplement(dna[reverse])
+    # Biostrings can resolve some fuzzy codons that Panaroo translates as X. 
+    # Canonical codons must start on codon boundary.
+    coding <- sub("(TAA|TAG|TGA)$", "", as.character(dna))
+    all_x <- !grepl("^(?:.{3})*[ACGT]{3}", coding, perl = TRUE)
+    if (!any(all_x)) next
+
+    removed <- eligible[all_x]
+    gff_out <- file.path(.docker_path(output_path), clean_dir, basename(gff_in))
+    dir.create(dirname(gff_out), recursive = TRUE, showWarnings = FALSE)
+    writeLines(lines[-rows[removed]], gff_out, useBytes = TRUE)
+    attributes <- purrr::map_chr(fields[removed], 9L)
+    annotation <- purrr::map_chr(
+      strsplit(attributes, ";", fixed = TRUE),
+      ~ {
+        id <- .x[startsWith(.x, "ID=")]
+        if (length(id)) substring(id[[1L]], 4L) else NA_character_
+      }
+    )
+    audit <- dplyr::bind_rows(audit, tibble::tibble(
+      genome_id = sub("\\.PATRIC\\.gff$", "", basename(gff_in)),
+      annotation_id = annotation, gff_in = gff_in, gff_out = gff_out,
+      fna_in = fna_in, gff_line = rows[removed], contig = contigs[removed],
+      start = starts[removed], end = ends[removed], strand = strands[removed],
+      dna_length = lengths[removed],
+      protein_length = as.integer(nchar(coding[all_x]) / 3L),
+      reason = "all_x_translation"
+    ))
+    out_lines[[i]] <- paste(gff_out, fna_in)
+  }
+
+  list(panaroo_input_files = out_lines, audit = audit)
+}
+
 #' Export a dyad-centric feature table
 #'
 #' Builds a one-row-per-dyad table linking protein-gene dyads to structural
-#' features and HMMER annotations recorded in the dataset provenance manifest.
+#' features and HMMER annotations registered as virtual relations in the ORB.
 #' Feature values are deduplicated and combined into semicolon-separated
 #' character fields.
 #'
-#' @param duckdb_path Character. Path to the source dataset DuckDB. Associated
-#'   Parquet files and provenance manifest are expected there.
-#' @param output_path Character or NULL. Directory where the output Parquet file
-#'   will be written. Defaults to the DuckDB directory.
-#' @param output_stem Character. Output filename stem. Default
-#'   `"dyad_annotations"`.
+#' @param duckdb_path Character. Path to the processed ORB DuckDB.
 #' @param feature_scales Character vector of optional feature types to include.
 #'   If NULL, includes `struct` plus all HMMER databases recorded in the
 #'   manifest.
 #' @param verbose Logical. Print progress messages.
 #'
-#' @return Invisibly returns the path to the generated Parquet file.
+#' @return A tibble with one row per protein-gene dyad.
 #'
 #' @keywords internal
 .exportDyadAnnotations <- function(
@@ -2824,10 +2974,6 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     verbose = TRUE
 ) {
   duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
-
-  paths <- .amr_paths_from_dataset_db(duckdb_path)
-
-  parquet_dir <- paths$orb
 
   manifest_path <- .manifest_find_latest(duckdb_path)
 
@@ -2843,20 +2989,17 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     simplifyVector = FALSE
   )
 
-  # Find latest successful HMMER stage
   hmmer_stage <- NULL
 
   for (run in rev(manifest$runs %||% list())) {
-    stages <- run$stages %||% list()
-
     matches <- purrr::keep(
-      stages,
+      run$stages %||% list(),
       ~ identical(.x$name, "hmmer") &&
         identical(.x$status, "success")
     )
 
     if (length(matches)) {
-      hmmer_stage <- matches[[1]]
+      hmmer_stage <- matches[[length(matches)]]
       break
     }
   }
@@ -2897,253 +3040,126 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     }
   }
 
-  con <- DBI::dbConnect(
-    duckdb::duckdb(),
-    dbdir = ":memory:"
-  )
-
-  duckdb_temp_dir <- tempfile(
-    pattern = "amRdata_duckdb_",
-    tmpdir = tempdir()
-  )
-
-  dir.create(
-    duckdb_temp_dir,
-    recursive = TRUE,
-    showWarnings = FALSE
-  )
-
-  DBI::dbExecute(
-    con,
-    sprintf(
-      "SET temp_directory=%s",
-      DBI::dbQuoteString(
-        con,
-        normalizePath(
-          duckdb_temp_dir,
-          winslash = "/",
-          mustWork = TRUE
-        )
-      )
-    )
+  con <- .amr_connect_dataset_db(
+    duckdb_path,
+    read_only = TRUE
   )
 
   on.exit(
-    {
-      try(DBI::dbDisconnect(con), silent = TRUE)
-      unlink(
-        duckdb_temp_dir,
-        recursive = TRUE,
-        force = TRUE
-      )
-    },
+    try(
+      DBI::dbDisconnect(con),
+      silent = TRUE
+    ),
     add = TRUE
   )
 
-  parquet_sql <- function(dataset_name) {
-    path <- file.path(
-      parquet_dir,
-      paste0(dataset_name, ".parquet")
-    )
-
-    if (!file.exists(path)) {
-      return(NULL)
-    }
-
-    normalizePath(
-      path,
-      winslash = "/",
-      mustWork = TRUE
-    )
-  }
-
-  # Initialize using protein-gene dyads
-  genome_gene_protein_path <- parquet_sql(
-    "genome_gene_protein"
+  available_relations <- DBI::dbListTables(
+    con
   )
 
-  if (is.null(genome_gene_protein_path)) {
+  required_relations <- c(
+    "dyads",
+    "dyad_protein_cluster"
+  )
+
+  missing_required <- setdiff(
+    required_relations,
+    available_relations
+  )
+
+  if (length(missing_required)) {
     stop(
-      "Required Parquet file not found: ",
-      file.path(
-        parquet_dir,
-        "genome_gene_protein.parquet"
-      )
+      "Dyad graph relation(s) not found in ORB: ",
+      paste(missing_required, collapse = ", "),
+      ". Re-run buildDyadFeatureMap()."
     )
   }
 
-  DBI::dbExecute(
-    con,
-    sprintf(
-      "
-      CREATE OR REPLACE VIEW protein_gene AS
-      SELECT DISTINCT
-        protein_ids AS protein,
-        REPLACE(Gene, '~', '.') AS gene
-      FROM read_parquet('%s')
-      WHERE protein_ids IS NOT NULL
-        AND Gene IS NOT NULL
-      ",
-      genome_gene_protein_path
-    )
-  )
-
-  DBI::dbExecute(
-    con,
-    "
-    CREATE OR REPLACE VIEW protein_gene_dyad AS
-    SELECT DISTINCT
-      protein,
-      gene,
-      CONCAT(protein, '|', gene) AS dyad
-    FROM protein_gene
-    "
-  )
-
-  # Finish initializing with one row per dyad
   feature_select <- character()
   feature_joins <- character()
 
-  # Pangenome graph structural variant ('struct') annotations
-  if ("struct" %in% feature_scales) {
-    struct_path <- parquet_sql("struct")
+  if (
+    "struct" %in% feature_scales &&
+    "struct_gene" %in% available_relations
+  ) {
+    feature_select <- c(
+      feature_select,
+      "sg.struct"
+    )
 
-    if (is.null(struct_path)) {
-      if (isTRUE(verbose)) {
-        message(
-          "Skipping struct: struct.parquet was not found."
-        )
-      }
-    } else {
-      DBI::dbExecute(
-        con,
-        sprintf(
-          "
-          CREATE OR REPLACE VIEW struct_genes AS
-          SELECT DISTINCT
-            s.struct,
-            t.gene
-          FROM read_parquet('%s') s
-          CROSS JOIN UNNEST(
-            string_split(s.struct, '.')
-          ) AS t(gene)
-          WHERE s.value = 1
-          ",
-          struct_path
-        )
+    feature_joins <- c(
+      feature_joins,
+      paste0(
+        "LEFT JOIN (",
+        "SELECT gene, ",
+        "string_agg(DISTINCT struct, ';' ORDER BY struct) AS struct ",
+        "FROM struct_gene GROUP BY gene",
+        ") sg ON d.gene = sg.gene"
       )
-
-      DBI::dbExecute(
-        con,
-        "
-        CREATE OR REPLACE VIEW dyad_struct AS
-        SELECT
-          pgd.dyad,
-          string_agg(
-            DISTINCT sg.struct,
-            ';'
-            ORDER BY sg.struct
-          ) AS struct
-        FROM protein_gene_dyad pgd
-        JOIN struct_genes sg
-          ON pgd.gene = sg.gene
-        GROUP BY pgd.dyad
-        "
-      )
-
-      feature_select <- c(
-        feature_select,
-        "ds.struct"
-      )
-
-      feature_joins <- c(
-        feature_joins,
-        "LEFT JOIN dyad_struct ds ON b.dyad = ds.dyad"
-      )
-    }
+    )
   }
 
-  # HMMER feature annotations
+  specs <- .dyadHmmerSpecs(
+    hmmer_databases
+  )
+
   for (database in intersect(
     hmmer_databases,
     feature_scales
   )) {
-    dataset_name <- paste0(
-      "protein_",
-      database
-    )
+    spec <- specs[[database]]
 
-    hmmer_path <- parquet_sql(dataset_name)
-
-    if (is.null(hmmer_path)) {
+    if (!spec$annotation_view %in% available_relations) {
       if (isTRUE(verbose)) {
         message(
           "Skipping ",
           database,
           ": ",
-          dataset_name,
-          ".parquet was not found."
+          spec$annotation_view,
+          " was not found in the ORB."
         )
       }
       next
     }
 
-    view_name <- paste0(
-      "dyad_",
-      make.names(database)
-    )
-
-    DBI::dbExecute(
-      con,
-      sprintf(
-        "
-        CREATE OR REPLACE VIEW %s AS
-        SELECT
-          pgd.dyad,
-          string_agg(
-            DISTINCT h.query_name,
-            ';'
-            ORDER BY h.query_name
-          ) AS feature
-        FROM protein_gene_dyad pgd
-        JOIN read_parquet('%s') h
-          ON pgd.protein = h.protein
-        WHERE h.query_name IS NOT NULL
-        GROUP BY pgd.dyad
-        ",
-        view_name,
-        hmmer_path
-      )
-    )
-
-    # Give AMRFinder a better human-readable name (ARG, in this case)
-    output_column <- if (identical(database, "AMRFinder")) {
-      "ARG"
-    } else {
-      database
-    }
-
     alias <- paste0(
-      "d_",
-      make.names(database)
+      "a_",
+      spec$key
+    )
+
+    annotation_view_sql <- DBI::dbQuoteIdentifier(
+      con,
+      spec$annotation_view
+    )
+
+    output_column_sql <- DBI::dbQuoteIdentifier(
+      con,
+      spec$output_column
     )
 
     feature_select <- c(
       feature_select,
-      sprintf(
-        '%s.feature AS "%s"',
+      paste0(
         alias,
-        output_column
+        ".feature AS ",
+        output_column_sql
       )
     )
 
     feature_joins <- c(
       feature_joins,
-      sprintf(
-        "LEFT JOIN %s %s ON b.dyad = %s.dyad",
-        view_name,
+      paste0(
+        "LEFT JOIN (",
+        "SELECT cluster, ",
+        "string_agg(DISTINCT feature, ';' ORDER BY feature) AS feature ",
+        "FROM ",
+        annotation_view_sql,
+        " GROUP BY cluster",
+        ") ",
         alias,
-        alias
+        " ON pc.cluster = ",
+        alias,
+        ".cluster"
       )
     )
   }
@@ -3151,7 +3167,10 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   select_features <- if (length(feature_select)) {
     paste0(
       ",\n      ",
-      paste(feature_select, collapse = ",\n      ")
+      paste(
+        feature_select,
+        collapse = ",\n      "
+      )
     )
   } else {
     ""
@@ -3160,26 +3179,32 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   join_features <- if (length(feature_joins)) {
     paste0(
       "\n    ",
-      paste(feature_joins, collapse = "\n    ")
+      paste(
+        feature_joins,
+        collapse = "\n    "
+      )
     )
   } else {
     ""
   }
 
   result_sql <- paste0(
-    "
-    SELECT
-      b.dyad,
-      b.protein,
-      b.gene",
+    "SELECT\n",
+    "      ", .dyadIdSql("d.protein", "d.gene"), " AS dyad,\n",
+    "      d.protein,\n",
+    "      d.gene,\n",
+    "      d.dyad_type",
     select_features,
-    "
-    FROM protein_gene_dyad b",
+    "\n    FROM dyads d\n",
+    "    LEFT JOIN dyad_protein_cluster pc\n",
+    "      ON d.protein = pc.protein",
     join_features
   )
 
   if (isTRUE(verbose)) {
-    message("Building dyad annotation table.")
+    message(
+      "Building dyad annotation table from virtual ORB relations."
+    )
   }
 
   DBI::dbGetQuery(
@@ -3488,45 +3513,184 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
 #' Parsing HMM database to extract profile names, accessions and descriptions
 #'
-#' @param hmm_file path to the HMM database file (`.hmm`)
+#' Streams through an HMM database in bounded line chunks and retains only the
+#' `NAME`, `ACC`, `DESC`, and score cutoff (`GA`, `TC`, `NC`) fields needed
+#' during annotation finalization.
 #'
-#' @returns a tibble
+#' @param hmm_file Path to the HMM database file (`.hmm`).
+#' @param chunk_lines Number of lines to read per chunk.
+#'
+#' @returns A tibble with one row per HMM profile. `ga_seq`/`ga_dom`,
+#'   `tc_seq`/`tc_dom` and `nc_seq`/`nc_dom` are the per-sequence and per-domain
+#'   bit score cutoffs, `NA` when the profile does not define them.
 #'
 #' @keywords internal
-.parse_hmmer_profiles <- function(hmm_file) {
+.parse_hmmer_profiles <- function(hmm_file, chunk_lines = 100000L) {
+  input <- file(hmm_file, open = "r")
+  on.exit(close(input), add = TRUE)
 
-  lines <- readLines(hmm_file, warn = FALSE)
+  cutoff_fields <- c("GA", "TC", "NC")
 
-  starts <- c(
-    which(grepl("^NAME\\s+", lines)),
-    length(lines) + 1L
-  )
+  names_out <- character()
+  accessions_out <- character()
+  descriptions_out <- character()
+  cutoffs_out <- list()
 
-  blocks <- purrr::map2(
-    starts[-length(starts)],
-    starts[-1L] - 1L,
-    ~ lines[.x:.y]
-  )
+  current_name <- NA_character_
+  current_accession <- NA_character_
+  current_description <- NA_character_
+  current_cutoffs <- rep(NA_real_, 2L * length(cutoff_fields))
 
-  extract_field <- function(block, pattern) {
-
-    hit <- stringr::str_subset(block, pattern)
-
-    if (length(hit) == 0) {
-      return(NA_character_)
+  flush_profile <- function() {
+    if (is.na(current_name)) {
+      return(invisible(NULL))
     }
 
-    stringr::str_remove(hit[[1]], pattern)
+    names_out <<- c(names_out, current_name)
+    accessions_out <<- c(accessions_out, current_accession)
+    descriptions_out <<- c(descriptions_out, current_description)
+    cutoffs_out[[length(cutoffs_out) + 1L]] <<- current_cutoffs
+
+    invisible(NULL)
   }
 
-  purrr::map_dfr(
-    blocks,
-    ~ tibble::tibble(
-      profile_name = extract_field(.x, "^NAME\\s+"),
-      profile_accession = extract_field(.x, "^ACC\\s+"),
-      profile_description = extract_field(.x, "^DESC\\s+")
+  repeat {
+    lines <- readLines(input, n = chunk_lines, warn = FALSE)
+    if (!length(lines)) break
+
+    relevant <- lines[grepl("^(NAME|ACC|DESC|GA|TC|NC)\\s+", lines)]
+    if (!length(relevant)) next
+
+    for (line in relevant) {
+      if (grepl("^NAME\\s+", line)) {
+        flush_profile()
+        current_name <- sub("^NAME\\s+", "", line)
+        current_accession <- NA_character_
+        current_description <- NA_character_
+        current_cutoffs <- rep(NA_real_, 2L * length(cutoff_fields))
+      } else if (grepl("^ACC\\s+", line) &&
+                 !is.na(current_name) &&
+                 is.na(current_accession)) {
+        current_accession <- sub("^ACC\\s+", "", line)
+      } else if (grepl("^DESC\\s+", line) &&
+                 !is.na(current_name) &&
+                 is.na(current_description)) {
+        current_description <- sub("^DESC\\s+", "", line)
+      } else if (!is.na(current_name) &&
+                 grepl("^(GA|TC|NC)\\s+", line)) {
+        # e.g. "GA    27.00 27.00;" -> sequence and domain bit scores
+        field <- match(substr(line, 1L, 2L), cutoff_fields)
+        values <- suppressWarnings(as.numeric(strsplit(
+          trimws(sub(";.*$", "", sub("^(GA|TC|NC)\\s+", "", line))),
+          "\\s+"
+        )[[1L]]))
+        if (length(values) == 2L) {
+          current_cutoffs[(2L * field - 1L):(2L * field)] <- values
+        }
+      }
+    }
+  }
+
+  flush_profile()
+
+  cutoffs <- if (length(cutoffs_out)) {
+    do.call(rbind, cutoffs_out)
+  } else {
+    matrix(NA_real_, nrow = 0L, ncol = 2L * length(cutoff_fields))
+  }
+
+  tibble::tibble(
+    profile_name = names_out,
+    profile_accession = accessions_out,
+    profile_description = descriptions_out,
+    ga_seq = cutoffs[, 1L],
+    ga_dom = cutoffs[, 2L],
+    tc_seq = cutoffs[, 3L],
+    tc_dom = cutoffs[, 4L],
+    nc_seq = cutoffs[, 5L],
+    nc_dom = cutoffs[, 6L]
+  )
+}
+
+#' Create or reuse cached HMM profile metadata
+#'
+#' Stores the small profile lookup table beside the prepared HMM database so
+#' dataset finalization does not need to rescan the full HMM file. The sidecar
+#' is rebuilt when it is missing, older than the HMM database, or lacks the
+#' score cutoff columns, and is registered
+#' as a component of the database in the shared BiocFileCache registry.
+#'
+#' @param hmm_file Path to the prepared HMM database.
+#' @param database Database name used for BiocFileCache registration.
+#' @param verbose Logical. Print a message when the sidecar is rebuilt.
+#' @param component Character or `NULL`. Optional component name used to keep
+#'   profile caches distinct for databases with multiple prepared HMMs.
+#'
+#' @return A list containing the sidecar path and BiocFileCache identifiers.
+#' @keywords internal
+.hmmer_profile_cache <- function(hmm_file, database, verbose = FALSE,
+                                 component = NULL) {
+  hmm_file <- normalizePath(hmm_file, mustWork = TRUE)
+
+  profile_path <- file.path(
+    dirname(hmm_file),
+    paste0(
+      tools::file_path_sans_ext(basename(hmm_file)),
+      ".profiles.parquet"
     )
   )
+
+  rebuild <- !file.exists(profile_path)
+
+  if (!rebuild) {
+    rebuild <- isTRUE(
+      file.info(profile_path)$mtime < file.info(hmm_file)$mtime
+    )
+  }
+
+  # Sidecars written before the score cutoffs were parsed lack these columns
+  if (!rebuild) {
+    rebuild <- tryCatch(
+      !"ga_seq" %in% names(arrow::read_parquet(profile_path, as_data_frame = FALSE)),
+      error = function(e) TRUE
+    )
+  }
+
+  if (rebuild) {
+    if (isTRUE(verbose)) {
+      cache_parts <- c(database, component)
+      cache_parts <- cache_parts[!is.na(cache_parts) & nzchar(cache_parts)]
+      message(
+        "Caching HMM profile metadata for ",
+        paste(cache_parts, collapse = "/")
+      )
+    }
+
+    profiles <- .parse_hmmer_profiles(hmm_file)
+
+    arrow::write_parquet(
+      profiles,
+      profile_path,
+      compression = "zstd"
+    )
+  }
+
+  profile_path <- normalizePath(profile_path, mustWork = TRUE)
+
+  rname_parts <- c(component, "profiles")
+  rname_parts <- rname_parts[!is.na(rname_parts) & nzchar(rname_parts)]
+
+  rname <- .amr_bfc_hmmer_rname(
+    database,
+    component = paste(rname_parts, collapse = "_")
+  )
+  rid <- .amr_bfc_register_local(profile_path, rname)
+
+  invisible(list(
+    path = profile_path,
+    rid = rid,
+    rname = rname
+  ))
 }
 
 #' Parse HMMER tabular output into a tibble
@@ -3537,7 +3701,7 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #'
 #' @param file Path to a HMMER `.tbl` output file produced with `--domtblout`.
 #'
-#' @return A tibble with 19 columns matching the HMMER per-sequence hit table
+#' @return A tibble with 23 columns matching the HMMER per-sequence hit table
 #'
 #' @references Adapted from the rhmmer package
 #'   (<https://github.com/arendsee/rhmmer>).
@@ -3625,6 +3789,31 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   )
 
   table
+}
+
+#' Prepare a parsed HMMER table for saving
+#'
+#' Keeps the columns that any of the later hit cutoffs may need, so cutoffs can
+#' change without re-running HMMER, and adds two coverage columns calculated per
+#' domain hit: `profile_coverage`, the fraction of the profile (query) the hit
+#' aligns to, and `target_coverage`, the fraction of the protein (target).
+#'
+#' @param hits A tibble from [.parseHMMEROutput()].
+#'
+#' @return `hits` with the saved columns.
+#' @keywords internal
+.hmmerHits <- function(hits) {
+  hits |>
+    dplyr::mutate(
+      profile_coverage = (hmm_to - hmm_from + 1) / qlen,
+      target_coverage = (ali_to - ali_from + 1) / tlen
+    ) |>
+    dplyr::select(
+      "protein", "query_name", "query_accession", "target_description",
+      "tlen", "qlen", "sequence_evalue", "sequence_score", "domain_num",
+      "i_evalue", "domain_score", "hmm_from", "hmm_to", "ali_from", "ali_to",
+      "env_from", "env_to", "profile_coverage", "target_coverage"
+    )
 }
 
 #' Write a data frame to a compressed Parquet file

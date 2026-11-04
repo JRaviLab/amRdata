@@ -11,7 +11,8 @@
   max_time = 30L,
   speed_time = 30L,
   speed_limit = 2048L,
-  min_bytes = 100L
+  min_bytes = 100L,
+  skip_existing = TRUE
 )
 }
 \arguments{
@@ -33,6 +34,9 @@ second. Default: \code{2048}.}
 
 \item{min_bytes}{Integer. Minimum file size considered a valid download.
 Default: \code{100}.}
+
+\item{skip_existing}{Logical. Reuse complete local files. If FALSE, refresh
+files on both download passes. Default: TRUE.}
 }
 \value{
 \code{TRUE} when all required genome files are complete on disk;

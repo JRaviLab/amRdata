@@ -54,14 +54,15 @@ tool output logging.}
 Default: \code{TRUE}.}
 }
 \value{
-Invisibly returns a list containing the prepared database paths and
-final HMMER output Parquet files.
+Invisibly returns a list containing the prepared database paths
+(\code{databases}) and the unfiltered hit Parquet file of each database
+(\code{hits}). Hit cutoffs are applied afterwards by \code{\link[=.filterHMMER]{.filterHMMER()}}.
 }
 \description{
 Splits representative protein-cluster sequences into FASTA chunks and runs
 HMMER searches against each requested reference database. Chunks for each
-database are processed in parallel, then combined into database-specific
-Parquet files and DuckDB tables.
+database are processed in parallel, then combined into one unfiltered hit
+Parquet file per database.
 }
 \details{
 HMM databases are prepared automatically when needed. Progress reports the

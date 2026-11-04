@@ -15,7 +15,9 @@
 \arguments{
 \item{evidence_mode}{Character. One of:
 "lab_only"   (default) -> only laboratory evidence
-"lab_or_comp"          -> laboratory OR computational evidence
+"lab_or_comp"          -> laboratory OR computational evidence; if the
+evidence column is NA/blank, a laboratory typing
+method or computational method must be present
 "comp_only"            -> only computational evidence
 "any"                  -> no AMR required (from genome_data; Good only)}
 }

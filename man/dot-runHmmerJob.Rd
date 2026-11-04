@@ -50,7 +50,7 @@ Character path to the parsed Parquet output for this HMMER job.
 \description{
 Runs \code{hmmsearch} for one protein FASTA chunk against one prepared HMM
 database. The available CPU budget is divided across concurrently running
-HMMER workers. Raw HMMER output is parsed and written to a Parquet file for
-later combination by \code{\link[=.runHMMER]{.runHMMER()}}.
+HMMER workers. Raw HMMER output is parsed and written, unfiltered, to a
+Parquet file for later combination by \code{\link[=.runHMMER]{.runHMMER()}}.
 }
 \keyword{internal}
