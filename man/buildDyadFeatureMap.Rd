@@ -44,7 +44,7 @@ as \code{.}. A \code{dyad_type} column records how each dyad arose:
 cluster; \code{protein} is NULL) or \code{protein_only} (a protein cluster with no gene
 cluster; \code{gene} is NULL). Every dyad has at least one side. Orphans are
 gene or protein clusters that appear in no paired dyad. Protein-only
-clusters have no members in \code{genome_gene_protein}, so they link to no genome.
+clusters recover their genome links from positive \code{protein_count} rows.
 
 \code{member_dyads} and \code{genome_dyad} preserve protein-member provenance, and
 \code{genome_cluster_dyad} links genomes to cluster-pair dyads.

@@ -31,7 +31,9 @@ runDataProcessing(
   hmmer_workers = 8L,
   cog_evalue = 1e-04,
   verbose = FALSE,
-  progress = getOption("amRdata.progress", TRUE)
+  progress = getOption("amRdata.progress", TRUE),
+  hmmer_fallback_evalue = 0.001,
+  hmmer_fallback_coverage = 0.5
 )
 }
 \arguments{
@@ -121,9 +123,9 @@ Default: \code{8}.}
 domain independent E-values), because COG profiles define no bit score
 cutoffs. Hits to Pfam, AMRFinder, DefenseFinder and CasFinder profiles are
 judged on the curator-defined bit score cutoff instead (\code{GA}, or \code{TC} for
-AMRFinder), and a CasFinder profile without one accepts any hit. Default:
+AMRFinder). Profiles without cutoffs use the fallback below. Default:
 \code{1e-4}, the E-value NCBI uses to assign proteins to COGs (COG database
-update 2024).}
+update 2024); the original NCBI method uses PSI-BLAST/PSSMs.}
 
 \item{verbose}{Logical. Print persistent status and diagnostic messages.
 Routine workflow output is suppressed when \code{FALSE}; warnings and errors are
@@ -132,6 +134,12 @@ still reported. Default: \code{FALSE}.}
 \item{progress}{Logical. Show temporary progress for long-running operations.
 This is independent of \code{verbose}. Defaults to \code{TRUE}, unless overridden by
 the \code{amRdata.progress} option.}
+
+\item{hmmer_fallback_evalue}{Maximum sequence and independent-domain E-values
+for profiles without GA/TC. Provisional default: \code{1e-3}.}
+
+\item{hmmer_fallback_coverage}{Minimum profile coverage for profiles without
+GA/TC. Provisional default: \code{0.5}.}
 
 \item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo,
 CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to

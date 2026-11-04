@@ -13,7 +13,9 @@
   cog_overlap = 0.1,
   tolerance = 0.05,
   verbose = TRUE,
-  log_path = NULL
+  log_path = NULL,
+  fallback_evalue = 0.001,
+  fallback_coverage = 0.5
 )
 }
 \arguments{
@@ -44,6 +46,11 @@ scores in HMMER's output: a hit scoring exactly at a cutoff can print up to
 \item{verbose}{Logical. Print progress messages.}
 
 \item{log_path}{Character or \code{NULL}. Optional processing log.}
+
+\item{fallback_evalue}{Maximum sequence and independent-domain E-values
+when neither curated cutoff is present. Default: \code{1e-3}.}
+
+\item{fallback_coverage}{Minimum profile coverage for the fallback. Default: \code{0.5}.}
 }
 \value{
 Invisibly returns the annotation Parquet file of each database.
@@ -59,8 +66,8 @@ runs in DuckDB, so the full hit table never has to fit in R memory.
 Pfam, AMRFinder, DefenseFinder and CasFinder hits are judged on the bit score
 cutoff their curators define in each profile (\code{GA}, or \code{TC} for AMRFinder):
 both the sequence and the domain score must reach it. A profile that defines
-no cutoff, which affects some CasFinder profiles, accepts any hit HMMER
-reports.
+no cutoff uses the configurable E-value and profile-coverage fallback.
+Unknown profile names and incomplete cutoff pairs are errors.
 
 COG profiles define no cutoffs, so COG hits must have a sequence and a domain
 E-value at or below \code{cog_evalue}. The default, 1e-4, is the cutoff NCBI uses to

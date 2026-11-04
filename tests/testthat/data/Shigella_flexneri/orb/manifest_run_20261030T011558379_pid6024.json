@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "manifest_type": "amR_dataset",
+  "manifest_id": "manifest_run_20261030T011558379_pid6024",
+  "manifest_created_at": "2026-10-29 19:15:58.381455",
+  "manifest_updated_at": "2026-10-29 19:15:58.499825",
+  "dataset_id": "Sfl",
+  "dataset": {
+    "duckdb": "/Users/jravilab/Documents/GitHub/amR_data/tests/testthat/data/Shigella_flexneri/work/Sfl.duckdb",
+    "selection": {
+      "user_bacs": "Shigella flexneri",
+      "genome_id_file": "/private/var/folders/sn/gf075tpn5ls1psrbk4ndbjzm0000gp/T/RtmpAaazuq/file178858c7e53a.txt"
+    }
+  },
+  "artifacts": [],
+  "runs": [
+    {
+      "run_id": "run_20261030T011558382_pid6024",
+      "status": "failed",
+      "started_at": "2026-10-29 19:15:58.382188",
+      "finished_at": "2026-10-29 19:15:58.499455",
+      "command": ["/Library/Frameworks/R.framework/Resources/bin/exec/R", "--no-echo", "--no-restore", "-e", "devtools::test()"],
+      "working_directory": "/Users/jravilab/Documents/GitHub/amR_data/tests/testthat",
+      "host": {
+        "sysname": "Darwin",
+        "release": "27.0.0",
+        "version": "Darwin Kernel Version 27.0.0: Tue Aug 11 21:05:27 PDT 2026; root:xnu-13432.1.9~1/RELEASE_ARM64_T8103",
+        "nodename": "AMC-DBMIs-Mac-mini.local",
+        "machine": "arm64",
+        "login": "root",
+        "user": "jravilab",
+        "effective_user": "jravilab"
+      },
+      "r": {
+        "version": "R version 4.6.1 (2026-06-24)",
+        "platform": "aarch64-apple-darwin23"
+      },
+      "git": {
+        "available": true,
+        "repository": true,
+        "commit": "5388d228e27d41a9b150bf669d5a272b5214ee5c",
+        "branch": "overhaul",
+        "dirty": true
+      },
+      "packages": {
+        "BiocFileCache": "3.2.0",
+        "BiocGenerics": "0.58.1",
+        "Biostrings": "2.80.2",
+        "DBI": "1.3.0",
+        "IRanges": "2.46.0",
+        "R.methodsS3": "1.8.2",
+        "R.oo": "1.27.1",
+        "R.utils": "2.13.0",
+        "R6": "2.6.1",
+        "RColorBrewer": "1.1.3",
+        "RSQLite": "3.53.3",
+        "Rcpp": "1.1.2",
+        "S4Vectors": "0.50.3",
+        "S7": "0.2.2",
+        "Seqinfo": "1.2.0",
+        "XVector": "0.52.0",
+        "amRdata": "0.0.0.9001",
+        "arrow": "26.0.0",
+        "assertthat": "0.2.1",
+        "base": "4.6.1",
+        "bit": "4.6.0",
+        "bit64": "4.8.6",
+        "blob": "1.3.0",
+        "brio": "1.1.5",
+        "cachem": "1.1.0",
+        "cli": "3.6.6",
+        "codetools": "0.2.20",
+        "compiler": "4.6.1",
+        "crayon": "1.5.3",
+        "curl": "8.1.0",
+        "data.table": "1.18.6.1",
+        "datasets": "4.6.1",
+        "dbplyr": "2.6.0",
+        "desc": "1.4.3",
+        "devtools": "2.5.2",
+        "digest": "0.6.39",
+        "dplyr": "1.2.1",
+        "duckdb": "2.0.0",
+        "ellipsis": "0.3.3",
+        "evaluate": "1.0.5",
+        "farver": "2.1.2",
+        "fastmap": "1.2.0",
+        "filelock": "1.0.3",
+        "fs": "2.1.0",
+        "furrr": "0.4.0",
+        "future": "1.80.0",
+        "generics": "0.1.4",
+        "ggplot2": "4.0.3",
+        "globals": "0.20.0",
+        "glue": "1.8.1",
+        "grDevices": "4.6.1",
+        "graphics": "4.6.1",
+        "grid": "4.6.1",
+        "gridExtra": "2.3.1",
+        "gtable": "0.3.6",
+        "hms": "1.1.4",
+        "httr2": "1.3.0",
+        "jsonlite": "2.0.0",
+        "knitr": "1.52",
+        "lifecycle": "1.0.5",
+        "listenv": "1.1.0",
+        "magrittr": "2.0.5",
+        "memoise": "2.0.1",
+        "methods": "4.6.1",
+        "otel": "0.2.0",
+        "parallel": "4.6.1",
+        "parallelly": "1.48.0",
+        "pillar": "1.11.1",
+        "pkgbuild": "1.4.8",
+        "pkgconfig": "2.0.3",
+        "pkgload": "1.5.3",
+        "plyr": "1.8.9",
+        "progressr": "1.1.0",
+        "purrr": "1.2.2",
+        "readr": "2.2.0",
+        "reshape2": "1.4.5",
+        "rlang": "1.3.0",
+        "rprojroot": "2.1.1",
+        "rstudioapi": "0.19.0",
+        "scales": "1.4.0",
+        "sessioninfo": "1.2.4",
+        "stats": "4.6.1",
+        "stats4": "4.6.1",
+        "stringi": "1.8.9",
+        "stringr": "1.6.0",
+        "testthat": "3.3.2",
+        "tibble": "3.3.1",
+        "tidyr": "1.3.2",
+        "tidyselect": "1.2.1",
+        "tools": "4.6.1",
+        "tzdb": "0.5.0",
+        "usethis": "3.2.2",
+        "utils": "4.6.1",
+        "vctrs": "0.7.3",
+        "waldo": "0.6.2",
+        "withr": "3.0.3",
+        "xfun": "0.62"
+      },
+      "stages": [
+        {
+          "name": "prepare_bvbrc_cache",
+          "status": "skipped",
+          "started_at": "2026-10-29 19:15:58.475468",
+          "parameters": [],
+          "inputs": [],
+          "outputs": [],
+          "tool": {
+            "name": "BV-BRC",
+            "interface": "Data API"
+          },
+          "metrics": [],
+          "message": "metadata_method = \"api\" queries BV-BRC directly; no Docker cache to prepare.",
+          "finished_at": "2026-10-29 19:15:58.475605"
+        },
+        {
+          "name": "retrieve_metadata",
+          "status": "failed",
+          "started_at": "2026-10-29 19:15:58.489174",
+          "parameters": {
+            "filter_type": "AMR",
+            "abx": "All",
+            "metadata_method": "api",
+            "max_checkm_contam": 5,
+            "min_checkm_complete": 95,
+            "gc_deviations": null,
+            "length_deviations": null,
+            "cds_deviations": null,
+            "debug": false
+          },
+          "inputs": [
+            {
+              "path": "/var/folders/sn/gf075tpn5ls1psrbk4ndbjzm0000gp/T//RtmpAaazuq/file178858c7e53a.txt",
+              "exists": true,
+              "size_bytes": 20,
+              "modified_at": "2026-10-29 19:15:58.371006"
+            }
+          ],
+          "outputs": [],
+          "tool": {
+            "name": "BV-BRC",
+            "docker_image": "danylmb/bvbrc:5.3"
+          },
+          "metrics": [],
+          "finished_at": "2026-10-29 19:15:58.499687",
+          "error": "prepareGenomes() exited before successful completion."
+        }
+      ],
+      "events": [
+        {
+          "timestamp": "2026-10-29 19:15:58.473966",
+          "level": "info",
+          "message": "Started genome curation run.",
+          "details": {
+            "method": "ftp",
+            "metadata_method": "api",
+            "evidence_mode": "lab_only",
+            "overwrite": false
+          }
+        }
+      ],
+      "error": "prepareGenomes() exited before successful completion."
+    }
+  ]
+}
