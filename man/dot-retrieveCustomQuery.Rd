@@ -6,20 +6,30 @@
 \usage{
 .retrieveCustomQuery(
   base_dir = ".",
-  user_bacs = c("90371", "Bacillus subtilis")
+  user_bacs = c("90371", "Bacillus subtilis"),
+  verbose = TRUE
 )
 }
 \arguments{
-\item{base_dir}{Character. Project root. BV-BRC cache is expected at
-the default BiocFileCache data directory.}
+\item{base_dir}{Character. Project root used by the amRdata workflow.
+Default: \code{"."}.}
 
-\item{user_bacs}{Character vector. Mixed inputs of taxon IDs and/or species strings.}
+\item{user_bacs}{Character vector of taxon IDs and/or species-name strings.}
+
+\item{verbose}{Logical. Print persistent query-resolution messages.
+Default: \code{TRUE}.}
 }
 \value{
-A tibble with columns \code{genome.taxon_id} and \code{genome.species}, or NULL with a message.
+A tibble containing matched \code{genome.taxon_id} and \code{genome.species}
+values.
 }
 \description{
-Searches the locally cached BV-BRC bacterial dataset for user-specified inputs.
-Numeric inputs are treated as taxon IDs; character inputs are matched as
-case-insensitive substrings against \code{genome.species}.
+Resolves taxon IDs and species-name substrings against the locally cached
+BV-BRC bacterial metadata table. Numeric inputs are matched as taxon IDs;
+other inputs are matched case-insensitively against species names.
 }
+\details{
+Individual inputs that cannot be resolved generate warnings. The function
+stops if none of the supplied inputs can be matched.
+}
+\keyword{internal}

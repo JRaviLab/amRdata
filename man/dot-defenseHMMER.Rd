@@ -2,34 +2,51 @@
 % Please edit documentation in R/data_processing.R
 \name{.defenseHMMER}
 \alias{.defenseHMMER}
-\title{Annotate proteins using DefenseFinder + CasFinder HMMs
-Will add to the duckdb + create the parquet file.}
+\title{Prepare DefenseFinder and CasFinder HMMs and annotate proteins}
 \usage{
 .defenseHMMER(
   defense_db_dir,
   docker_image = "staphb/hmmer",
-  duckdb_path = "inst/extdata/Sfl.duckdb",
+  duckdb_path,
   output_path = NULL,
   threads = 8L,
-  verbose = TRUE
+  verbose = TRUE,
+  log_path = NULL,
+  progress = TRUE
 )
 }
 \arguments{
-\item{defense_db_dir}{Directory used to store downloaded HMMs}
+\item{defense_db_dir}{Character. Directory used to cache DefenseFinder and
+CasFinder model files.}
 
-\item{docker_image}{Docker image containing HMMER}
+\item{docker_image}{Character. Docker image containing HMMER.
+Default: \code{"staphb/hmmer"}.}
 
-\item{duckdb_path}{DuckDB database path}
+\item{duckdb_path}{Character. Path to the working dataset DuckDB.}
 
-\item{output_path}{Output directory}
+\item{output_path}{Character or \code{NULL}. Directory for HMMER outputs. If
+\code{NULL}, the dataset HMMER directory is used.}
 
-\item{threads}{Number of HMMER threads}
+\item{threads}{Integer. CPU budget available to HMMER. Default: \code{8}.}
+
+\item{verbose}{Logical. Print persistent preparation and execution messages.
+Default: \code{TRUE}.}
+
+\item{log_path}{Character or \code{NULL}. Optional path for external-tool logging.}
+
+\item{progress}{Logical. Show download progress when DefenseFinder or
+CasFinder model archives must be retrieved. Default: \code{TRUE}.}
 }
 \value{
-Path to annotation parquet
+Invisibly returns the path to the DefenseCas annotation Parquet file.
 }
 \description{
-Annotate proteins using DefenseFinder + CasFinder HMMs
-Will add to the duckdb + create the parquet file.
+Downloads and prepares the DefenseFinder and CasFinder model collections,
+combines their HMM profiles, runs HMMER against the representative protein
+sequences in the selected dataset, and writes the resulting annotations for
+downstream processing.
+}
+\details{
+Prepared model files are reused when already present.
 }
 \keyword{internal}

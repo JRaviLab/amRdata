@@ -2,8 +2,7 @@
 % Please edit documentation in R/data_curation.R
 \name{.ftps_download_one}
 \alias{.ftps_download_one}
-\title{Helps appropriately interface with BV-BRC FTPS server, and avoids getting stuck
-when malformed files can hang an FTPS connection by introducing safeguards}
+\title{Download one complete BV-BRC genome file set}
 \usage{
 .ftps_download_one(
   genomeID,
@@ -15,8 +14,33 @@ when malformed files can hang an FTPS connection by introducing safeguards}
   min_bytes = 100L
 )
 }
+\arguments{
+\item{genomeID}{Character. BV-BRC genome ID.}
+
+\item{out_dir}{Character. Directory where genome files should be written.}
+
+\item{connect_timeout}{Integer. Maximum time in seconds allowed to establish
+the FTPS connection. Default: \code{10}.}
+
+\item{max_time}{Integer. Maximum total transfer time in seconds for each
+file. Default: \code{30}.}
+
+\item{speed_time}{Integer. Number of seconds over which the minimum transfer
+speed is evaluated. Default: \code{30}.}
+
+\item{speed_limit}{Integer. Minimum accepted transfer speed in bytes per
+second. Default: \code{2048}.}
+
+\item{min_bytes}{Integer. Minimum file size considered a valid download.
+Default: \code{100}.}
+}
+\value{
+\code{TRUE} when all required genome files are complete on disk;
+otherwise \code{FALSE}.
+}
 \description{
-Helps appropriately interface with BV-BRC FTPS server, and avoids getting stuck
-when malformed files can hang an FTPS connection by introducing safeguards
+Downloads the nucleotide FASTA, protein FASTA, and GFF files for one BV-BRC
+genome over FTPS. Downloads are first written to temporary files and are
+retained only when the transfer succeeds and provides complete files.
 }
 \keyword{internal}
