@@ -30,6 +30,6 @@ other inputs are matched case-insensitively against species names.
 }
 \details{
 Individual inputs that cannot be resolved generate warnings. The function
-stops if none of the supplied inputs can be matched.
+returns an empty tibble if none of the supplied inputs can be matched.
 }
 \keyword{internal}

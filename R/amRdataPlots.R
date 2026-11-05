@@ -1,24 +1,32 @@
 #' Generate a summary report for AMR metadata
 #'
-#' @param metadata_parquet Character string. Path to a Parquet file containing
-#'   standardized AMR metadata.
-#' @param out_path Character string. Directory where the Markdown report is written.
+#' @param duckdb_path Character or NULL. Which ORB to summarize. If NULL
+#'   (default), completed ORBs are discovered from the dataset manifests and
+#'   you are prompted to choose when more than one exists (a path is required
+#'   in non-interactive sessions). May also be an ORB directory, an ORB/working
+#'   DuckDB path, or a cleaned metadata `.parquet` file.
+#' @param out_path Character or NULL. Directory where the Markdown report is
+#'   written. Defaults to the ORB folder (or the Parquet's directory when a
+#'   `.parquet` file is given).
 #'
 #' @return Invisibly returns the path to the written Markdown summary report
 #'   ("<out_path>/amr_metadata_summary.md").
 #'
 #' @examples
 #' \dontrun{
-#' generateSummary(
-#'   metadata_parquet = "data/metadata.parquet",
-#'   out_path = "data/"
-#' )
+#' generateSummary()  # pick from available ORBs
+#' generateSummary(duckdb_path = "data/Shigella_flexneri/orb")
 #' }
 #'
 #' @export
-generateSummary <- function(metadata_parquet, 
-  out_path
+generateSummary <- function(duckdb_path = NULL,
+  out_path = NULL
 ) {
+  resolved <- .readOrbMetadata(duckdb_path)
+  metadata <- resolved$metadata
+  to_orb <- is.null(out_path)
+  if (to_orb) out_path <- resolved$out_path
+
   # Little helper to apply distinct + non-empty + sorted vector
   clean_distinct <- function(df, col) {
     df |>
@@ -49,8 +57,6 @@ generateSummary <- function(metadata_parquet,
 
   # Setting paths
   if (!dir.exists(out_path)) dir.create(out_path, recursive = TRUE, showWarnings = FALSE)
-  metadata_parquet <- normalizePath(metadata_parquet)
-  metadata <- arrow::read_parquet(metadata_parquet)
   md_path <- file.path(out_path, "amr_metadata_summary.md")
 
   # Validation (got any data?)
@@ -224,39 +230,52 @@ ResPropbyDrugClass <- drug_class_calls |>
   append_lines(md_path, c("## Isolation sources", "", md_tbl(SourceCount), "", ""))
   append_lines(md_path, c("## Hosts", "", md_tbl(HostCount), "", ""))
 
+  if (to_orb) {
+    message("Summary report generated into a md file and added to the ORB.")
+  } else {
+    message("Summary report generated into a md file: ", md_path)
+  }
 invisible(md_path)
 }
 
 
 #' Write all summary plots to file(s)
 #'
-#' Expects `metadata_parquet` to be the output of
+#' Expects the ORB `metadata` table to be the output of
 #' `cleanMetaData()` step (or an export of the resulting `metadata` table), since
 #' `drug_abbr`, `drug_class`, and `num_resistant_classes` are only populated
 #' after that step joins in the reference drug tables.
 #'
-#' @param metadata_parquet Character. Path to the Parquet metadata file.
-#' @param out_path Character. Output directory for plot files.
+#' @param duckdb_path Character or NULL. Which ORB to plot. If NULL (default),
+#'   completed ORBs are discovered from the dataset manifests and you are
+#'   prompted to choose when more than one exists (a path is required in
+#'   non-interactive sessions). May also be an ORB directory, an ORB/working
+#'   DuckDB path, or a cleaned metadata `.parquet` file.
+#' @param out_path Character or NULL. Output directory for plot files. Defaults
+#'   to the ORB folder (or the Parquet's directory when a `.parquet` file is
+#'   given).
 #'
 #' @return Invisibly returns the path to the written PDF (all plots as
 #'   separate pages of one multi-page file).
 #' 
 #' @examples
 #' \dontrun{
-#' generatePlots(
-#'   metadata_parquet = "data/metadata.parquet",
-#'   out_path = "data/"
-#' )
+#' generatePlots()  # pick from available ORBs
+#' generatePlots(duckdb_path = "data/Shigella_flexneri/orb")
 #' }
 #' @export
-generatePlots <- function(metadata_parquet,
-                          out_path
+generatePlots <- function(duckdb_path = NULL,
+                          out_path = NULL
                         ) {
+  resolved <- .readOrbMetadata(duckdb_path)
+  metadata <- resolved$metadata
+  to_orb <- is.null(out_path)
+  if (to_orb) out_path <- resolved$out_path
+
   if (!dir.exists(out_path)) {
     dir.create(out_path, showWarnings = FALSE, recursive = TRUE)
   }
 
-  metadata <- arrow::read_parquet(normalizePath(metadata_parquet))
 
   if (nrow(metadata) == 0) {
     stop("The input metadata table is empty. Please check your query or input data.")
@@ -498,5 +517,10 @@ generatePlots <- function(metadata_parquet,
     heights = c(0.08, 0.92)
   )
 
+  if (to_orb) {
+    message("Exploratory plots generated into a PDF and added to the ORB.")
+  } else {
+    message("Exploratory plots generated into a PDF: ", pdf_path)
+  }
   invisible(pdf_path)
 }

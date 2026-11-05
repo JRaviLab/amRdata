@@ -4,13 +4,18 @@
 \alias{generateSummary}
 \title{Generate a summary report for AMR metadata}
 \usage{
-generateSummary(metadata_parquet, out_path)
+generateSummary(duckdb_path = NULL, out_path = NULL)
 }
 \arguments{
-\item{metadata_parquet}{Character string. Path to a Parquet file containing
-standardized AMR metadata.}
+\item{duckdb_path}{Character or NULL. Which ORB to summarize. If NULL
+(default), completed ORBs are discovered from the dataset manifests and
+you are prompted to choose when more than one exists (a path is required
+in non-interactive sessions). May also be an ORB directory, an ORB/working
+DuckDB path, or a cleaned metadata \code{.parquet} file.}
 
-\item{out_path}{Character string. Directory where the Markdown report is written.}
+\item{out_path}{Character or NULL. Directory where the Markdown report is
+written. Defaults to the ORB folder (or the Parquet's directory when a
+\code{.parquet} file is given).}
 }
 \value{
 Invisibly returns the path to the written Markdown summary report
@@ -21,10 +26,8 @@ Generate a summary report for AMR metadata
 }
 \examples{
 \dontrun{
-generateSummary(
-  metadata_parquet = "data/metadata.parquet",
-  out_path = "data/"
-)
+generateSummary()  # pick from available ORBs
+generateSummary(duckdb_path = "data/Shigella_flexneri/orb")
 }
 
 }

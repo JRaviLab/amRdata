@@ -136,10 +136,8 @@ runDataProcessing(
 Simple stats and plots to explore metadata
 
 ```{r }
-generateSummary("data/metadata_parquet",
-  out_path = "data/"
-)
-generatePlots("data/metadata_parquet",
-  out_path = "data/"
-)
+# Reads the cleaned metadata from the ORB(s) found via the dataset manifests;
+# pass `duckdb_path` (e.g. "data/Shigella_flexneri/orb") to pick one explicitly.
+generateSummary()
+generatePlots()
 ```

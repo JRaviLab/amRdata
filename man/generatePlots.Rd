@@ -4,28 +4,32 @@
 \alias{generatePlots}
 \title{Write all summary plots to file(s)}
 \usage{
-generatePlots(metadata_parquet, out_path)
+generatePlots(duckdb_path = NULL, out_path = NULL)
 }
 \arguments{
-\item{metadata_parquet}{Character. Path to the Parquet metadata file.}
+\item{duckdb_path}{Character or NULL. Which ORB to plot. If NULL (default),
+completed ORBs are discovered from the dataset manifests and you are
+prompted to choose when more than one exists (a path is required in
+non-interactive sessions). May also be an ORB directory, an ORB/working
+DuckDB path, or a cleaned metadata \code{.parquet} file.}
 
-\item{out_path}{Character. Output directory for plot files.}
+\item{out_path}{Character or NULL. Output directory for plot files. Defaults
+to the ORB folder (or the Parquet's directory when a \code{.parquet} file is
+given).}
 }
 \value{
 Invisibly returns the path to the written PDF (all plots as
 separate pages of one multi-page file).
 }
 \description{
-Expects \code{metadata_parquet} to be the output of
+Expects the ORB \code{metadata} table to be the output of
 \code{cleanMetaData()} step (or an export of the resulting \code{metadata} table), since
 \code{drug_abbr}, \code{drug_class}, and \code{num_resistant_classes} are only populated
 after that step joins in the reference drug tables.
 }
 \examples{
 \dontrun{
-generatePlots(
-  metadata_parquet = "data/metadata.parquet",
-  out_path = "data/"
-)
+generatePlots()  # pick from available ORBs
+generatePlots(duckdb_path = "data/Shigella_flexneri/orb")
 }
 }
