@@ -22,6 +22,16 @@ Invisibly returns the path to the written PDF (all plots as
 separate pages of one multi-page file).
 }
 \description{
+Writes a landscape multi-page PDF of exploratory plots: resistance by
+antibiotic and by drug class (with sample sizes), resistance by antibiotic
+and collection year, results per year, isolates by country, by country and
+year, and by isolation source, multidrug resistance, the most common
+resistance profiles, and reference tables for antibiotic and class
+abbreviations. Isolate-level plots count unique genomes, not genome x
+antibiotic rows. A plot is skipped (with no error) when the data it needs
+is absent, e.g. no collection years.
+}
+\details{
 Expects the ORB \code{metadata} table to be the output of
 \code{cleanMetaData()} step (or an export of the resulting \code{metadata} table), since
 \code{drug_abbr}, \code{drug_class}, and \code{num_resistant_classes} are only populated

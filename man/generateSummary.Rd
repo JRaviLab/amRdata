@@ -22,7 +22,19 @@ Invisibly returns the path to the written Markdown summary report
 ("<out_path>/amr_metadata_summary.md").
 }
 \description{
-Generate a summary report for AMR metadata
+Writes a Markdown report that gives an at-a-glance overview of the cleaned
+metadata (isolates, results, antibiotics, multidrug resistance, collection
+years, geography, sources, hosts, laboratory methods, publications), data
+completeness, and per-antibiotic and per-class resistance tables. Results
+with fewer than 10 observations are flagged because their percentages are
+unreliable.
+}
+\details{
+Counts are reported in two units: \emph{isolates} are unique genomes, and
+\emph{results} are genome x antibiotic susceptibility calls. Per-class calls
+collapse a genome's drugs in that class (any resistant call makes the class
+resistant). Multidrug resistant (MDR) means resistant to three or more drug
+classes.
 }
 \examples{
 \dontrun{

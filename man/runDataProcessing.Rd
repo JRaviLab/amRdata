@@ -129,6 +129,8 @@ Invisibly returns a list with:
 \item \code{log_path} - path to a plain-text progress log, appended to as each
 stage starts and finishes. Tail it (e.g. \verb{tail -f <log_path>}) to watch
 progress without parsing the full JSON provenance manifest.
+\item \code{report_files} - paths of the metadata summary report and exploratory
+plots written to the ORB (empty if they could not be written)
 }
 }
 \description{
@@ -173,6 +175,10 @@ upstream curation workflow.
 over the generated Parquet files.
 \item Records processing parameters, software versions, database selections, and
 other provenance information in the dataset manifest.
+\item Writes a metadata summary report (\code{amr_metadata_summary.md}) and an
+exploratory plot PDF (\code{amRdata_exploratory_plots.pdf}) to the ORB, via
+\code{\link[=generateSummary]{generateSummary()}} and \code{\link[=generatePlots]{generatePlots()}}. A failure to write either only
+warns; it does not fail the run.
 \item Creates the protein-gene dyad feature map for downstream graph analysis.
 \item If \code{export_tabular_data = TRUE}, exports features in human-readable CSVs.
 Additional export options are available by calling \code{exportProcessedData()}
@@ -244,5 +250,5 @@ runDataProcessing(
 }
 \seealso{
 \code{\link[=prepareGenomes]{prepareGenomes()}}, \code{\link[=runPanaroo2Duckdb]{runPanaroo2Duckdb()}}, \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}}, \code{\link[=cleanMetaData]{cleanMetaData()}},
-\code{\link[=cleanData]{cleanData()}}
+\code{\link[=cleanData]{cleanData()}}, \code{\link[=generateSummary]{generateSummary()}}, \code{\link[=generatePlots]{generatePlots()}}
 }

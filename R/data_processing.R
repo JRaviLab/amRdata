@@ -3145,6 +3145,8 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'   \item `log_path` - path to a plain-text progress log, appended to as each
 #'     stage starts and finishes. Tail it (e.g. `tail -f <log_path>`) to watch
 #'     progress without parsing the full JSON provenance manifest.
+#'   \item `report_files` - paths of the metadata summary report and exploratory
+#'     plots written to the ORB (empty if they could not be written)
 #' }
 #'
 #' @details
@@ -3166,6 +3168,10 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'   over the generated Parquet files.
 #' * Records processing parameters, software versions, database selections, and
 #'   other provenance information in the dataset manifest.
+#' * Writes a metadata summary report (`amr_metadata_summary.md`) and an
+#'   exploratory plot PDF (`amRdata_exploratory_plots.pdf`) to the ORB, via
+#'   [generateSummary()] and [generatePlots()]. A failure to write either only
+#'   warns; it does not fail the run.
 #' * Creates the protein-gene dyad feature map for downstream graph analysis.
 #' * If `export_tabular_data = TRUE`, exports features in human-readable CSVs.
 #'   Additional export options are available by calling `exportProcessedData()`
@@ -3186,7 +3192,7 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'
 #' @seealso
 #' [prepareGenomes()], [runPanaroo2Duckdb()], [CDHIT2duckdb()], [cleanMetaData()],
-#' [cleanData()]
+#' [cleanData()], [generateSummary()], [generatePlots()]
 #'
 #' @examples
 #' \dontrun{
@@ -3738,6 +3744,9 @@ runDataProcessing <- function(
   .amr_progress_step("Building resource bundle", {
       cleanMetaData(duckdb_path = duckdb_path, path = paths$orb)
 
+      # Markdown summary + exploratory plot PDF of the cleaned metadata
+      report_files <- .writeMetadataReports(paths$orb, status = status)
+
       cleanData(
         duckdb_path = duckdb_path,
         path = paths$orb,
@@ -3957,8 +3966,13 @@ runDataProcessing <- function(
       )
     ),
     inputs = duckdb_path,
-    outputs = c(parquet_files, parquet_duckdb_path),
-    metrics = list(parquet_duckdb = parquet_duckdb_path, parquet_files = parquet_files)
+    # Reports are non-essential, so only the ones written by this run are listed
+    outputs = c(parquet_files, report_files, parquet_duckdb_path),
+    metrics = list(
+      parquet_duckdb = parquet_duckdb_path,
+      parquet_files = parquet_files,
+      report_files = as.list(report_files)
+    )
   )
 
   # Labeling that this run is ready for amRml in the next package
@@ -3987,6 +4001,12 @@ runDataProcessing <- function(
 
   status("Features ready.")
   message("Data processing complete.")
+  # Shown unconditionally (not just when verbose) so users know the reports exist
+  report_msg <- .reportFilesMessage(report_files)
+  if (!is.null(report_msg)) {
+    message(report_msg)
+    status(report_msg)
+  }
 
   run_failed <- FALSE
 
@@ -3995,7 +4015,8 @@ runDataProcessing <- function(
       duckdb_path = duckdb_path,
       panaroo_output = pan_dir,
       parquet_duckdb_path = normalizePath(parquet_duckdb_path),
-      log_path = log_path
+      log_path = log_path,
+      report_files = report_files
     )
   )
 }
