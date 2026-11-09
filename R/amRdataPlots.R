@@ -251,7 +251,7 @@ generateSummary <- function(duckdb_path = NULL,
     ~Metric, ~Value,
     "Isolates (unique genomes)", .fmtInt(n_genomes),
     "Susceptibility results (genome x antibiotic)", .fmtInt(n_results),
-    "Antibiotics tested", .fmtInt(dplyr::n_distinct(metadata$genome_drug.antibiotic)),
+    "Antibiotics", .fmtInt(dplyr::n_distinct(metadata$genome_drug.antibiotic)),
     "Resistant results", sprintf("%s (%s)", .fmtInt(n_res), .fmtPct(n_res / n_results)),
     "Isolates resistant to at least one antibiotic",
     sprintf(
@@ -272,11 +272,11 @@ generateSummary <- function(duckdb_path = NULL,
     )
   }
   if (has_mdr) {
-    n_mdr <- sum(genomes$n_classes >= 3, na.rm = TRUE)
+    n_mdr <- sum(genomes$n_classes >= 2, na.rm = TRUE)
     n_known <- sum(!is.na(genomes$n_classes))
     overview <- tibble::add_row(
       overview,
-      Metric = "Multidrug resistant isolates (3 or more classes)",
+      Metric = "Multidrug resistant isolates (2 or more classes)",
       Value = sprintf("%s (%s)", .fmtInt(n_mdr), .fmtPct(n_mdr / n_known)),
       .after = which(overview$Metric == "Isolates resistant to at least one antibiotic")
     )
@@ -387,7 +387,7 @@ generateSummary <- function(duckdb_path = NULL,
     dplyr::group_by(genome.collection_year) |>
     dplyr::summarise(
       Isolates = dplyr::n_distinct(genome.genome_id),
-      Results = dplyr::n(),
+      Entries = dplyr::n(),
       Resistant = sum(genome_drug.resistant_phenotype == "Resistant"),
       .groups = "drop"
     ) |>
@@ -396,8 +396,8 @@ generateSummary <- function(duckdb_path = NULL,
     year_out <- tibble::tibble(
       Year = as.character(year_counts$genome.collection_year),
       Isolates = .fmtInt(year_counts$Isolates),
-      Results = .fmtInt(year_counts$Results),
-      `% resistant` = .fmtPct(year_counts$Resistant / year_counts$Results)
+      Entries = .fmtInt(year_counts$Entries),
+      `% resistant` = .fmtPct(year_counts$Resistant / year_counts$Entries)
     )
     lines <- c(
       lines, "## Collection years", "",
@@ -410,7 +410,7 @@ generateSummary <- function(duckdb_path = NULL,
     dplyr::group_by(genome.isolation_country) |>
     dplyr::summarise(
       Isolates = dplyr::n_distinct(genome.genome_id),
-      Results = dplyr::n(),
+      Entries = dplyr::n(),
       Resistant = sum(genome_drug.resistant_phenotype == "Resistant"),
       .groups = "drop"
     ) |>
@@ -420,8 +420,8 @@ generateSummary <- function(duckdb_path = NULL,
     country_out <- tibble::tibble(
       Country = shown$genome.isolation_country,
       Isolates = .fmtInt(shown$Isolates),
-      Results = .fmtInt(shown$Results),
-      `% resistant` = .fmtPct(shown$Resistant / shown$Results)
+      Entries = .fmtInt(shown$Entries),
+      `% resistant` = .fmtPct(shown$Resistant / shown$Entries)
     )
     lines <- c(lines, "## Isolation countries", "")
     if (nrow(country_counts) > nrow(shown)) {
@@ -447,11 +447,11 @@ generateSummary <- function(duckdb_path = NULL,
     dplyr::mutate(
       method = dplyr::coalesce(genome_drug.laboratory_typing_method, "Not defined")
     ) |>
-    dplyr::count(method, name = "Results", sort = TRUE)
+    dplyr::count(method, name = "Entries", sort = TRUE)
   lab_out <- tibble::tibble(
     `Laboratory method` = lab$method,
-    Results = .fmtInt(lab$Results),
-    Share = .fmtPct(lab$Results / sum(lab$Results))
+    Entries = .fmtInt(lab$Entries),
+    Share = .fmtPct(lab$Entries / sum(lab$Entries))
   )
   lines <- c(
     lines, "## Laboratory methods", "",
@@ -622,9 +622,9 @@ generateSummary <- function(duckdb_path = NULL,
       title = "Resistance by antibiotic and collection year",
       x = "Collection year", y = NULL,
       caption = paste0(
-        "Numbers in tiles are results; blank = no results that year.",
+        "Numbers in tiles are entries; blank = no entries that year.",
         if (n_hidden > 0) {
-          sprintf(" %d antibiotic(s) with fewer than %d results not shown.", n_hidden, .REPORT_MIN_N)
+          sprintf(" %d antibiotic(s) with fewer than %d entries not shown.", n_hidden, .REPORT_MIN_N)
         } else {
           ""
         }
