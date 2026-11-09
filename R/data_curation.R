@@ -16,6 +16,49 @@
   )
 }
 
+#' Relabel AMR evidence and keep rows allowed by an evidence mode
+#'
+#' Shared by `.filterGenomes()` and `cleanMetaData()` so genome selection and
+#' phenotype cleaning use the same rule. Evidence is first relabeled from the
+#' laboratory typing method, then rows are kept by `evidence_mode`:
+#' `lab_only`, `comp_only`, `lab_or_comp` (lab or comp evidence; if evidence is
+#' NA/blank, a typing method or computational method must be present), or
+#' `any` (no filtering).
+#' @keywords internal
+.amr_filter_evidence <- function(md,
+                                 evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any")) {
+  evidence_mode <- match.arg(evidence_mode)
+
+  typing <- md[["genome_drug.laboratory_typing_method"]]
+  # The CLI metadata download does not fetch computational_method
+  comp_method <- if ("genome_drug.computational_method" %in% names(md)) {
+    md[["genome_drug.computational_method"]]
+  } else {
+    rep(NA_character_, nrow(md))
+  }
+  filled <- function(x) !is.na(x) & nzchar(trimws(x))
+
+  md[["genome_drug.evidence"]] <- dplyr::case_when(
+    typing %in% .amr_lab_methods() ~ "Laboratory Method",
+    typing == "Computational Prediction" ~ "Computational Method",
+    TRUE ~ md[["genome_drug.evidence"]]
+  )
+  evidence <- md[["genome_drug.evidence"]]
+
+  keep <- switch(
+    evidence_mode,
+    lab_only = evidence %in% "Laboratory Method",
+    comp_only = evidence %in% "Computational Method" |
+      filled(comp_method) |
+      typing %in% "Computational Prediction",
+    lab_or_comp = evidence %in% c("Laboratory Method", "Computational Method") |
+      (!filled(evidence) & (filled(typing) | filled(comp_method))),
+    any = rep(TRUE, nrow(md))
+  )
+
+  md[keep, , drop = FALSE]
+}
+
 #' Helps tag genomes with their AMR evidence for parsing
 #' @keywords internal
 .create_amr_tagged_view <- function(con) {
@@ -59,6 +102,8 @@
 #'   second. Default: `2048`.
 #' @param min_bytes Integer. Minimum file size considered a valid download.
 #'   Default: `100`.
+#' @param skip_existing Logical. Reuse complete local files. If FALSE, refresh
+#'   files on both download passes. Default: TRUE.
 #'
 #' @return `TRUE` when all required genome files are complete on disk;
 #'   otherwise `FALSE`.
@@ -68,7 +113,8 @@
                                max_time = 30L,
                                speed_time = 30L,
                                speed_limit = 2048L,
-                               min_bytes = 100L) {
+                               min_bytes = 100L,
+                               skip_existing = TRUE) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   exts <- c(".fna", ".PATRIC.faa", ".PATRIC.gff")
@@ -76,7 +122,7 @@
     dest <- file.path(out_dir, paste0(genomeID, ext))
     dest_tmp <- paste0(dest, ".tmp")
 
-    if (file.exists(dest) && file.info(dest)$size > min_bytes) next
+    if (isTRUE(skip_existing) && file.exists(dest) && file.info(dest)$size > min_bytes) next
     if (file.exists(dest) && file.info(dest)$size == 0) try(unlink(dest), silent = TRUE)
     if (file.exists(dest_tmp)) try(unlink(dest_tmp), silent = TRUE)
 
@@ -133,6 +179,9 @@
 #' @param progress Logical. Show transient genome download counters.
 #'   Default: `TRUE`.
 #'
+#' @param skip_existing Logical. Reuse complete local files. If FALSE, refresh
+#'   files on both download passes. Default: TRUE.
+#'
 #' @return Character vector of genome IDs with complete file sets after both
 #'   download passes.
 #' @keywords internal
@@ -141,7 +190,8 @@
                                     workers_second = 8L,
                                     log_file = NULL,
                                     verbose = TRUE,
-                                    progress = TRUE) {
+                                    progress = TRUE,
+                                    skip_existing = TRUE) {
   genome_ids <- unique(as.character(genome_ids))
   if (!length(genome_ids)) {
     return(character(0))
@@ -185,7 +235,8 @@
       ok <- .ftps_download_one(
         gid, out_dir,
         connect_timeout = 10L, max_time = 45L,
-        speed_time = 30L, speed_limit = 2048L
+        speed_time = 30L, speed_limit = 2048L,
+        skip_existing = skip_existing
       )
 
       p(
@@ -241,7 +292,8 @@
       ok <- .ftps_download_one(
         gid, out_dir,
         connect_timeout = 10L, max_time = 120L,
-        speed_time = 30L, speed_limit = 2048L
+        speed_time = 30L, speed_limit = 2048L,
+        skip_existing = skip_existing
       )
 
       p(
@@ -576,7 +628,7 @@
 }
 
 # Get rid of genomes that are missing files
-.purge_genome_files <- function(genome_path, genome_ids, log_file = ftp_log) {
+.purge_genome_files <- function(genome_path, genome_ids, log_file = NULL) {
   genome_ids <- unique(as.character(genome_ids))
   if (!length(genome_ids)) {
     return(invisible(0L))
@@ -1540,7 +1592,9 @@ retrieveMetadata <- function(user_bacs,
 #'
 #' @param evidence_mode Character. One of:
 #'   "lab_only"   (default) -> only laboratory evidence
-#'   "lab_or_comp"          -> laboratory OR computational evidence
+#'   "lab_or_comp"          -> laboratory OR computational evidence; if the
+#'                             evidence column is NA/blank, a laboratory typing
+#'                             method or computational method must be present
 #'   "comp_only"            -> only computational evidence
 #'   "any"                  -> no AMR required (from genome_data; Good only)
 #' @return A path to a DuckDB database and table_name = "filtered"
@@ -1586,33 +1640,7 @@ retrieveMetadata <- function(user_bacs,
       return(NULL)
     }
 
-    # Assigning the text strings that exist for AMR phenotypes
-    lab_methods <- .amr_lab_methods()
-
-    md <- tibble::as_tibble(md) |>
-      dplyr::mutate(
-        `genome_drug.evidence` = dplyr::case_when(
-          `genome_drug.laboratory_typing_method` %in% lab_methods ~
-            "Laboratory Method",
-          `genome_drug.laboratory_typing_method` == "Computational Prediction" ~
-            "Computational Method",
-          TRUE ~ `genome_drug.evidence`
-        )
-      )
-
-    if (evidence_mode == "lab_only") {
-      md <- dplyr::filter(md, `genome_drug.evidence` == "Laboratory Method")
-    } else if (evidence_mode == "comp_only") {
-      md <- dplyr::filter(
-        md,
-        `genome_drug.evidence` == "Computational Method" |
-          (!is.na(`genome_drug.computational_method`) & nzchar(`genome_drug.computational_method`)) |
-          (`genome_drug.laboratory_typing_method` == "Computational Prediction")
-      )
-    } else {
-      # Lab_or_comp: Doesn't matter, keep any predictions
-      md <- md
-    }
+    md <- .amr_filter_evidence(tibble::as_tibble(md), evidence_mode)
 
     md <- md |>
       dplyr::filter(`genome.genome_quality` == "Good") |>
@@ -1964,7 +1992,8 @@ retrieveGenomes <- function(base_dir = ".",
       workers_second = ftp_workers,
       log_file = ftp_log,
       verbose = verbose,
-      progress = progress
+      progress = progress,
+      skip_existing = skip_existing
     )
 
     dropped_ids <- setdiff(ids, ok_ids)
@@ -2752,7 +2781,7 @@ exportTables <- function(duckdb_path,
       if (is.null(tables)) "default" else paste(unique(as.character(tables)), collapse = ", "),
       as.character(length(exported_files)),
       paste(summary_tables, collapse = ", "),
-      vapply(summary_tables, count_if_present, character(1))
+      purrr::map_chr(summary_tables, count_if_present)
     )
   )
 

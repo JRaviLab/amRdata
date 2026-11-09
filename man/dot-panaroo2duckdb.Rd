@@ -9,13 +9,13 @@
 \arguments{
 \item{panaroo_output_path}{Path to a Panaroo result directory.}
 
-\item{duckdb_path}{Path to a DuckDB database file.}
+\item{duckdb_path}{Path to the per-selection DuckDB database.}
 }
 \value{
-Invisibly returns TRUE.
+Invisibly returns \code{TRUE}.
 }
 \description{
-Wrapper that loads gene counts, gene names, struct tables, and reference
-sequence tables from a Panaroo output directory into a DuckDB database.
+Stores gene and structural counts as sparse long relations and imports the
+Panaroo reference sequences.
 }
 \keyword{internal}

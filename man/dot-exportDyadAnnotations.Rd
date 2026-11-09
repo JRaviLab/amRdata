@@ -7,27 +7,20 @@
 .exportDyadAnnotations(duckdb_path, feature_scales = NULL, verbose = TRUE)
 }
 \arguments{
-\item{duckdb_path}{Character. Path to the source dataset DuckDB. Associated
-Parquet files and provenance manifest are expected there.}
+\item{duckdb_path}{Character. Path to the processed ORB DuckDB.}
 
 \item{feature_scales}{Character vector of optional feature types to include.
 If NULL, includes \code{struct} plus all HMMER databases recorded in the
 manifest.}
 
 \item{verbose}{Logical. Print progress messages.}
-
-\item{output_path}{Character or NULL. Directory where the output Parquet file
-will be written. Defaults to the DuckDB directory.}
-
-\item{output_stem}{Character. Output filename stem. Default
-\code{"dyad_annotations"}.}
 }
 \value{
-Invisibly returns the path to the generated Parquet file.
+A tibble with one row per protein-gene dyad.
 }
 \description{
 Builds a one-row-per-dyad table linking protein-gene dyads to structural
-features and HMMER annotations recorded in the dataset provenance manifest.
+features and HMMER annotations registered as virtual relations in the ORB.
 Feature values are deduplicated and combined into semicolon-separated
 character fields.
 }
