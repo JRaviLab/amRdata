@@ -4360,10 +4360,11 @@ runDataProcessing <- function(
 
   status("Features ready.")
   message("Data processing complete.")
-  # Shown unconditionally (not just when verbose) so users know the reports exist
+  # Shown unconditionally (not just when verbose) so users know the reports
+  # exist; status() already prints it when verbose, so only add it otherwise.
   report_msg <- .reportFilesMessage(report_files)
   if (!is.null(report_msg)) {
-    message(report_msg)
+    if (!isTRUE(verbose)) message(report_msg)
     status(report_msg)
   }
 
