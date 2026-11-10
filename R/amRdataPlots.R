@@ -140,11 +140,10 @@
 #' @param duckdb_path Character or NULL. Which ORB to summarize. If NULL
 #'   (default), completed ORBs are discovered from the dataset manifests and
 #'   you are prompted to choose when more than one exists (a path is required
-#'   in non-interactive sessions). May also be an ORB directory, an ORB/working
-#'   DuckDB path, or a cleaned metadata `.parquet` file.
+#'   in non-interactive sessions). May also be an ORB directory or an ORB
+#'   DuckDB path.
 #' @param out_path Character or NULL. Directory where the Markdown report is
-#'   written. Defaults to the ORB folder (or the Parquet's directory when a
-#'   `.parquet` file is given).
+#'   written. Defaults to the ORB folder.
 #'
 #' @return Invisibly returns the path to the written Markdown summary report
 #'   ("<out_path>/amr_metadata_summary.md").
@@ -272,11 +271,11 @@ generateSummary <- function(duckdb_path = NULL,
     )
   }
   if (has_mdr) {
-    n_mdr <- sum(genomes$n_classes >= 2, na.rm = TRUE)
+    n_mdr <- sum(genomes$n_classes >= 3, na.rm = TRUE)
     n_known <- sum(!is.na(genomes$n_classes))
     overview <- tibble::add_row(
       overview,
-      Metric = "Multidrug resistant isolates (2 or more classes)",
+      Metric = "Multidrug resistant isolates (3 or more classes)",
       Value = sprintf("%s (%s)", .fmtInt(n_mdr), .fmtPct(n_mdr / n_known)),
       .after = which(overview$Metric == "Isolates resistant to at least one antibiotic")
     )
@@ -888,11 +887,10 @@ generateSummary <- function(duckdb_path = NULL,
 #' @param duckdb_path Character or NULL. Which ORB to plot. If NULL (default),
 #'   completed ORBs are discovered from the dataset manifests and you are
 #'   prompted to choose when more than one exists (a path is required in
-#'   non-interactive sessions). May also be an ORB directory, an ORB/working
-#'   DuckDB path, or a cleaned metadata `.parquet` file.
+#'   non-interactive sessions). May also be an ORB directory or an ORB
+#'   DuckDB path.
 #' @param out_path Character or NULL. Output directory for plot files. Defaults
-#'   to the ORB folder (or the Parquet's directory when a `.parquet` file is
-#'   given).
+#'   to the ORB folder.
 #'
 #' @return Invisibly returns the path to the written PDF (all plots as
 #'   separate pages of one multi-page file).
@@ -1001,19 +999,18 @@ generatePlots <- function(duckdb_path = NULL,
 #   Pipeline hook       #
 #########################
 
-# Called by runDataProcessing() right after cleanMetaData(). Reads the cleaned
-# `metadata.parquet` directly (the ORB is not marked complete until the run
+# Called by runDataProcessing() right after cleanMetaData(). Points the reports
+# at the ORB folder directly (the ORB is not marked complete until the run
 # ends, so ORB discovery would not find it yet). The reports are a convenience,
 # so a failure is logged and warned about rather than aborting a long run.
 # Returns the paths of the files actually written (character(0) if none), so the
 # caller can record just those in the manifest and not a stale file left by an
 # earlier run.
 .writeMetadataReports <- function(orb_path, status = function(...) NULL) {
-  metadata_parquet <- file.path(orb_path, "metadata.parquet")
   report <- function(label, fn) {
     tryCatch(
       {
-        path <- suppressMessages(fn(metadata_parquet, out_path = orb_path))
+        path <- suppressMessages(fn(orb_path, out_path = orb_path))
         status("Wrote ", label, ".")
         normalizePath(path, mustWork = TRUE)
       },

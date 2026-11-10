@@ -10,12 +10,11 @@ generateSummary(duckdb_path = NULL, out_path = NULL)
 \item{duckdb_path}{Character or NULL. Which ORB to summarize. If NULL
 (default), completed ORBs are discovered from the dataset manifests and
 you are prompted to choose when more than one exists (a path is required
-in non-interactive sessions). May also be an ORB directory, an ORB/working
-DuckDB path, or a cleaned metadata \code{.parquet} file.}
+in non-interactive sessions). May also be an ORB directory or an ORB
+DuckDB path.}
 
 \item{out_path}{Character or NULL. Directory where the Markdown report is
-written. Defaults to the ORB folder (or the Parquet's directory when a
-\code{.parquet} file is given).}
+written. Defaults to the ORB folder.}
 }
 \value{
 Invisibly returns the path to the written Markdown summary report

@@ -2950,7 +2950,10 @@ cleanMetaData <- function(duckdb_path, path = NULL, evidence_mode = NULL) {
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+  # Only entries with a country code (short_name) are kept; any other raw entry
+  # fails the join below and gets NA for its country.
   clean_countries <- cleaned_bvbrc_countries |>
+    dplyr::filter(!is.na(.data$short_name)) |>
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 

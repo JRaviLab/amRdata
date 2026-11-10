@@ -3494,17 +3494,8 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 # ORB discovery reuses .amr_resolve_export_orb() (manifests in the
 # BiocFileCache, menu when several exist), and the table is read through the
 # ORB's own `metadata` view, as exportProcessedData() does. The default report
-# directory is the ORB folder itself. A `.parquet` path is still accepted and
-# read directly (reports then go next to it).
+# directory is the ORB folder itself.
 .readOrbMetadata <- function(path = NULL) {
-  if (!is.null(path) && grepl("\\.parquet$", path, ignore.case = TRUE)) {
-    path <- normalizePath(path, mustWork = TRUE)
-    return(list(
-      metadata = arrow::read_parquet(path),
-      out_path = dirname(path)
-    ))
-  }
-
   orb_db <- .amr_resolve_export_orb(path)
   con <- .amr_connect_dataset_db(orb_db, read_only = TRUE)
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)

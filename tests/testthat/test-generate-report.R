@@ -45,16 +45,19 @@ new_report_dir <- function() {
   dir
 }
 
-write_metadata_parquet <- function(df) {
-  path <- tempfile(fileext = ".parquet")
-  arrow::write_parquet(df, path)
-  path
+# A minimal ORB: a folder holding "<id>_parquet.duckdb" with a `metadata` table.
+make_test_orb <- function(df) {
+  orb <- file.path(new_report_dir(), "orb")
+  dir.create(orb)
+  con <- DBI::dbConnect(duckdb::duckdb(), file.path(orb, "test_parquet.duckdb"))
+  DBI::dbWriteTable(con, "metadata", as.data.frame(df))
+  DBI::dbDisconnect(con, shutdown = TRUE)
+  orb
 }
 
 test_that("generateSummary writes a readable Markdown report", {
-  skip_if_not_installed("arrow")
   md <- make_report_metadata()
-  pq <- write_metadata_parquet(md)
+  pq <- make_test_orb(md)
   out <- new_report_dir()
 
   path <- suppressMessages(generateSummary(pq, out_path = out))
@@ -76,9 +79,8 @@ test_that("generateSummary writes a readable Markdown report", {
 })
 
 test_that("generateSummary counts isolates, not genome x drug rows", {
-  skip_if_not_installed("arrow")
   md <- make_report_metadata(n_genomes = 25)
-  pq <- write_metadata_parquet(md)
+  pq <- make_test_orb(md)
   out <- new_report_dir()
   path <- suppressMessages(generateSummary(pq, out_path = out))
   txt <- readLines(path)
@@ -89,9 +91,8 @@ test_that("generateSummary counts isolates, not genome x drug rows", {
 })
 
 test_that("generateSummary flags percentages based on very few results", {
-  skip_if_not_installed("arrow")
   md <- make_report_metadata(n_genomes = 3)
-  pq <- write_metadata_parquet(md)
+  pq <- make_test_orb(md)
   out <- new_report_dir()
   path <- suppressMessages(generateSummary(pq, out_path = out))
   txt <- paste(readLines(path), collapse = "\n")
@@ -100,13 +101,12 @@ test_that("generateSummary flags percentages based on very few results", {
 })
 
 test_that("reports work with only the required columns and Intermediate calls", {
-  skip_if_not_installed("arrow")
   md <- tibble::tibble(
     genome.genome_id = c("1.1", "1.1", "1.2", "1.3"),
     genome_drug.antibiotic = c("ampicillin", "gentamicin", "ampicillin", "gentamicin"),
     genome_drug.resistant_phenotype = c("Resistant", "Susceptible", "Intermediate", "Susceptible")
   )
-  pq <- write_metadata_parquet(md)
+  pq <- make_test_orb(md)
   out <- new_report_dir()
 
   expect_no_error(suppressMessages(generateSummary(pq, out_path = out)))
@@ -121,9 +121,8 @@ test_that("reports work with only the required columns and Intermediate calls", 
 })
 
 test_that("generatePlots writes a multi-page PDF", {
-  skip_if_not_installed("arrow")
   md <- make_report_metadata()
-  pq <- write_metadata_parquet(md)
+  pq <- make_test_orb(md)
   out <- new_report_dir()
 
   pdf <- suppressMessages(generatePlots(pq, out_path = out))
@@ -166,22 +165,19 @@ test_that("year axis breaks stay inside the observed years", {
 })
 
 test_that("empty metadata is an error", {
-  skip_if_not_installed("arrow")
   empty <- tibble::tibble(
     genome.genome_id = character(),
     genome_drug.antibiotic = character(),
     genome_drug.resistant_phenotype = character()
   )
-  pq <- write_metadata_parquet(empty)
+  pq <- make_test_orb(empty)
   out <- new_report_dir()
   expect_error(generateSummary(pq, out_path = out), "empty")
   expect_error(generatePlots(pq, out_path = out), "empty")
 })
 
-test_that(".writeMetadataReports writes both files from the ORB's metadata.parquet", {
-  skip_if_not_installed("arrow")
-  orb <- new_report_dir()
-  arrow::write_parquet(make_report_metadata(), file.path(orb, "metadata.parquet"))
+test_that(".writeMetadataReports writes both files from the ORB's metadata", {
+  orb <- make_test_orb(make_report_metadata())
   logged <- character()
   status <- function(...) logged <<- c(logged, paste0(...))
 
@@ -194,7 +190,7 @@ test_that(".writeMetadataReports writes both files from the ORB's metadata.parqu
 })
 
 test_that(".writeMetadataReports warns instead of failing the pipeline", {
-  orb <- new_report_dir() # no metadata.parquet here
+  orb <- new_report_dir() # no ORB DuckDB here
   logged <- character()
   status <- function(...) logged <<- c(logged, paste0(...))
 
@@ -218,4 +214,18 @@ test_that(".reportFilesMessage lists the reports, and is NULL when there are non
   expect_match(msg, "Metadata reports written to the ORB", fixed = TRUE)
   expect_match(msg, "/orb/amr_metadata_summary.md", fixed = TRUE)
   expect_match(msg, "/orb/amRdata_exploratory_plots.pdf", fixed = TRUE)
+})
+
+test_that("the summary counts MDR as three or more classes", {
+  md <- make_report_metadata()
+  n_mdr <- sum(!duplicated(md$genome.genome_id) & md$num_resistant_classes >= 3)
+  path <- suppressMessages(generateSummary(make_test_orb(md), out_path = new_report_dir()))
+  txt <- paste(readLines(path), collapse = "\n")
+  expect_match(txt, sprintf("Multidrug resistant isolates \\(3 or more classes\\) \\|\\s+%d \\(", n_mdr))
+})
+
+test_that("reports default to the ORB folder", {
+  orb <- make_test_orb(make_report_metadata())
+  expect_message(path <- generateSummary(orb), "added to the ORB")
+  expect_equal(normalizePath(dirname(path)), normalizePath(orb))
 })
