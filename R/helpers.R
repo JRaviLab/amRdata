@@ -3488,8 +3488,8 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   )
 }
 
-# Read the cleaned `metadata` table of an ORB for generateSummary() and
-# generatePlots(), plus a default report directory.
+# Read the cleaned `metadata` table of an ORB for .generateSummary() and
+# .generatePlots(), plus a default report directory.
 #
 # ORB discovery reuses .amr_resolve_export_orb() (manifests in the
 # BiocFileCache, menu when several exist), and the table is read through the

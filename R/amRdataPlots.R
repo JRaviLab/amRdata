@@ -119,44 +119,37 @@
 
 
 #########################
-#    generateSummary    #
+#   .generateSummary    #
 #########################
 
-#' Generate a summary report for AMR metadata
-#'
-#' Writes a Markdown report that gives an at-a-glance overview of the cleaned
-#' metadata (isolates, results, antibiotics, multidrug resistance, collection
-#' years, geography, sources, hosts, laboratory methods, publications), data
-#' completeness, and per-antibiotic and per-class resistance tables. Results
-#' with fewer than 10 observations are flagged because their percentages are
-#' unreliable.
-#'
-#' Counts are reported in two units: *isolates* are unique genomes, and
-#' *results* are genome x antibiotic susceptibility calls. Per-class calls
-#' collapse a genome's drugs in that class (any resistant call makes the class
-#' resistant). Multidrug resistant (MDR) means resistant to three or more drug
-#' classes.
-#'
-#' @param duckdb_path Character or NULL. Which ORB to summarize. If NULL
-#'   (default), completed ORBs are discovered from the dataset manifests and
-#'   you are prompted to choose when more than one exists (a path is required
-#'   in non-interactive sessions). May also be an ORB directory or an ORB
-#'   DuckDB path.
-#' @param out_path Character or NULL. Directory where the Markdown report is
-#'   written. Defaults to the ORB folder.
-#'
-#' @return Invisibly returns the path to the written Markdown summary report
-#'   ("<out_path>/amr_metadata_summary.md").
-#'
-#' @examples
-#' \dontrun{
-#' generateSummary()  # pick from available ORBs
-#' generateSummary(duckdb_path = "data/Shigella_flexneri/orb")
-#' }
-#'
-#' @export
-generateSummary <- function(duckdb_path = NULL,
-                            out_path = NULL
+# Internal: called by writeMetadataReports().
+#
+# Writes a Markdown report that gives an at-a-glance overview of the cleaned
+# metadata (isolates, results, antibiotics, multidrug resistance, collection
+# years, geography, sources, hosts, laboratory methods, publications), data
+# completeness, and per-antibiotic and per-class resistance tables. Results
+# with fewer than 10 observations are flagged because their percentages are
+# unreliable.
+#
+# Counts are reported in two units: *isolates* are unique genomes, and
+# *results* are genome x antibiotic susceptibility calls. Per-class calls
+# collapse a genome's drugs in that class (any resistant call makes the class
+# resistant). Multidrug resistant (MDR) means resistant to three or more drug
+# classes.
+#
+# @param duckdb_path Character or NULL. Which ORB to summarize. If NULL
+#   (default), completed ORBs are discovered from the dataset manifests and
+#   you are prompted to choose when more than one exists (a path is required
+#   in non-interactive sessions). May also be an ORB directory or an ORB
+#   DuckDB path.
+# @param out_path Character or NULL. Directory where the Markdown report is
+#   written. Defaults to the ORB folder.
+#
+# @return Invisibly returns the path to the written Markdown summary report
+#   ("<out_path>/amr_metadata_summary.md").
+#
+.generateSummary <- function(duckdb_path = NULL,
+                             out_path = NULL
 ) {
   resolved <- .readOrbMetadata(duckdb_path)
   to_orb <- is.null(out_path)
@@ -489,7 +482,7 @@ generateSummary <- function(duckdb_path = NULL,
 
 
 #########################
-#     generatePlots     #
+#     .generatePlots    #
 #########################
 
 # Shared look for every report plot. ASCII-only text throughout so the PDF
@@ -868,41 +861,35 @@ generateSummary <- function(duckdb_path = NULL,
   }
 }
 
-#' Write all summary plots to file(s)
-#'
-#' Writes a landscape multi-page PDF of exploratory plots: resistance by
-#' antibiotic and by drug class (with sample sizes), resistance by antibiotic
-#' and collection year, results per year, isolates by country, by country and
-#' year, and by isolation source, multidrug resistance, the most common
-#' resistance profiles, and reference tables for antibiotic and class
-#' abbreviations. Isolate-level plots count unique genomes, not genome x
-#' antibiotic rows. A plot is skipped (with no error) when the data it needs
-#' is absent, e.g. no collection years.
-#'
-#' Expects the ORB `metadata` table to be the output of
-#' `cleanMetaData()` step (or an export of the resulting `metadata` table), since
-#' `drug_abbr`, `drug_class`, and `num_resistant_classes` are only populated
-#' after that step joins in the reference drug tables.
-#'
-#' @param duckdb_path Character or NULL. Which ORB to plot. If NULL (default),
-#'   completed ORBs are discovered from the dataset manifests and you are
-#'   prompted to choose when more than one exists (a path is required in
-#'   non-interactive sessions). May also be an ORB directory or an ORB
-#'   DuckDB path.
-#' @param out_path Character or NULL. Output directory for plot files. Defaults
-#'   to the ORB folder.
-#'
-#' @return Invisibly returns the path to the written PDF (all plots as
-#'   separate pages of one multi-page file).
-#'
-#' @examples
-#' \dontrun{
-#' generatePlots()  # pick from available ORBs
-#' generatePlots(duckdb_path = "data/Shigella_flexneri/orb")
-#' }
-#' @export
-generatePlots <- function(duckdb_path = NULL,
-                          out_path = NULL
+# Internal: called by writeMetadataReports().
+#
+# Writes a landscape multi-page PDF of exploratory plots: resistance by
+# antibiotic and by drug class (with sample sizes), resistance by antibiotic
+# and collection year, results per year, isolates by country, by country and
+# year, and by isolation source, multidrug resistance, the most common
+# resistance profiles, and reference tables for antibiotic and class
+# abbreviations. Isolate-level plots count unique genomes, not genome x
+# antibiotic rows. A plot is skipped (with no error) when the data it needs
+# is absent, e.g. no collection years.
+#
+# Expects the ORB `metadata` table to be the output of
+# `cleanMetaData()` step (or an export of the resulting `metadata` table), since
+# `drug_abbr`, `drug_class`, and `num_resistant_classes` are only populated
+# after that step joins in the reference drug tables.
+#
+# @param duckdb_path Character or NULL. Which ORB to plot. If NULL (default),
+#   completed ORBs are discovered from the dataset manifests and you are
+#   prompted to choose when more than one exists (a path is required in
+#   non-interactive sessions). May also be an ORB directory or an ORB
+#   DuckDB path.
+# @param out_path Character or NULL. Output directory for plot files. Defaults
+#   to the ORB folder.
+#
+# @return Invisibly returns the path to the written PDF (all plots as
+#   separate pages of one multi-page file).
+#
+.generatePlots <- function(duckdb_path = NULL,
+                           out_path = NULL
 ) {
   resolved <- .readOrbMetadata(duckdb_path)
   to_orb <- is.null(out_path)
@@ -999,18 +986,60 @@ generatePlots <- function(duckdb_path = NULL,
 #   Pipeline hook       #
 #########################
 
-# Called by runDataProcessing() right after cleanMetaData(). Points the reports
-# at the ORB folder directly (the ORB is not marked complete until the run
-# ends, so ORB discovery would not find it yet). The reports are a convenience,
-# so a failure is logged and warned about rather than aborting a long run.
-# Returns the paths of the files actually written (character(0) if none), so the
-# caller can record just those in the manifest and not a stale file left by an
-# earlier run.
-.writeMetadataReports <- function(orb_path, status = function(...) NULL) {
+#' Write the metadata summary and exploratory plots for an ORB
+#'
+#' Writes two reports of the cleaned `metadata` table of an ORB into the ORB
+#' folder: a Markdown summary (`amr_metadata_summary.md`) and a multi-page PDF of
+#' exploratory plots (`amRdata_exploratory_plots.pdf`).
+#'
+#' The summary gives an at-a-glance overview of the cleaned metadata (isolates,
+#' results, antibiotics, multidrug resistance, collection years, geography,
+#' sources, hosts, laboratory methods, publications), data completeness, and
+#' per-antibiotic and per-class resistance tables. Results with fewer than 10
+#' observations are flagged because their percentages are unreliable. The plots
+#' cover resistance by antibiotic and class, by collection year, isolates by
+#' country and source, multidrug resistance and the most common resistance
+#' profiles, plus reference tables of the antibiotic and class abbreviations.
+#'
+#' Counts are reported in two units: *isolates* are unique genomes, and
+#' *results* are genome x antibiotic susceptibility calls. Per-class calls
+#' collapse a genome's drugs in that class (any resistant call makes the class
+#' resistant). Multidrug resistant (MDR) means resistant to three or more drug
+#' classes.
+#'
+#' The reports are a convenience, so a report that cannot be written is warned
+#' about instead of stopping the call (or a long [runDataProcessing()] run). The
+#' metadata must be the output of [cleanMetaData()], since `drug_abbr`,
+#' `drug_class` and `num_resistant_classes` are only filled in by that step.
+#'
+#' @param duckdb_path Character or NULL. Which ORB to report on. If NULL
+#'   (default), completed ORBs are discovered from the dataset manifests and you
+#'   are prompted to choose when more than one exists (a path is required in
+#'   non-interactive sessions). May also be an ORB directory or an ORB DuckDB
+#'   path.
+#' @param out_path Character or NULL. Directory the reports are written to.
+#'   Defaults to the ORB folder.
+#' @param status A function called with progress messages. Defaults to
+#'   [message()]; [runDataProcessing()] passes its own logger.
+#'
+#' @return Invisibly returns the paths of the files actually written
+#'   (`character(0)` if none), so a caller can record just those and not a
+#'   stale file left by an earlier run.
+#'
+#' @examples
+#' \dontrun{
+#' writeMetadataReports()  # pick from available ORBs
+#' writeMetadataReports("data/Shigella_flexneri/orb")
+#' }
+#'
+#' @export
+writeMetadataReports <- function(duckdb_path = NULL,
+                                 out_path = NULL,
+                                 status = function(...) message(...)) {
   report <- function(label, fn) {
     tryCatch(
       {
-        path <- suppressMessages(fn(orb_path, out_path = orb_path))
+        path <- suppressMessages(fn(duckdb_path, out_path = out_path))
         status("Wrote ", label, ".")
         normalizePath(path, mustWork = TRUE)
       },
@@ -1025,8 +1054,8 @@ generatePlots <- function(duckdb_path = NULL,
     )
   }
   written <- c(
-    report("metadata summary report", generateSummary),
-    report("exploratory plots", generatePlots)
+    report("metadata summary report", .generateSummary),
+    report("exploratory plots", .generatePlots)
   )
   invisible(written[!is.na(written)])
 }

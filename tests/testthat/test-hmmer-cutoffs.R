@@ -321,3 +321,41 @@ test_that("HMMER job requests score-based reporting and saves high-E-value candi
   profiles <- list(Pfam = profile_row("PF1", ga = c(30, 30)))
   expect_equal(run_filter(list(Pfam = list(hits)), profiles)$Pfam$protein, "p1")
 })
+
+test_that("HMMER2duckdb() searches, then filters with the collected profiles", {
+  db <- tempfile(fileext = ".duckdb")
+  file.create(db)
+  out <- tempfile("hmmer-")
+  dir.create(out)
+  calls <- character()
+  filter_args <- NULL
+  testthat::local_mocked_bindings(
+    .runHMMER = function(..., databases) {
+      calls <<- c(calls, paste("search:", paste(databases, collapse = ",")))
+      list(databases = list(Pfam = list(profiles = "pfam.parquet")))
+    },
+    .defenseHMMER = function(...) {
+      calls <<- c(calls, "defense")
+      list(databases = list(DefenseFinder = list(profiles = "df.parquet")))
+    },
+    .filterHMMER = function(...) {
+      calls <<- c(calls, "filter")
+      filter_args <<- list(...)
+      c(Pfam = "protein_Pfam.parquet")
+    }
+  )
+
+  res <- HMMER2duckdb(
+    db, output_path = out, databases = c("Pfam", "DefenseCas"),
+    hmmer_db_dir = tempdir(), verbose = FALSE
+  )
+
+  expect_equal(calls, c("search: Pfam", "defense", "filter"))
+  expect_equal(filter_args$databases, c("Pfam", "DefenseCas"))
+  expect_equal(
+    unname(filter_args$profiles), c("pfam.parquet", "df.parquet")
+  )
+  expect_equal(names(filter_args$profiles), c("Pfam", "DefenseFinder"))
+  expect_equal(res$annotations, c(Pfam = "protein_Pfam.parquet"))
+  expect_named(res$databases, c("generic", "DefenseCas"))
+})

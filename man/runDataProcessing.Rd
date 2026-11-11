@@ -207,7 +207,7 @@ over the generated Parquet files.
 other provenance information in the dataset manifest.
 \item Writes a metadata summary report (\code{amr_metadata_summary.md}) and an
 exploratory plot PDF (\code{amRdata_exploratory_plots.pdf}) to the ORB, via
-\code{\link[=generateSummary]{generateSummary()}} and \code{\link[=generatePlots]{generatePlots()}}. A failure to write either only
+\code{\link[=writeMetadataReports]{writeMetadataReports()}}. A failure to write either only
 warns; it does not fail the run.
 \item Creates the protein-gene dyad feature map for downstream graph analysis.
 \item If \code{export_tabular_data = TRUE}, exports features in human-readable CSVs.
@@ -250,7 +250,7 @@ may have been altered or deleted since the failed run.
 \item \code{protein_cluster_seq} (representative sequences)\cr
 \item \code{protein_members}
 }
-\item \strong{HMMER} via the configured HMMER databases -> writes:
+\item \strong{HMMER} via \code{\link[=HMMER2duckdb]{HMMER2duckdb()}} -> writes:
 \itemize{
 \item \verb{protein_<database>} annotation tables\cr
 \item \verb{protein_<database>_count} genome-by-annotation count tables
@@ -281,5 +281,5 @@ runDataProcessing(
 }
 \seealso{
 \code{\link[=prepareGenomes]{prepareGenomes()}}, \code{\link[=runPanaroo2Duckdb]{runPanaroo2Duckdb()}}, \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}}, \code{\link[=cleanMetaData]{cleanMetaData()}},
-\code{\link[=cleanData]{cleanData()}}, \code{\link[=generateSummary]{generateSummary()}}, \code{\link[=generatePlots]{generatePlots()}}
+\code{\link[=cleanData]{cleanData()}}, \code{\link[=writeMetadataReports]{writeMetadataReports()}}
 }

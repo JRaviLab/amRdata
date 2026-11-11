@@ -55,12 +55,12 @@ make_test_orb <- function(df) {
   orb
 }
 
-test_that("generateSummary writes a readable Markdown report", {
+test_that(".generateSummary writes a readable Markdown report", {
   md <- make_report_metadata()
   pq <- make_test_orb(md)
   out <- new_report_dir()
 
-  path <- suppressMessages(generateSummary(pq, out_path = out))
+  path <- suppressMessages(.generateSummary(pq, out_path = out))
   expect_equal(basename(path), "amr_metadata_summary.md")
   txt <- paste(readLines(path), collapse = "\n")
 
@@ -78,11 +78,11 @@ test_that("generateSummary writes a readable Markdown report", {
   expect_match(txt, "pubmed.ncbi.nlm.nih.gov/222/", fixed = TRUE)
 })
 
-test_that("generateSummary counts isolates, not genome x drug rows", {
+test_that(".generateSummary counts isolates, not genome x drug rows", {
   md <- make_report_metadata(n_genomes = 25)
   pq <- make_test_orb(md)
   out <- new_report_dir()
-  path <- suppressMessages(generateSummary(pq, out_path = out))
+  path <- suppressMessages(.generateSummary(pq, out_path = out))
   txt <- readLines(path)
   isolates_row <- grep("Isolates (unique genomes)", txt, fixed = TRUE, value = TRUE)
   results_row <- grep("Susceptibility results", txt, fixed = TRUE, value = TRUE)
@@ -90,11 +90,11 @@ test_that("generateSummary counts isolates, not genome x drug rows", {
   expect_match(results_row, "\\|\\s*100\\|")
 })
 
-test_that("generateSummary flags percentages based on very few results", {
+test_that(".generateSummary flags percentages based on very few results", {
   md <- make_report_metadata(n_genomes = 3)
   pq <- make_test_orb(md)
   out <- new_report_dir()
-  path <- suppressMessages(generateSummary(pq, out_path = out))
+  path <- suppressMessages(.generateSummary(pq, out_path = out))
   txt <- paste(readLines(path), collapse = "\n")
   expect_match(txt, "%\\*")
   expect_match(txt, "Fewer than 10 results", fixed = TRUE)
@@ -109,23 +109,23 @@ test_that("reports work with only the required columns and Intermediate calls", 
   pq <- make_test_orb(md)
   out <- new_report_dir()
 
-  expect_no_error(suppressMessages(generateSummary(pq, out_path = out)))
+  expect_no_error(suppressMessages(.generateSummary(pq, out_path = out)))
   txt <- paste(readLines(file.path(out, "amr_metadata_summary.md")), collapse = "\n")
   expect_match(txt, "Intermediate", fixed = TRUE)
   expect_match(txt, "Not recorded", fixed = TRUE)
   # class/MDR sections need cleaned columns and are skipped, not errors
   expect_false(grepl("## Multidrug resistance", txt, fixed = TRUE))
 
-  pdf <- suppressMessages(generatePlots(pq, out_path = out))
+  pdf <- suppressMessages(.generatePlots(pq, out_path = out))
   expect_true(file.exists(pdf))
 })
 
-test_that("generatePlots writes a multi-page PDF", {
+test_that(".generatePlots writes a multi-page PDF", {
   md <- make_report_metadata()
   pq <- make_test_orb(md)
   out <- new_report_dir()
 
-  pdf <- suppressMessages(generatePlots(pq, out_path = out))
+  pdf <- suppressMessages(.generatePlots(pq, out_path = out))
   expect_equal(basename(pdf), "amRdata_exploratory_plots.pdf")
   expect_gt(file.size(pdf), 5000)
   pdf_lines <- readLines(pdf, warn = FALSE, encoding = "latin1")
@@ -172,16 +172,16 @@ test_that("empty metadata is an error", {
   )
   pq <- make_test_orb(empty)
   out <- new_report_dir()
-  expect_error(generateSummary(pq, out_path = out), "empty")
-  expect_error(generatePlots(pq, out_path = out), "empty")
+  expect_error(.generateSummary(pq, out_path = out), "empty")
+  expect_error(.generatePlots(pq, out_path = out), "empty")
 })
 
-test_that(".writeMetadataReports writes both files from the ORB's metadata", {
+test_that("writeMetadataReports writes both files from the ORB's metadata", {
   orb <- make_test_orb(make_report_metadata())
   logged <- character()
   status <- function(...) logged <<- c(logged, paste0(...))
 
-  res <- .writeMetadataReports(orb, status = status)
+  res <- writeMetadataReports(orb, status = status)
 
   # returns the paths written, for the manifest
   expect_equal(basename(res), c("amr_metadata_summary.md", "amRdata_exploratory_plots.pdf"))
@@ -189,14 +189,14 @@ test_that(".writeMetadataReports writes both files from the ORB's metadata", {
   expect_length(logged, 2)
 })
 
-test_that(".writeMetadataReports warns instead of failing the pipeline", {
+test_that("writeMetadataReports warns instead of failing the pipeline", {
   orb <- new_report_dir() # no ORB DuckDB here
   logged <- character()
   status <- function(...) logged <<- c(logged, paste0(...))
 
   warned <- character()
   res <- withCallingHandlers(
-    .writeMetadataReports(orb, status = status),
+    writeMetadataReports(orb, status = status),
     warning = function(w) {
       warned <<- c(warned, conditionMessage(w))
       invokeRestart("muffleWarning")
@@ -219,13 +219,19 @@ test_that(".reportFilesMessage lists the reports, and is NULL when there are non
 test_that("the summary counts MDR as three or more classes", {
   md <- make_report_metadata()
   n_mdr <- sum(!duplicated(md$genome.genome_id) & md$num_resistant_classes >= 3)
-  path <- suppressMessages(generateSummary(make_test_orb(md), out_path = new_report_dir()))
+  path <- suppressMessages(.generateSummary(make_test_orb(md), out_path = new_report_dir()))
   txt <- paste(readLines(path), collapse = "\n")
   expect_match(txt, sprintf("Multidrug resistant isolates \\(3 or more classes\\) \\|\\s+%d \\(", n_mdr))
 })
 
 test_that("reports default to the ORB folder", {
   orb <- make_test_orb(make_report_metadata())
-  expect_message(path <- generateSummary(orb), "added to the ORB")
+  expect_message(path <- .generateSummary(orb), "added to the ORB")
   expect_equal(normalizePath(dirname(path)), normalizePath(orb))
+})
+
+test_that("writeMetadataReports reports what it wrote when called directly", {
+  orb <- make_test_orb(make_report_metadata())
+  expect_message(res <- writeMetadataReports(orb), "Wrote metadata summary report")
+  expect_equal(basename(res), c("amr_metadata_summary.md", "amRdata_exploratory_plots.pdf"))
 })

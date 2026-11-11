@@ -13,8 +13,9 @@
 
 | Existing | Suggested | Script | Type |
 |---|---|---|---|
-| `generateSummary` | — | amRdataPlots.R | External |
-| `generatePlots` | — | amRdataPlots.R | External |
+| `generateSummary` | `.generateSummary` | amRdataPlots.R | Internal |
+| `generatePlots` | `.generatePlots` | amRdataPlots.R | Internal |
+| `.writeMetadataReports` | `writeMetadataReports` | amRdataPlots.R | External |
 | `.bvbrcApiReq` | `.sendBVBRCRequest` | bvbrc_api.R | Internal |
 | `.bvbrcEnc` | `.encodeBVBRCQuery` | bvbrc_api.R | Internal |
 | `.bvbrcApiFetch` | `.fetchBVBRCAPIData` | bvbrc_api.R | Internal |
@@ -82,6 +83,7 @@
 | `.runHMMER` | `.searchHMMERDatabases` | data_processing.R | Internal |
 | `.proteinAnnotations2Duckdb` | `.writeProteinAnnotations` | data_processing.R | Internal |
 | `.defenseHMMER` | `.searchDefenseCas` | data_processing.R | Internal |
+| `HMMER2duckdb` | `annotateProteins` | data_processing.R | External |
 | `cleanMetaData` | `cleanMetadata` | data_processing.R | External |
 | `cleanData` | `cleanGenomeData` | data_processing.R | External |
 | `runDataProcessing` | `processGenomeFeatures` | data_processing.R | External |
