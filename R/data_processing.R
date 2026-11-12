@@ -2923,6 +2923,146 @@ cas_hmm <- .amr_progress_step(
 }
 
 
+#' Annotate proteins with HMMER and write the results to DuckDB
+#'
+#' Runs the HMMER searches for the requested databases on the representative
+#' protein sequences of a dataset, applies the hit cutoffs, and writes one
+#' annotation table per database. This is the HMMER step of
+#' [runDataProcessing()], available on its own.
+#'
+#' Pfam, COG and AMRFinder are searched with the prepared reference databases;
+#' `DefenseCas` stands for the DefenseFinder and CasFinder model collections.
+#' Hits are kept when they pass the curated `GA`/`TC` cutoffs of the profile
+#' (or the fallback E-value and coverage when a profile has none); COG hits also
+#' need `cog_evalue` and keep the best hit per protein region. The unfiltered
+#' hits stay in `output_path`.
+#'
+#' Requires Docker. The `protein_cluster_seq` table must exist, so run
+#' [CDHIT2duckdb()] first.
+#'
+#' @param duckdb_path Character. Path to the per-bug DuckDB containing
+#'   `protein_cluster_seq`. The `protein_<database>` tables are written to it.
+#' @param output_path Character or `NULL`. Directory for the HMMER Parquet
+#'   outputs. If `NULL`, the dataset's HMMER folder is used.
+#' @param databases Character vector. HMMER databases to run.
+#'   Default: `c("Pfam", "COG", "AMRFinder", "DefenseCas")`.
+#' @param hmmer_db_dir Character or `NULL`. Directory holding the HMMER
+#'   databases. If `NULL`, the default amRdata HMMER cache is used.
+#' @param docker_image Character. Docker image containing HMMER.
+#'   Default: `"staphb/hmmer"`.
+#' @param threads Integer. Total CPU budget for HMMER. Default: `8`.
+#' @param num_of_splits Integer. Number of chunks the protein sequences are
+#'   divided into. Default: `8`.
+#' @param n_workers Integer. Maximum number of chunk jobs run in parallel.
+#'   Default: `8`.
+#' @param cog_evalue Numeric. E-value cutoff for COG hits. Default: `1e-4`.
+#' @param fallback_evalue Numeric. Maximum E-value for profiles without
+#'   curated cutoffs. Default: `1e-3`.
+#' @param fallback_coverage Numeric. Minimum profile coverage for profiles
+#'   without curated cutoffs. Default: `0.5`.
+#' @param verbose Logical. Print status messages. Default: `TRUE`.
+#' @param log_path Character or `NULL`. Optional path for logging.
+#' @param progress Logical. Show temporary progress. Default: `TRUE`.
+#'
+#' @return Invisibly returns a list with `annotations` (the annotation Parquet
+#'   file of each database) and `databases` (the prepared databases and profile
+#'   metadata of the generic and `DefenseCas` searches, recorded in the run
+#'   manifest by [runDataProcessing()]).
+#'
+#' @seealso [CDHIT2duckdb()], [runDataProcessing()]
+#'
+#' @examples
+#' \dontrun{
+#' HMMER2duckdb("data/Shigella_flexneri/work/Sfl.duckdb")
+#' }
+#'
+#' @export
+HMMER2duckdb <- function(duckdb_path,
+                         output_path = NULL,
+                         databases = c("Pfam", "COG", "AMRFinder", "DefenseCas"),
+                         hmmer_db_dir = NULL,
+                         docker_image = "staphb/hmmer",
+                         threads = 8L,
+                         num_of_splits = 8L,
+                         n_workers = 8L,
+                         cog_evalue = 1e-4,
+                         fallback_evalue = 1e-3,
+                         fallback_coverage = 0.5,
+                         verbose = TRUE,
+                         log_path = NULL,
+                         progress = TRUE) {
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  if (is.null(output_path)) {
+    output_path <- .amr_paths_from_duckdb(duckdb_path)$hmmer
+  }
+  if (is.null(hmmer_db_dir)) {
+    hmmer_db_dir <- .defaultHmmerDbDir()
+  }
+
+  generic_databases <- intersect(databases, c("Pfam", "COG", "AMRFinder"))
+
+  hmmer_result <- NULL
+  if (length(generic_databases)) {
+    hmmer_result <- .runHMMER(
+      duckdb_path = duckdb_path,
+      output_path = output_path,
+      threads = threads,
+      hmmer_db_dir = hmmer_db_dir,
+      databases = generic_databases,
+      docker_image = docker_image,
+      num_of_splits = num_of_splits,
+      n_workers = n_workers,
+      verbose = verbose,
+      log_path = log_path,
+      progress = progress
+    )
+  }
+
+  defense_result <- NULL
+  if ("DefenseCas" %in% databases) {
+    defense_result <- .defenseHMMER(
+      defense_db_dir = file.path(hmmer_db_dir, "DefenseCas"),
+      docker_image = docker_image,
+      duckdb_path = duckdb_path,
+      output_path = output_path,
+      threads = threads,
+      verbose = verbose,
+      log_path = log_path,
+      progress = progress
+    )
+  }
+
+  # Apply the hit cutoffs to the unfiltered hits and write the annotation tables
+  .amr_status("Filtering HMMER hits", verbose = verbose, log_path = log_path)
+
+  annotations <- .filterHMMER(
+    duckdb_path = duckdb_path,
+    output_path = output_path,
+    databases = databases,
+    profiles = unlist(
+      c(
+        purrr::map(hmmer_result$databases, "profiles"),
+        purrr::map(defense_result$databases, "profiles")
+      ),
+      use.names = TRUE
+    ),
+    cog_evalue = cog_evalue,
+    fallback_evalue = fallback_evalue,
+    fallback_coverage = fallback_coverage,
+    verbose = verbose,
+    log_path = log_path
+  )
+
+  invisible(list(
+    annotations = annotations,
+    databases = list(
+      generic = hmmer_result$databases,
+      DefenseCas = defense_result$databases
+    )
+  ))
+}
+
+
 #' Clean BV-BRC metadata, then save as Parquet files
 #'
 #' @param duckdb_path Path to the **per-selection DuckDB** produced by
@@ -2950,7 +3090,10 @@ cleanMetaData <- function(duckdb_path, path = NULL, evidence_mode = NULL) {
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+  # Only entries with a country code (short_name) are kept; any other raw entry
+  # fails the join below and gets NA for its country.
   clean_countries <- cleaned_bvbrc_countries |>
+    dplyr::filter(!is.na(.data$short_name)) |>
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
@@ -3407,7 +3550,7 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'       \item `protein_cluster_seq` (representative sequences)\cr
 #'       \item `protein_members`
 #'     }
-#'   \item **HMMER** via the configured HMMER databases -> writes:
+#'   \item **HMMER** via [HMMER2duckdb()] -> writes:
 #'     \itemize{
 #'       \item `protein_<database>` annotation tables\cr
 #'       \item `protein_<database>_count` genome-by-annotation count tables
@@ -3516,6 +3659,8 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'   \item `log_path` - path to a plain-text progress log, appended to as each
 #'     stage starts and finishes. Tail it (e.g. `tail -f <log_path>`) to watch
 #'     progress without parsing the full JSON provenance manifest.
+#'   \item `report_files` - paths of the metadata summary report and exploratory
+#'     plots written to the ORB (empty if they could not be written)
 #' }
 #'
 #' @details
@@ -3542,6 +3687,10 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'   over the generated Parquet files.
 #' * Records processing parameters, software versions, database selections, and
 #'   other provenance information in the dataset manifest.
+#' * Writes a metadata summary report (`amr_metadata_summary.md`) and an
+#'   exploratory plot PDF (`amRdata_exploratory_plots.pdf`) to the ORB, via
+#'   [writeMetadataReports()]. A failure to write either only
+#'   warns; it does not fail the run.
 #' * Creates the protein-gene dyad feature map for downstream graph analysis.
 #' * If `export_tabular_data = TRUE`, exports features in human-readable CSVs.
 #'   Additional export options are available by calling `exportProcessedData()`
@@ -3563,7 +3712,7 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'
 #' @seealso
 #' [prepareGenomes()], [runPanaroo2Duckdb()], [CDHIT2duckdb()], [cleanMetaData()],
-#' [cleanData()]
+#' [cleanData()], [writeMetadataReports()]
 #'
 #' @examples
 #' \dontrun{
@@ -3930,9 +4079,6 @@ runDataProcessing <- function(
   }
 
   # 3) HMMER -> write HMM-based match tables for desired databases
-  hmmer_result <- NULL
-  defense_result <- NULL
-
   if (resume_completed[["hmmer"]]) {
     status("Skipping HMMER (resume): reusing output from the previous run.")
 
@@ -3955,62 +4101,21 @@ runDataProcessing <- function(
       )
     )
 
-    generic_databases <- intersect(
-      hmmer_databases,
-      c("Pfam", "COG", "AMRFinder")
-    )
-
-    if (length(generic_databases)) {
-      hmmer_result <- .runHMMER(
-        duckdb_path = duckdb_path,
-        output_path = paths$hmmer,
-        threads = threads,
-        hmmer_db_dir = hmmer_db_dir,
-        databases = generic_databases,
-        docker_image = hmmer_docker_image,
-        num_of_splits = hmmer_num_splits,
-        n_workers = hmmer_workers,
-        verbose = verbose,
-        log_path = log_path,
-        progress = progress
-      )
-    }
-
-    if ("DefenseCas" %in% hmmer_databases) {
-  defense_result <- .defenseHMMER(
-    defense_db_dir = file.path(
-      hmmer_db_dir,
-      "DefenseCas"
-    ),
-    docker_image = hmmer_docker_image,
-    duckdb_path = duckdb_path,
-    output_path = paths$hmmer,
-    threads = threads,
-    verbose = verbose,
-    log_path = log_path,
-    progress = progress
-  )
-}
-
-    # Apply the hit cutoffs to the unfiltered hits and write the annotation tables
-    status("Filtering HMMER hits")
-
-    .filterHMMER(
+    hmmer_result <- HMMER2duckdb(
       duckdb_path = duckdb_path,
       output_path = paths$hmmer,
       databases = hmmer_databases,
-      profiles = unlist(
-        c(
-          purrr::map(hmmer_result$databases, "profiles"),
-          purrr::map(defense_result$databases, "profiles")
-        ),
-        use.names = TRUE
-      ),
+      hmmer_db_dir = hmmer_db_dir,
+      docker_image = hmmer_docker_image,
+      threads = threads,
+      num_of_splits = hmmer_num_splits,
+      n_workers = hmmer_workers,
       cog_evalue = cog_evalue,
       fallback_evalue = hmmer_fallback_evalue,
       fallback_coverage = hmmer_fallback_coverage,
       verbose = verbose,
-      log_path = log_path
+      log_path = log_path,
+      progress = progress
     )
   }
 
@@ -4081,8 +4186,8 @@ runDataProcessing <- function(
           hmmer_databases
         ),
         database_provenance = list(
-          generic = if (!is.null(hmmer_result)) hmmer_result$databases else NULL,
-          DefenseCas = if (!is.null(defense_result)) defense_result$databases else NULL
+          generic = hmmer_result$databases$generic,
+          DefenseCas = hmmer_result$databases$DefenseCas
         )
       ),
       tool = list(
@@ -4100,6 +4205,9 @@ runDataProcessing <- function(
         path = paths$orb,
         evidence_mode = evidence_mode
       )
+
+      # Markdown summary + exploratory plot PDF of the cleaned metadata
+      report_files <- writeMetadataReports(paths$orb, status = status)
 
       cleanData(
         duckdb_path = duckdb_path,
@@ -4309,8 +4417,13 @@ runDataProcessing <- function(
       )
     ),
     inputs = duckdb_path,
-    outputs = c(parquet_files, parquet_duckdb_path),
-    metrics = list(parquet_duckdb = parquet_duckdb_path, parquet_files = parquet_files)
+    # Reports are non-essential, so only the ones written by this run are listed
+    outputs = c(parquet_files, report_files, parquet_duckdb_path),
+    metrics = list(
+      parquet_duckdb = parquet_duckdb_path,
+      parquet_files = parquet_files,
+      report_files = as.list(report_files)
+    )
   )
 
   # Labeling that this run is ready for amRml in the next package
@@ -4343,6 +4456,13 @@ runDataProcessing <- function(
 
   status("Features ready.")
   message("Data processing complete.")
+  # Shown unconditionally (not just when verbose) so users know the reports
+  # exist; status() already prints it when verbose, so only add it otherwise.
+  report_msg <- .reportFilesMessage(report_files)
+  if (!is.null(report_msg)) {
+    if (!isTRUE(verbose)) message(report_msg)
+    status(report_msg)
+  }
 
   run_failed <- FALSE
 
@@ -4351,7 +4471,8 @@ runDataProcessing <- function(
       duckdb_path = duckdb_path,
       panaroo_output = pan_dir,
       parquet_duckdb_path = normalizePath(parquet_duckdb_path),
-      log_path = log_path
+      log_path = log_path,
+      report_files = report_files
     )
   )
 }

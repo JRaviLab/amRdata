@@ -3244,7 +3244,8 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
     if (!nrow(resources)) {
       stop(
-        "No completed amRdata ORBs were found.",
+        "No completed amRdata ORBs were found. ",
+        "If you expected one, run runDataProcessing() to complete your ORB.",
         call. = FALSE
       )
     }
@@ -3360,7 +3361,8 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 
     if (!nrow(candidates)) {
       stop(
-        "No completed amRdata ORBs were found.",
+        "No completed amRdata ORBs were found. ",
+        "If you expected one, run runDataProcessing() to complete your ORB.",
         call. = FALSE
       )
     }
@@ -3392,12 +3394,18 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
       candidates$label,
       " [",
       candidates$dataset_id,
-      "]"
+      "] - ",
+      format(candidates$modified, "%Y-%m-%d %H:%M"),
+      " - ",
+      dirname(candidates$orb_path)
     )
 
     selection <- utils::menu(
       choices = choices,
-      title = "Select an amRdata dataset to export:"
+      title = paste0(
+        "Select an amRdata dataset (ORB).\n",
+        "Not listed? Run runDataProcessing() to complete your ORB."
+      )
     )
 
     if (selection == 0L) {
@@ -3477,6 +3485,28 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     "No completed ORB could be resolved from: ",
     path,
     call. = FALSE
+  )
+}
+
+# Read the cleaned `metadata` table of an ORB for .generateSummary() and
+# .generatePlots(), plus a default report directory.
+#
+# ORB discovery reuses .amr_resolve_export_orb() (manifests in the
+# BiocFileCache, menu when several exist), and the table is read through the
+# ORB's own `metadata` view, as exportProcessedData() does. The default report
+# directory is the ORB folder itself.
+.readOrbMetadata <- function(path = NULL) {
+  orb_db <- .amr_resolve_export_orb(path)
+  con <- .amr_connect_dataset_db(orb_db, read_only = TRUE)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  if (!DBI::dbExistsTable(con, "metadata")) {
+    stop("No `metadata` table found in the ORB: ", orb_db, call. = FALSE)
+  }
+
+  list(
+    metadata = tibble::as_tibble(DBI::dbReadTable(con, "metadata")),
+    out_path = dirname(orb_db)
   )
 }
 
