@@ -5,8 +5,8 @@
 \title{Run Panaroo for Pangenome Analysis in Parallel Batches}
 \usage{
 .runPanaroo(
-  duckdb_path = "data/{Bug}/{Bug}.duckdb",
-  output_path = "data/{Bug}/",
+  duckdb_path,
+  output_path = NULL,
   core_threshold = 0.9,
   len_dif_percent = 0.95,
   cluster_threshold = 0.95,
@@ -17,7 +17,8 @@
   strip_pseudogenes = FALSE,
   pseudogene_clean_dir = "gff_clean",
   write_pseudogene_audit = TRUE,
-  verbose = TRUE
+  verbose = TRUE,
+  log_path = NULL
 )
 }
 \arguments{

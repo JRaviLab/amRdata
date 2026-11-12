@@ -4,15 +4,21 @@
 \alias{.parse_hmmer_profiles}
 \title{Parsing HMM database to extract profile names, accessions and descriptions}
 \usage{
-.parse_hmmer_profiles(hmm_file)
+.parse_hmmer_profiles(hmm_file, chunk_lines = 100000L)
 }
 \arguments{
-\item{hmm_file}{path to the HMM database file (\code{.hmm})}
+\item{hmm_file}{Path to the HMM database file (\code{.hmm}).}
+
+\item{chunk_lines}{Number of lines to read per chunk.}
 }
 \value{
-a tibble
+A tibble with one row per HMM profile. \code{ga_seq}/\code{ga_dom},
+\code{tc_seq}/\code{tc_dom} and \code{nc_seq}/\code{nc_dom} are the per-sequence and per-domain
+bit score cutoffs, \code{NA} when the profile does not define them.
 }
 \description{
-Parsing HMM database to extract profile names, accessions and descriptions
+Streams through an HMM database in bounded line chunks and retains only the
+\code{NAME}, \code{ACC}, \code{DESC}, and score cutoff (\code{GA}, \code{TC}, \code{NC}) fields needed
+during annotation finalization.
 }
 \keyword{internal}

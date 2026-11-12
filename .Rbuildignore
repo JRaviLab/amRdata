@@ -11,3 +11,6 @@
 ^doc$
 ^dev$
 ^docs$
+^data/.+/
+^data/.*\.(pdf|md)$
+^data/\.DS_Store$

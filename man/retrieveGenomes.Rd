@@ -14,9 +14,10 @@ retrieveGenomes(
   ftp_workers = 8L,
   cli_fasta_workers = 8L,
   cli_gff_workers = 8L,
-  chunk_size = 50L,
+  chunk_size = 10L,
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
-  verbose = TRUE
+  verbose = TRUE,
+  progress = TRUE
 )
 }
 \arguments{
@@ -38,12 +39,16 @@ retrieveGenomes(
 
 \item{cli_gff_workers}{Parallel chunk containers for GFF export (default 8).}
 
-\item{chunk_size}{Genomes per chunk container (default 50).}
+\item{chunk_size}{Genomes per chunk container (default 10).}
 
 \item{evidence_mode}{Character. Which AMR evidence is acceptable when building
 the download set: \code{"lab_only"} (default), \code{"lab_or_comp"}, \code{"comp_only"}, or \code{"any"}.}
 
-\item{verbose}{Verbose messages.}
+\item{verbose}{Logical. Print persistent status messages during genome
+retrieval. Default: \code{TRUE}.}
+
+\item{progress}{Logical. Show temporary progress for parallel genome or
+chunk retrieval. Default: \code{TRUE}.}
 }
 \value{
 Character vector of genome IDs with complete file sets on disk.

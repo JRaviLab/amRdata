@@ -95,6 +95,27 @@
 }
 
 # --- AMR phenotype (genome_amr) -> genome_drug.* ------------------------------
+#' Extract AMR phenotype table via the BV-BRC Data API
+#'
+#' Queries the BV-BRC `genome_amr` collection for the given genomes (in
+#' chunks, optionally in parallel) and returns the result in the same
+#' `genome_drug.*` column layout produced by the Docker/p3 parser, so both
+#' extraction paths are interchangeable.
+#'
+#' @param genome_ids Character vector of BV-BRC genome IDs.
+#' @param abx Character vector of antibiotic names to keep, or `"All"`
+#'   (default) for no antibiotic filter.
+#' @param chunk_size Integer. Number of genome IDs per API request; keeps
+#'   `in(...)` URLs within length limits.
+#' @param num_workers Integer. Number of parallel workers used to fetch chunks.
+#' @param verbose Logical. If `TRUE`, print progress messages.
+#'
+#' @returns A tibble with one row per genome-antibiotic record and
+#'   character columns prefixed `genome_drug.` (e.g. `genome_drug.genome_id`,
+#'   `genome_drug.antibiotic`, `genome_drug.resistant_phenotype`). Missing
+#'   values are encoded as `""`, and `genome_drug.source` is always empty.
+#'
+#' @keywords internal
 .extractAMRtableApi <- function(genome_ids, abx = "All",
                                 chunk_size = 500L, num_workers = 8L,
                                 verbose = TRUE) {
@@ -154,9 +175,9 @@
 # to Good-quality WGS/Complete genome IDs, and write the `bac_data` table (used by
 # retrieveMetadata()'s summary). Uses the Data API instead of the Docker-built
 # cache, so retrieveMetadata(metadata_method = "api") needs no Docker.
-.resolveGenomeIDsApi <- function(base_dir = ".", user_bacs,
-                                 overwrite = FALSE, num_workers = 8L,
-                                 verbose = TRUE) {
+.resolveGenomeIDsApi <- function(base_dir = ".", user_bacs, 
+                                 num_workers = 8L, verbose = TRUE,
+                                 write_bac_data = TRUE) {
   sel <- "genome_name,taxon_id,species,strain"
   parts <- .bvbrcFutureMap(
     user_bacs,
@@ -209,18 +230,18 @@
   df <- df[grepl("^[0-9]+[.][0-9]+$", df$genome_id), , drop = FALSE]
   df <- df[!duplicated(df$genome_id), , drop = FALSE]
 
-  # write bac_data (genome.* columns), mirroring .retrieveQueryIDs()
-  paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
-  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-  bac <- .bvbrcPrefixFill(
-    df,
-    c("genome_id", "genome_name", "taxon_id", "species", "strain"),
-    "genome"
-  )
-  DBI::dbWriteTable(con, "bac_data", as.data.frame(bac), overwrite = TRUE)
-  if (isTRUE(verbose)) {
-    message("  [api] resolved ", nrow(df), " genome IDs; wrote bac_data")
+  if (isTRUE(write_bac_data)) {
+    paths <- .buildDBpath(base_dir = base_dir, user_bacs = user_bacs)
+    con <- DBI::dbConnect(duckdb::duckdb(), dbdir = paths$db_path)
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+    bac <- .bvbrcPrefixFill(df,
+      c("genome_id", "genome_name", "taxon_id", "species", "strain"),
+        "genome"
+      )
+    DBI::dbWriteTable(con, "bac_data", as.data.frame(bac), overwrite = TRUE)
+    if (isTRUE(verbose)) {
+      message("  [api] resolved ", nrow(df), " genome IDs; wrote bac_data")
+    }
   }
   unique(df$genome_id)
 }

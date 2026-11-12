@@ -15,12 +15,14 @@
 \arguments{
 \item{evidence_mode}{Character. One of:
 "lab_only"   (default) -> only laboratory evidence
-"lab_or_comp"          -> laboratory OR computational evidence
+"lab_or_comp"          -> laboratory OR computational evidence; if the
+evidence column is NA/blank, a laboratory typing
+method or computational method must be present
 "comp_only"            -> only computational evidence
 "any"                  -> no AMR required (from genome_data; Good only)}
 }
 \value{
-A list with a DuckDB connection and table_name = "filtered"
+A path to a DuckDB database and table_name = "filtered"
 }
 \description{
 Preferred path: use per-selection DB "metadata" table (from retrieveMetadata()) and

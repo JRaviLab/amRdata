@@ -10,7 +10,8 @@
   len_dif_percent = 0.95,
   cluster_threshold = 0.95,
   family_seq_identity = 0.5,
-  threads = 8
+  threads = 8,
+  log_path = NULL
 )
 }
 \arguments{
@@ -27,7 +28,7 @@
 \item{threads}{Integer. Number of threads for Panaroo and parallel execution. Default \code{8}.}
 }
 \value{
-A a single combined pangenome.
+A single combined pangenome.
 }
 \description{
 Finds batch output directories under \code{input_path} that contain \code{final_graph.gml},

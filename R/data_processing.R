@@ -1,36 +1,33 @@
 #' @importFrom data.table :=
 NULL
 
-#' Clear cached HMMER databases
+#' Remove locally cached databases
 #'
-#' Removes user-specified HMMER databases from the shared amRdata BFC registry
-#' and deletes their local databases. Databases will be downloaded and prepared
-#' again the next time they are requested. This can help resolve corrupt database
-#' issues that may arise from time to time, especially on certain environments
-#' with unstable network connections.
+#' Removes locally cached databases used by amRdata. HMMER databases are removed
+#' from the shared amRdata BiocFileCache registry and their local database
+#' directories are deleted. If BV-BRC CLI metadata DuckDB is created, it
+#' can also be removed through this mechanism.
 #'
-#' If specific `databases` are not supplied in an interactive R session, a menu
-#' allows the user to select a specific database, or remove all databases.
+#' Removed databases are downloaded or rebuilt automatically the next time they
+#' are requested.
 #'
-#' @param databases Character vector of HMMER databases to remove.
-#'   Supported values are `"Pfam"`, `"COG"`, `"AMRFinder"`, and `"DefenseCas"`.
+#' If `databases` is not supplied in an interactive R session, a menu allows the
+#' user to select a specific database or remove all supported databases.
+#'
+#' @param databases Character vector of databases to remove. Supported values are
+#'   `"Pfam"`, `"COG"`, `"AMRFinder"`, `"DefenseCas"`, and `"BV-BRC"`.
+#'   `"BV-BRC"` refers to the shared BV-BRC CLI metadata cache used to speed up
+#'   subsequent metadata searches. The BV-BRC API does not use this cache.
 #'   If `NULL` in an interactive session, the user is prompted to choose.
 #' @param verbose Logical. Print information about removed databases.
 #'   Default: `TRUE`.
 #'
-#' @return Invisibly returns the names of databases removed.
+#' @return Invisibly returns the names of databases requested for removal.
 #'
 #' @export
-clearHMMERdatabases <- function(
-    databases = NULL,
-    verbose = TRUE
-) {
-  supported <- c(
-    "Pfam",
-    "COG",
-    "AMRFinder",
-    "DefenseCas"
-  )
+removeLocalDatabases <- function(databases = NULL,
+                                 verbose = TRUE) {
+  supported <- c("Pfam", "COG", "AMRFinder", "DefenseCas", "BV-BRC")
 
   # Interactive selection if no database supplied
   if (is.null(databases)) {
@@ -41,15 +38,15 @@ clearHMMERdatabases <- function(
       )
     }
 
+
     selection <- utils::menu(
       choices = c(supported, "All"),
-      title = "Which HMMER database would you like to remove?"
+      title = "Which local database would you like to remove?"
     )
-
     # utils::menu() returns a 0 value when cancelled. Reassure user that
     # no damage was done to their precious databases
     if (selection == 0L) {
-      if (isTRUE(verbose)) message("No HMMER databases removed.")
+      if (isTRUE(verbose)) message("No local databases removed.")
 
       return(invisible(character(0)))
     }
@@ -65,7 +62,7 @@ clearHMMERdatabases <- function(
   databases <- unique(as.character(databases))
 
   if (!length(databases)) {
-    stop("At least one HMMER database must be specified.", call. = FALSE)
+    stop("At least one database must be specified.", call. = FALSE)
   }
 
   # For when you either have a typo or forget what databases there are
@@ -73,7 +70,7 @@ clearHMMERdatabases <- function(
 
   if (length(unknown)) {
     stop(
-      "Unknown HMMER database(s): ",
+      "Unknown database(s): ",
       paste(unknown, collapse = ", "),
       ". Supported databases are: ",
       paste(supported, collapse = ", "),
@@ -88,10 +85,26 @@ clearHMMERdatabases <- function(
   hmmer_dir <- .defaultHmmerDbDir()
 
   for (db in databases) {
+    # Chunky BV-BRC CLI metadata cache
+    if (identical(db, "BV-BRC")) {
+      removed <- .amr_bfc_remove_bvbrc()
+
+      if (isTRUE(verbose)) {
+        if (isTRUE(removed$registered)) {
+          message("Removed BV-BRC CLI metadata database.")
+        } else {
+          message("BV-BRC CLI metadata database was not present.")
+        }
+      }
+
+      next
+    }
+
+    # HMMER database resources
     prefix <- .amr_bfc_hmmer_rname(db)
 
-    # Match the database itself and any registered components
-    hits <- resources[resources$rname == prefix | startsWith(resources$rname, paste0(prefix, "_")),, drop = FALSE]
+    hits <- resources[resources$rname == prefix |
+                        startsWith(resources$rname, paste0(prefix, "_")), , drop = FALSE]
 
     if (nrow(hits)) {
       BiocFileCache::bfcremove(bfc, hits$rid)
@@ -105,20 +118,28 @@ clearHMMERdatabases <- function(
       unlink(db_dir, recursive = TRUE, force = TRUE)
     }
 
-    if (isTRUE(verbose)) message("Cleared HMMER database: ", db)
+    if (isTRUE(verbose)) message("Removed HMMER database: ", db)
   }
 
   invisible(databases)
 }
 
-# Launch Panaroo to build a pangenome (per batch)
-#' processPanaroo()
+#' Run one Panaroo pangenome job
+#'
+#' Runs Panaroo inside Docker for one batch of prepared genome GFF/FASTA inputs.
+#' Host paths are translated to container-visible paths and Panaroo output is
+#' written to a uniquely named directory under `output_path`.
+#'
+#' Panaroo is run with strict cleaning, paralog merging, and invalid-gene
+#' removal. Refinding behavior is controlled by `refind_mode`.
 #'
 #' See Panaroo's documentation for details on how the parameters affect your
 #' pangenome output: https://gthlab.au/panaroo/#/gettingstarted/params
 #'
 #' @param batch_input A series of genome IDs for input
 #' @param output_path Character scalar. Base directory for Panaroo outputs and temporary files.
+#' @param mount_root Character. Host dataset directory mounted into the Docker
+#'   container.
 #' @param core_threshold Numeric. Core genome threshold for Panaroo (`--core_threshold`). Default `0.90`.
 #' @param len_dif_percent Numeric. Length difference percentage (`--len_dif_percent`). Default `0.95`.
 #' @param cluster_threshold Numeric. Sequence identity threshold (`--threshold`). Default `0.95`.
@@ -133,6 +154,8 @@ clearHMMERdatabases <- function(
 #'   Default `"off"` for now, to avoid that runtime risk; plan to move this back to
 #'   `"default"` once a QC step upstream (e.g. in `.apply_metadata_qc()`) can screen
 #'   out affected genomes before they reach Panaroo.
+#' @param log_path Character or `NULL`. Optional path for Panaroo command output
+#'   logging.
 #'
 #' @returns A list of results for each Panaroo batch in its output directory.
 #'
@@ -140,24 +163,24 @@ clearHMMERdatabases <- function(
 #' @examples NULL
 .processPanaroo <- function(batch_input,
                             output_path,
+                            mount_root,
                             core_threshold,
                             len_dif_percent,
                             cluster_threshold,
                             family_seq_identity,
                             panaroo_threads_per_job,
                             refind_mode = c("off", "default", "strict"),
-                            verbose = TRUE) {
+                            log_path = NULL) {
   refind_mode <- match.arg(refind_mode)
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
   output_path <- .docker_path(output_path)
+  mount_root <- .docker_path(mount_root)
 
   # Fail fast if Docker is missing
   if (!nzchar(Sys.which("docker"))) {
     stop("Docker is not available on your PATH but is required to run Panaroo.")
   }
 
-  # Host mount root = bug directory
-  mount_host <- output_path
   mount_cont <- "/work"
 
   # Write the genome list file (convert each "gff fna" to container-visible paths)
@@ -165,7 +188,7 @@ clearHMMERdatabases <- function(
 
   batch_input_cont <- purrr::map_chr(unlist(batch_input), function(line) {
     parts <- strsplit(line, " +")[[1]]
-    parts_cont <- .to_container(parts, host_root = mount_host, container_root = mount_cont)
+    parts_cont <- .to_container(parts, host_root = mount_root, container_root = mount_cont)
     paste(parts_cont, collapse = " ")
   })
 
@@ -179,15 +202,15 @@ clearHMMERdatabases <- function(
   dir.create(output_dir_host, recursive = TRUE, showWarnings = FALSE)
 
   # Convert to container-visible paths
-  genome_filepath_cont <- .to_container(genome_filepath_host, host_root = mount_host, container_root = mount_cont)
-  output_dir_cont <- .to_container(output_dir_host, host_root = mount_host, container_root = mount_cont)
+  genome_filepath_cont <- .to_container(genome_filepath_host, host_root = mount_root, container_root = mount_cont)
+  output_dir_cont <- .to_container(output_dir_host, host_root = mount_root, container_root = mount_cont)
 
   # Run Panaroo in Docker
   cmd_args <- c(
     "run",
     "--platform", "linux/amd64",
     "--rm",
-    "-v", paste0(mount_host, ":", mount_cont),
+    "-v", paste0(mount_root, ":", mount_cont),
     "-w", mount_cont,
     "staphb/panaroo:1.7.0",
     "panaroo",
@@ -205,20 +228,45 @@ clearHMMERdatabases <- function(
   )
 
   # Updating to try controlling Panaroo's print verbosity
-  res <- system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
-  status <- attr(res, "status")
+  res <- suppressWarnings(
+  system2(
+    "docker",
+    args = cmd_args,
+    stdout = TRUE,
+    stderr = TRUE
+  )
+)
 
-  if (!is.null(status) && status != 0L) {
-    stop(sprintf("Panaroo failed with exit status %s:\n%s", status, paste(res, collapse = "\n")))
-  }
+status <- attr(
+  res,
+  "status"
+)
 
-  if(isTRUE(verbose)) {
-    message("Panaroo output: \n", paste(res, collapse = "\n"))
-  }
+.log_tool_output(
+  log_path,
+  paste0(
+    "Panaroo: ",
+    basename(output_dir_host)
+  ),
+  res
+)
 
-  if (inherits(res, "error")) {
-    stop(sprintf("Docker/Panaroo failed to launch: %s", res$message))
-  }
+if (!is.null(status) && status != 0L) {
+  stop(
+    "Panaroo failed with exit status ",
+    status,
+    ":\n",
+    paste(
+      utils::tail(
+        res,
+        40L
+      ),
+      collapse = "\n"
+    ),
+    "\n\nFull Panaroo output was written to the processing log.",
+    call. = FALSE
+  )
+}
 
   invisible(res)
 }
@@ -254,8 +302,8 @@ clearHMMERdatabases <- function(
 #' - Temporary genome file lists are created in `output_path`.
 #' - Output directories are named `panaroo_out_<timestamp>` under `output_path`.
 #'
-.runPanaroo <- function(duckdb_path = "data/{Bug}/{Bug}.duckdb",
-                        output_path = "data/{Bug}/",
+.runPanaroo <- function(duckdb_path,
+                        output_path = NULL,
                         core_threshold = 0.90,
                         len_dif_percent = 0.95,
                         cluster_threshold = 0.95,
@@ -266,16 +314,19 @@ clearHMMERdatabases <- function(
                         strip_pseudogenes = FALSE,
                         pseudogene_clean_dir = "gff_clean",
                         write_pseudogene_audit = TRUE,
-                        verbose = TRUE) {
+                        verbose = TRUE,
+                        log_path = NULL) {
   refind_mode <- match.arg(refind_mode)
   threads <- .resolve_workers(requested = threads)
-  duckdb_path <- normalizePath(duckdb_path)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  paths <- .amr_paths_from_duckdb(duckdb_path)
 
-  if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
-    output_path <- dirname(duckdb_path)
+  if (is.null(output_path)) {
+    output_path <- paths$panaroo
   }
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
-  output_path <- normalizePath(output_path)
+
+  output_path <- normalizePath(output_path, mustWork = TRUE)
 
   # Avoiding keeping DuckDB connections live when playing with futures
   genome_query_output <- local({con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
@@ -305,15 +356,17 @@ clearHMMERdatabases <- function(
       readr::write_csv(cleaned$audit, file.path(output_path, "panaroo_pseudogene_audit.csv"))
     }
 
-    if (isTRUE(verbose)) {
-      audit <- cleaned$audit
-      message(sprintf(
+    audit <- cleaned$audit
+
+    .log_or_message(
+      log_path,
+      verbose,
+      sprintf(
         "Pseudogene audit: %d genomes, %d removed pseudogenes, %d features remain.",
         nrow(audit),
         sum(audit$n_pseudogene, na.rm = TRUE),
         sum(audit$n_kept, na.rm = TRUE)
       ))
-    }
   }
 
   split_files <- strsplit(panaroo_input_files, " ")
@@ -328,6 +381,18 @@ clearHMMERdatabases <- function(
   })
 
   filtered_panaroo_input <- purrr::map_chr(split_files[valid_entries], paste, collapse = " ")
+
+  # Audit independently of pseudogene removal pre-batching
+  cleaned <- .removeAllXCDSGFFs(filtered_panaroo_input, output_path)
+  filtered_panaroo_input <- cleaned$panaroo_input_files
+  readr::write_csv(
+    cleaned$audit, file.path(output_path, "panaroo_invalid_cds_audit.csv")
+  )
+  .log_or_message(
+    log_path, verbose,
+    sprintf("CDS audit: %d genomes, %d removed all-X CDS.",
+            length(filtered_panaroo_input), nrow(cleaned$audit))
+  )
 
   total_lines <- length(filtered_panaroo_input)
   batch_size <- if (isTRUE(split_jobs)) ceiling(total_lines / 5) else total_lines
@@ -356,13 +421,14 @@ clearHMMERdatabases <- function(
     ~ .processPanaroo(
       batch_input             = .x,
       output_path             = output_path,
+      mount_root              = paths$root,
       core_threshold          = core_threshold,
       len_dif_percent         = len_dif_percent,
       cluster_threshold       = cluster_threshold,
       family_seq_identity     = family_seq_identity,
       panaroo_threads_per_job = panaroo_threads_per_job,
       refind_mode             = refind_mode,
-      verbose                 = verbose
+      log_path                = log_path
     ),
     .options = furrr::furrr_options(seed = TRUE)
   )
@@ -383,7 +449,7 @@ clearHMMERdatabases <- function(
 #' @param family_seq_identity Numeric. Gene family clustering identity (`-f`). Default `0.5`.
 #' @param threads Integer. Number of threads for Panaroo and parallel execution. Default `8`.
 #'
-#' @returns A a single combined pangenome.
+#' @returns A single combined pangenome.
 #'
 #' @keywords internal
 .mergePanaroo <- function(input_path,
@@ -391,7 +457,8 @@ clearHMMERdatabases <- function(
                           len_dif_percent = 0.95,
                           cluster_threshold = 0.95,
                           family_seq_identity = 0.5,
-                          threads = 8) {
+                          threads = 8,
+                          log_path = NULL) {
   input_path <- .docker_path(input_path)
 
   # Fail fast if Docker is missing
@@ -433,14 +500,18 @@ clearHMMERdatabases <- function(
       "-t", as.character(threads)
     )
 
-    res <- system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
-    status <- attr(res, "status")
+    output <- system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
+
+    .log_tool_output(log_path, "Panaroo merge", output)
+
+    status <- attr(output, "status")
 
     if (!is.null(status) && status != 0L) {
-      stop(sprintf("panaroo-merge failed with exit status %s:\n%s", status, paste(res, collapse = "\n")))
+      stop("Panaroo merge failed with exit status ",
+           status,
+           ":\n",
+           paste(output, collapse = "\n"))
     }
-
-    invisible(res)
   } else {
     stop("No valid Panaroo batch directories found (need >= 2 with final_graph.gml).")
   }
@@ -449,107 +520,187 @@ clearHMMERdatabases <- function(
 
 #' Load Panaroo gene presence/absence table into DuckDB
 #'
-#' Reads `gene_presence_absence.csv` and constructs a genome-by-gene count
-#' table, writing it into the DuckDB database as `gene_count`.
+#' Reads Panaroo's gene presence/absence and structural presence/absence files
+#' directly with DuckDB. Only occupied cells are retained to minimize size of
+#' pangenomes as dense genome-by-feature matrices in R or DuckDB.
 #'
 #' @param panaroo_output_path Path to a Panaroo result directory.
-#' @param duckdb_path Path to a DuckDB database file.
+#' @param duckdb_path Path to the per-selection DuckDB database.
 #'
-#' @return A tibble containing the gene count matrix.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
-.panaroo2geneTable <- function(panaroo_output_path, duckdb_path) {
-  filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
-  duckdb_path <- normalizePath(duckdb_path)
+.importPanarooTables <- function(panaroo_output_path, duckdb_path) {
+  panaroo_output_path <- normalizePath(panaroo_output_path, mustWork = TRUE)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+
+  gpa_path <- file.path(panaroo_output_path, "gene_presence_absence.csv")
+  struct_path <- file.path(panaroo_output_path, "struct_presence_absence.Rtab")
+
+  if (!file.exists(gpa_path)) {
+    stop("Panaroo gene presence/absence file not found: ", gpa_path, call. = FALSE)
+  }
+  if (!file.exists(struct_path)) {
+    stop("Panaroo structural presence/absence file not found: ", struct_path, call. = FALSE)
+  }
+
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  gene_count <- read.table(filepath, sep = ",", header = TRUE, fill = TRUE, quote = "") |>
-    tibble::as_tibble() |>
-    dplyr::select(-c(Non.unique.Gene.name, Annotation)) |>
-    tidyr::pivot_longer(cols = -1) |>
-    tidyr::pivot_wider(names_from = Gene, values_from = value) |>
-    dplyr::rename("genome_id" = "name") |>
-    dplyr::mutate(genome_id = stringr::str_replace_all(genome_id, c("^X" = "", "\\.PATRIC$" = ""))) |>
-    dplyr::mutate(across(-genome_id, ~ ifelse(. == "", 0, stringr::str_count(., ";") + 1)))
+  DBI::dbExecute(con, "SET preserve_insertion_order = false")
 
-  DBI::dbWriteTable(con, "gene_count", gene_count, overwrite = TRUE)
-  gene_count
+  gpa_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(gpa_path, winslash = "/", mustWork = TRUE)
+  )
+  struct_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(struct_path, winslash = "/", mustWork = TRUE)
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TEMP VIEW panaroo_gpa AS ",
+      "SELECT * FROM read_csv(", gpa_sql, ", ",
+      "header=true, delim=',', quote='\"', escape='\"', ",
+      "all_varchar=true, nullstr='', parallel=true)"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TEMP VIEW panaroo_struct AS ",
+      "SELECT * FROM read_csv(", struct_sql, ", ",
+      "header=true, delim='\\t', quote='\"', escape='\"', ",
+      "all_varchar=true, nullstr='', parallel=true)"
+    )
+  )
+
+  # Creating a single temp scan of the CSV from which we can hoover up
+  # gene counts, names, and protein mappings efficiently
+  gene_stage <- tempfile(
+    pattern = "panaroo_gene_cells_",
+    tmpdir = dirname(duckdb_path),
+    fileext = ".parquet"
+  )
+  on.exit(
+    if (file.exists(gene_stage)) unlink(gene_stage, force = TRUE),
+    add = TRUE
+  )
+
+  gene_stage_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(gene_stage, winslash = "/", mustWork = FALSE)
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "COPY (",
+      "SELECT Gene, Annotation, genome_raw, protein_ids ",
+      "FROM (",
+      "  UNPIVOT panaroo_gpa ",
+      "  ON COLUMNS(* EXCLUDE (\"Gene\", \"Non-unique Gene name\", \"Annotation\")) ",
+      "  INTO NAME genome_raw VALUE protein_ids",
+      ") ",
+      "WHERE protein_ids IS NOT NULL AND protein_ids <> ''",
+      ") TO ", gene_stage_sql, " ",
+      "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 1, PRESERVE_ORDER false)"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TABLE gene_names AS ",
+      "SELECT DISTINCT CAST(Gene AS VARCHAR) AS Gene, ",
+      "CAST(Annotation AS VARCHAR) AS Annotation ",
+      "FROM read_parquet(", gene_stage_sql, ")"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TABLE gene_count AS ",
+      "SELECT ",
+      "CAST(regexp_replace(regexp_replace(genome_raw, '^X', ''), '\\.PATRIC$', '') AS VARCHAR) AS genome_id, ",
+      "CAST(Gene AS VARCHAR) AS gene, ",
+      "CAST(length(protein_ids) - length(replace(protein_ids, ';', '')) + 1 AS INTEGER) AS value ",
+      "FROM read_parquet(", gene_stage_sql, ")"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TABLE genome_gene_protein AS ",
+      "WITH cells AS (",
+      "  SELECT DISTINCT ",
+      "    regexp_replace(regexp_replace(genome_raw, '^X', ''), '\\.PATRIC$', '') AS genome_ids, ",
+      "    Gene, protein_ids ",
+      "  FROM read_parquet(", gene_stage_sql, ")",
+      ") ",
+      "SELECT CAST(genome_ids AS VARCHAR) AS genome_ids, ",
+      "CAST(Gene AS VARCHAR) AS Gene, ",
+      "CAST(replace(replace(protein_id, '_pseudo', ''), '_len', '') AS VARCHAR) AS protein_ids ",
+      "FROM cells, UNNEST(string_split(protein_ids, ';')) AS split_protein(protein_id)"
+    )
+  )
+
+  unlink(gene_stage, force = TRUE)
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TABLE gene_struct AS
+     SELECT
+       CAST(
+         regexp_replace(
+           regexp_replace(genome_raw, '^X', ''),
+           '\\.PATRIC$',
+           ''
+         ) AS VARCHAR
+       ) AS genome_id,
+       CAST(Gene AS VARCHAR) AS struct,
+       CAST(value AS INTEGER) AS value
+     FROM (
+       UNPIVOT panaroo_struct
+       ON COLUMNS(* EXCLUDE (\"Gene\"))
+       INTO NAME genome_raw VALUE value
+     )
+     WHERE value IS NOT NULL
+       AND value <> ''
+       AND CAST(value AS INTEGER) <> 0"
+  )
+
+  invisible(TRUE)
 }
 
 
-#' Extract gene names and annotations from Panaroo outputs
+#' Import Panaroo reference sequences into DuckDB
 #'
-#' Reads Panaroo's `gene_presence_absence.csv` to extract gene identifiers
-#' and gene annotations, then writes them into the DuckDB table `gene_names`.
+#' @inheritParams .importPanarooTables
 #'
-#' @inheritParams .panaroo2geneTable
-#'
-#' @return A tibble with `Gene` and `Annotation` columns.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
-.panaroo2geneNames <- function(panaroo_output_path, duckdb_path) {
-  filepath <- file.path(normalizePath(panaroo_output_path), "gene_presence_absence.csv")
-  duckdb_path <- normalizePath(duckdb_path)
+.importPanarooReference <- function(panaroo_output_path, duckdb_path) {
+  panaroo_output_path <- normalizePath(panaroo_output_path, mustWork = TRUE)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  fasta_path <- file.path(panaroo_output_path, "pan_genome_reference.fa")
+
+  if (!file.exists(fasta_path)) {
+    stop("Panaroo reference FASTA not found: ", fasta_path, call. = FALSE)
+  }
+
+  gene_fasta <- Biostrings::readDNAStringSet(filepath = fasta_path)
+
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  gene_names <- read.table(filepath, sep = ",", header = TRUE, fill = TRUE, quote = "") |>
-    tibble::as_tibble() |>
-    dplyr::select(c(Gene, Annotation))
-
-  DBI::dbWriteTable(con, "gene_names", gene_names, overwrite = TRUE)
-  gene_names
-}
-
-
-#' Create structural variant presence/absence table from Panaroo outputs
-#'
-#' Reads `struct_presence_absence.Rtab` and constructs a genome-by-struct
-#' presence/absence matrix, writing the result to `gene_struct` in DuckDB.
-#'
-#' @inheritParams .panaroo2geneTable
-#'
-#' @return A tibble containing the struct matrix.
-#'
-#' @keywords internal
-.panaroo2StructTable <- function(panaroo_output_path, duckdb_path) {
-  struct_filepath <- file.path(normalizePath(panaroo_output_path), "struct_presence_absence.Rtab")
-  duckdb_path <- normalizePath(duckdb_path)
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  gene_struct <- read.table(struct_filepath, sep = "\t", header = TRUE, fill = TRUE, quote = "") |>
-    tibble::as_tibble() |>
-    tidyr::pivot_longer(cols = -1) |>
-    tidyr::pivot_wider(names_from = Gene, values_from = value) |>
-    dplyr::rename("genome_id" = "name") |>
-    dplyr::mutate(genome_id = stringr::str_replace_all(genome_id, c("^X" = "", "\\.PATRIC$" = "")))
-
-  DBI::dbWriteTable(con, "gene_struct", gene_struct, overwrite = TRUE)
-  gene_struct
-}
-
-
-#' Import additional Panaroo reference outputs into DuckDB
-#'
-#' Loads reference sequences and long-format gene–protein mappings from
-#' Panaroo outputs and stores them into DuckDB (`gene_ref_seq`, `genome_gene_protein`).
-#'
-#' @inheritParams .panaroo2geneTable
-#'
-#' @return Invisibly returns TRUE.
-#'
-#' @keywords internal
-.panaroo2OtherTables <- function(panaroo_output_path, duckdb_path) {
-  panaroo_output_path <- normalizePath(panaroo_output_path)
-  duckdb_path <- normalizePath(duckdb_path)
-  fasta_filepath <- file.path(panaroo_output_path, "pan_genome_reference.fa")
-  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  gene_fasta <- Biostrings::readDNAStringSet(filepath = fasta_filepath)
-  DBI::dbWriteTable(con, "gene_ref_seq",
+  DBI::dbWriteTable(
+    con,
+    "gene_ref_seq",
     tibble::tibble(
       name = names(gene_fasta),
       sequence = as.character(gene_fasta)
@@ -557,42 +708,22 @@ clearHMMERdatabases <- function(
     overwrite = TRUE
   )
 
-  readr::read_csv(file.path(panaroo_output_path, "gene_presence_absence.csv")) |>
-    dplyr::select(-`Non-unique Gene name`) |>
-    tidyr::pivot_longer(-c("Gene", "Annotation"),
-      names_to = "genome_ids",
-      values_to = "protein_ids"
-    ) |>
-    dplyr::mutate(genome_ids = sub("\\.PATRIC\\.\\.\\..*$", "", genome_ids)) |>
-    dplyr::select(genome_ids, Gene, protein_ids) |>
-    dplyr::distinct() |>
-    dplyr::filter(!is.na(protein_ids)) |>
-    tidyr::separate_rows(protein_ids, sep = ";") |>
-    # dplyr::filter(!stringr::str_detect(protein_ids, "_pseudo")) |>
-    dplyr::mutate(protein_ids = gsub("_pseudo", "", protein_ids)) |>
-    dplyr::mutate(protein_ids = gsub("_len", "", protein_ids)) |>
-    DBI::dbWriteTable(conn = con, name = "genome_gene_protein", overwrite = TRUE)
+  invisible(TRUE)
 }
 
 
 #' Import all Panaroo-derived outputs into DuckDB
 #'
-#' Wrapper that loads gene counts, gene names, struct tables, and reference
-#' sequence tables from a Panaroo output directory into a DuckDB database.
+#' Stores gene and structural counts as sparse long relations and imports the
+#' Panaroo reference sequences.
 #'
-#' @inheritParams .panaroo2geneTable
+#' @inheritParams .importPanarooTables
 #'
-#' @return Invisibly returns TRUE.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
 .panaroo2duckdb <- function(panaroo_output_path, duckdb_path) {
-  panaroo_output_path <- normalizePath(panaroo_output_path)
-  duckdb_path <- normalizePath(duckdb_path)
-
-  .panaroo2geneTable(panaroo_output_path, duckdb_path)
-  .panaroo2geneNames(panaroo_output_path, duckdb_path)
-  .panaroo2StructTable(panaroo_output_path, duckdb_path)
-  .panaroo2OtherTables(panaroo_output_path, duckdb_path)
+  .importPanarooTables(panaroo_output_path, duckdb_path)
+  .importPanarooReference(panaroo_output_path, duckdb_path)
   invisible(TRUE)
 }
 
@@ -615,29 +746,33 @@ clearHMMERdatabases <- function(
 #'
 #' @keywords internal
 .runCDHIT <- function(duckdb_path,
-                      output_path,
+                      output_path = NULL,
                       output_prefix = "cdhit_out",
                       identity = 0.9,
                       word_length = 5,
                       threads = 0,
                       memory = 0,
-                      extra_args = c("-g", "1")) {
+                      extra_args = c("-g", "1"),
+                      verbose = TRUE,
+                      log_path = NULL) {
   # Fail fast if Docker is missing
   if (!nzchar(Sys.which("docker"))) {
     stop("Docker is not available on your PATH but is required to run CD-HIT.")
   }
 
-  # CD-HIT sets theads = 0 to mean all CPUs, we limit to CPUs available to this R session
+  # CD-HIT sets threads = 0 to mean all CPUs, we limit to CPUs available to this R session
   if (identical(threads, 0L) || identical(threads, 0)) {
     threads <- .resolve_workers(requested = NULL)
   } else {
     threads <- .resolve_workers(requested = threads)
   }
-  duckdb_path <- .docker_path(duckdb_path)
-  if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
-    output_path <- dirname(duckdb_path)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  paths <- .amr_paths_from_duckdb(duckdb_path)
+  if (is.null(output_path)) {
+    output_path <- paths$cdhit
   }
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
+  duckdb_path <- .docker_path(duckdb_path)
   output_path <- .docker_path(output_path)
 
   genome_query_output <- local({
@@ -684,15 +819,16 @@ clearHMMERdatabases <- function(
     extra_args
   )
 
-  message("Running cd-hit via Docker...")
-  output <- tryCatch(
-    {
-      system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
-    },
-    error = function(e) {
-      stop("cd-hit execution failed: ", e$message)
-    }
-  )
+  .log_or_message(log_path, verbose, "Running CD-HIT via Docker...")
+  output <- tryCatch({
+    system2("docker",
+            args = cmd_args,
+            stdout = TRUE,
+            stderr = TRUE)
+  }, error = function(e) {
+    stop("CD-HIT execution failed: ", e$message)
+  })
+  .log_tool_output(log_path, "CD-HIT", output)
 
   status <- attr(output, "status")
   if (!is.null(status) && status != 0L) {
@@ -700,17 +836,19 @@ clearHMMERdatabases <- function(
   }
 
   if (!file.exists(clustered_faa)) {
-    stop("cd-hit failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
+    stop("CD-HIT failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
   }
   # Ensure .clstr exists (used downstream)
   if (!file.exists(paste0(clustered_faa, ".clstr"))) {
     stop(
-      "cd-hit did not produce the expected .clstr file at: ", paste0(clustered_faa, ".clstr"),
+      "CD-HIT did not produce the expected .clstr file at: ", paste0(clustered_faa, ".clstr"),
       "\nFull output:\n", paste(output, collapse = "\n")
     )
   }
 
-  message("cd-hit completed successfully.")
+  if (isTRUE(verbose)) {
+    .log_or_message(log_path, verbose, "CD-HIT completed successfully.")
+  }
   list(
     cdhit_input_faa = cdhit_input_faa,
     clustered_faa   = clustered_faa
@@ -739,7 +877,7 @@ clearHMMERdatabases <- function(
 #'   `prepareGenomes()`. Must contain a `files` table with Panaroo input file paths.
 #' @param output_path Character or `NULL`. Directory where Panaroo outputs
 #'   (`panaroo_out_*` or merged `merge_output/`) will be written. If `NULL`,
-#'   defaults to `dirname(duckdb_path)`.
+#'   defaults to the dataset's `panaroo/` directory.
 #'
 #' @param core_threshold Numeric. Panaroo `--core_threshold` parameter.
 #'   Default: `0.90`.
@@ -763,6 +901,13 @@ clearHMMERdatabases <- function(
 #'   `"strict"`). See [.processPanaroo()] for what refinding does and the runtime
 #'   caveat behind the current default. Default `"off"`.
 #'
+#' @param strip_pseudogenes Logical. Whether to remove pseudogene features from
+#'    GFF files before running Panaroo.
+#' @param pseudogene_clean_dir Character. Subdirectory used for cleaned GFFs.
+#' @param write_pseudogene_audit Logical. Whether to write the pseudogene
+#'   cleaning audit to record what was removed from where.
+#' @param log_path Character or `NULL`. Optional processing log path.
+#'
 #' @param verbose Logical. Print status messages during Panaroo execution,
 #'   merging, and DuckDB import. Default: `TRUE`.
 #'
@@ -771,6 +916,11 @@ clearHMMERdatabases <- function(
 #' (either the single-run output or the merged `merge_output/` directory).
 #'
 #' @details
+#' CDS seqs that contain only unknown amino acids ('X') are automatically removed 
+#' from copied GFFs before clustering. Originals and FASTA files are preserved. 
+#' Each removal is recorded in `panaroo_invalid_cds_audit.csv` under the Panaroo 
+#' output directory.
+#'
 #' ### Panaroo Output Discovery
 #' After running `.runPanaroo()`, the function scans `output_path` for directories
 #' matching `panaroo_out_*` and identifies those containing a `final_graph.gml` file —
@@ -829,12 +979,21 @@ runPanaroo2Duckdb <- function(duckdb_path,
                               strip_pseudogenes = FALSE,
                               pseudogene_clean_dir = "gff_clean",
                               write_pseudogene_audit = TRUE,
-                              verbose = TRUE) {
+                              verbose = TRUE,
+                              log_path = NULL) {
   refind_mode <- match.arg(refind_mode)
-  duckdb_path <- normalizePath(duckdb_path)
-  out_dir <- if (is.null(output_path)) dirname(duckdb_path) else normalizePath(output_path)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  paths <- .amr_paths_from_duckdb(duckdb_path)
+  out_dir <- if (is.null(output_path)) {
+    paths$panaroo
+  } else {
+    normalizePath(output_path, mustWork = FALSE)
+  }
 
-  if (isTRUE(verbose)) message("Launching Panaroo.")
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  out_dir <- normalizePath(out_dir, mustWork = TRUE)
+  .log_or_message(log_path, verbose, "Launching Panaroo.")
+
   .runPanaroo(
     duckdb_path = duckdb_path,
     output_path = out_dir,
@@ -848,7 +1007,8 @@ runPanaroo2Duckdb <- function(duckdb_path,
     strip_pseudogenes = strip_pseudogenes,
     pseudogene_clean_dir = pseudogene_clean_dir,
     write_pseudogene_audit = write_pseudogene_audit,
-    verbose = verbose
+    verbose = verbose,
+    log_path = log_path
   )
 
   # Identify Panaroo outputs that contain a final_graph.gml file
@@ -863,14 +1023,15 @@ runPanaroo2Duckdb <- function(duckdb_path,
   # If split jobs produced 2+ valid outputs, merge them; else use the single output dir
   target_dir <- NULL
   if (isTRUE(split_jobs) && length(valid) >= 2L) {
-    if (isTRUE(verbose)) message("Merging Panaroo batch outputs.")
+    .log_or_message(log_path, verbose, "Merging Panaroo batch outputs.")
     .mergePanaroo(
       input_path          = out_dir,
       core_threshold      = core_threshold,
       len_dif_percent     = len_dif_percent,
       cluster_threshold   = cluster_threshold,
       family_seq_identity = family_seq_identity,
-      threads             = max(1L, floor(threads / 2))
+      threads             = max(1L, floor(threads / 2)),
+      log_path            = log_path
     )
     target_dir <- file.path(out_dir, "merge_output")
     if (!file.exists(file.path(target_dir, "gene_presence_absence.csv"))) {
@@ -880,156 +1041,201 @@ runPanaroo2Duckdb <- function(duckdb_path,
     target_dir <- valid[[1]]
   }
 
-  if (isTRUE(verbose)) message("Writing Panaroo tables to DuckDB.")
+  .log_or_message(log_path, verbose, "Writing Panaroo tables to DuckDB.")
   .panaroo2duckdb(panaroo_output_path = target_dir, duckdb_path = duckdb_path)
 
   invisible(target_dir)
 }
 
 
-#' Parse CD-HIT `.clstr` output into a long-format mapping
+#' Stream CD-HIT `.clstr` output to staging file
 #'
-#' Reads a CD-HIT `.clstr` file and constructs a mapping of clusters to genome IDs.
+#' Reads CD-HIT cluster file in bounded chunks so Big Data (tm) never needs to be
+#' materialized as one R object. The staging file is consumed immediately by
+#' DuckDB and neatly deleted by [CDHIT2duckdb()].
 #'
-#' @param clustered_faa Base path to CD-HIT output (without `.clstr` extension).
+#' @param clustered_faa Base path to CD-HIT output (without `.clstr`).
+#' @param stage_path Temporary TSV path.
+#' @param chunk_lines Number of input lines read per chunk.
 #'
-#' @return A data.table with columns `cluster` and `genome_id`.
-#'
+#' @return Invisibly returns the number of parsed member records.
 #' @keywords internal
-.parseProteinClusters <- function(clustered_faa) {
+.streamProteinClusters <- function(clustered_faa, stage_path, chunk_lines = 250000L) {
   clstr <- paste0(clustered_faa, ".clstr")
   if (!file.exists(clstr)) {
-    stop(
-      "CD-HIT cluster file not found: ", clstr,
-      "\nEnsure .runCDHIT() completed successfully and produced the .clstr file."
-    )
+    stop("CD-HIT cluster file not found: ", clstr, call. = FALSE)
   }
 
-  lines <- data.table::fread(clstr, sep = "\n", header = FALSE)$V1
-  cluster_ids <- grep("^>Cluster", lines)
-  cluster_map <- data.table::data.table()
+  if (file.exists(stage_path)) unlink(stage_path, force = TRUE)
 
-  for (i in seq_along(cluster_ids)) {
-    start <- cluster_ids[i] + 1
-    end <- if (i < length(cluster_ids)) cluster_ids[i + 1] - 1 else length(lines)
-    cluster_lines <- lines[start:end]
+  input <- file(clstr, open = "r")
+  on.exit(close(input), add = TRUE)
 
-    # This finds the reference cluster ID and names the cluster with it
-    ref_line <- grep("\\*$", cluster_lines, value = TRUE)
-    ref_id <- if (length(ref_line) > 0) {
-      stringr::str_extract(ref_line, "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+")
+  current_cluster <- NA_integer_
+  row_index <- 0L
+  first_write <- TRUE
+
+  repeat {
+    lines <- readLines(input, n = chunk_lines, warn = FALSE)
+    if (!length(lines)) break
+
+    is_header <- startsWith(lines, ">Cluster ")
+    cluster_index <- rep.int(NA_integer_, length(lines))
+
+    if (any(is_header)) {
+      cluster_index[is_header] <- suppressWarnings(
+        as.integer(sub("^>Cluster\\s+", "", lines[is_header]))
+      )
+    }
+
+    if (!is.na(current_cluster)) {
+      cluster_index <- data.table::nafill(
+        c(current_cluster, cluster_index),
+        type = "locf"
+      )[-1L]
     } else {
-      paste0("Cluster_", i - 1)
+      cluster_index <- data.table::nafill(cluster_index, type = "locf")
     }
 
-    # Pull genome IDs
-    genome_matches <- stringr::str_match(
-      cluster_lines,
-      "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+"
-    )[, 2]
-    genome_matches <- genome_matches[!is.na(genome_matches)]
+    known <- cluster_index[!is.na(cluster_index)]
+    if (length(known)) current_cluster <- known[[length(known)]]
 
-    if (length(genome_matches) > 0) {
-      cluster_map <- data.table::rbindlist(list(
-        cluster_map,
-        data.table::data.table(cluster = ref_id, genome_id = genome_matches)
-      ), use.names = TRUE)
-    }
-  }
+    member_idx <- which(!is_header & !is.na(cluster_index))
+    if (!length(member_idx)) next
 
-  cluster_map
-}
-
-#' Parse CD-HIT `.clstr` output into a long-format mapping
-#'
-#' Reads a CD-HIT `.clstr` file and constructs a mapping of clusters to member feature ids.
-#'
-#' @param clustered_faa Base path to CD-HIT output (without `.clstr` extension).
-#'
-#' @return A tibble with columns `cluster` and `member`.
-#'
-#' @keywords internal
-.extractMembersInClusters <- function(clustered_faa) {
-  clstr <- paste0(clustered_faa, ".clstr")
-  if (!file.exists(clstr)) {
-    stop(
-      "CD-HIT cluster file not found: ", clstr,
-      "\nEnsure .runCDHIT() completed successfully and produced the .clstr file."
+    member_lines <- lines[member_idx]
+    member <- stringr::str_extract(
+      member_lines,
+      "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+"
     )
+    keep <- !is.na(member)
+    if (!any(keep)) next
+
+    member <- member[keep]
+    member_lines <- member_lines[keep]
+    member_cluster <- cluster_index[member_idx][keep]
+    n <- length(member)
+
+    out <- data.table::data.table(
+      row_index = seq.int(row_index + 1L, row_index + n),
+      cluster_index = member_cluster,
+      member = member,
+      genome_id = stringr::str_match(
+        member,
+        "^fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+$"
+      )[, 2L],
+      is_representative = grepl("\\*\\s*$", member_lines)
+    )
+
+    row_index <- row_index + n
+
+    data.table::fwrite(
+      out,
+      file = stage_path,
+      sep = "\t",
+      append = !first_write,
+      col.names = first_write,
+      quote = FALSE,
+      na = ""
+    )
+    first_write <- FALSE
   }
 
-  lines <- data.table::fread(clstr, sep = "\n", header = FALSE)$V1
-  cluster_ids <- grep("^>Cluster", lines)
-  cluster_member <- data.table::data.table()
-
-  for (i in seq_along(cluster_ids)) {
-    start <- cluster_ids[i] + 1
-    end <- if (i < length(cluster_ids)) cluster_ids[i + 1] - 1 else length(lines)
-    cluster_lines <- lines[start:end]
-
-    # This finds the reference cluster ID and names the cluster with it
-    ref_line <- grep("\\*$", cluster_lines, value = TRUE)
-    ref_id <- if (length(ref_line) > 0) {
-      stringr::str_extract(ref_line, "fig\\|[0-9]+\\.[0-9]+\\.peg(?:sc)?\\.[0-9]+")
-    } else {
-      paste0("Cluster_", i - 1)
-    }
-
-    # Pull genome IDs
-    members <- stringr::str_match(
-      cluster_lines,
-      "fig\\|([0-9]+\\.[0-9]+)\\.peg(?:sc)?\\.[0-9]+"
-    )[, 1]
-    members <- members[!is.na(members)]
-
-    if (length(members) > 0) {
-      cluster_member <- data.table::rbindlist(list(
-        cluster_member,
-        data.table::data.table(cluster = ref_id, member = members)
-      ), use.names = TRUE)
-    }
+  if (first_write) {
+    stop("No CD-HIT member records were parsed from: ", clstr, call. = FALSE)
   }
 
-  tibble::as_tibble(cluster_member)
+  invisible(row_index)
 }
 
-#' Build genome-by-protein-cluster count matrix
+#' Import streamed CD-HIT members into DuckDB
 #'
-#' Converts a long-format cluster mapping from `.parseProteinClusters()`
-#' into a genome-by-cluster count matrix.
+#' Resolves representative proteins in DuckDB and writes the two working tables
+#' needed downstream.
 #'
-#' @param cluster_map A data.table with `cluster` and `genome_id`.
+#' @param con Open DuckDB connection.
+#' @param stage_path TSV produced by [.streamProteinClusters()].
 #'
-#' @return A wide-format matrix as a data.frame.
-#'
+#' @return Invisibly returns `TRUE`.
 #' @keywords internal
-.buildProtMatrices <- function(cluster_map) {
-  cluster_map[, count := 1]
-  reshape2::dcast(cluster_map, genome_id ~ cluster, value.var = "count", fun.aggregate = sum, fill = 0)
-}
-# Back-compat wrapper (older external name)
-buildMatrices <- function(cluster_map) .buildProtMatrices(cluster_map)
+.importProteinClusters <- function(con, stage_path) {
+  stage_sql <- DBI::dbQuoteString(
+    con,
+    normalizePath(stage_path, winslash = "/", mustWork = TRUE)
+  )
 
+  DBI::dbExecute(
+    con,
+    paste0(
+      "CREATE OR REPLACE TEMP TABLE cdhit_raw AS ",
+      "SELECT * FROM read_csv(", stage_sql, ", delim='\\t', header=true, columns={",
+      "'row_index':'BIGINT',",
+      "'cluster_index':'BIGINT',",
+      "'member':'VARCHAR',",
+      "'genome_id':'VARCHAR',",
+      "'is_representative':'BOOLEAN'})"
+    )
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TEMP TABLE cdhit_membership AS
+     WITH refs AS (
+       SELECT
+         cluster_index,
+         max(CASE WHEN is_representative THEN member END) AS cluster
+       FROM cdhit_raw
+       GROUP BY cluster_index
+     )
+     SELECT
+       m.row_index,
+       COALESCE(
+         r.cluster,
+         'Cluster_' || CAST(m.cluster_index AS VARCHAR)
+       ) AS cluster,
+       m.member,
+       m.genome_id
+     FROM cdhit_raw m
+     LEFT JOIN refs r USING (cluster_index)"
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TABLE protein_members AS
+     SELECT cluster, member
+     FROM cdhit_membership
+     ORDER BY row_index"
+  )
+
+  DBI::dbExecute(
+    con,
+    "CREATE OR REPLACE TABLE protein_count AS
+     SELECT
+       CAST(genome_id AS VARCHAR) AS genome_id,
+       CAST(cluster AS VARCHAR) AS protein,
+       CAST(count(*) AS INTEGER) AS value
+     FROM cdhit_membership
+     WHERE genome_id IS NOT NULL
+     GROUP BY genome_id, cluster"
+  )
+
+  DBI::dbExecute(con, "DROP TABLE cdhit_membership")
+  DBI::dbExecute(con, "DROP TABLE cdhit_raw")
+
+  invisible(TRUE)
+}
 
 #' Extract per-cluster protein names from CD-HIT cluster FASTA
 #'
 #' Reads a FASTA file of representative proteins and extracts protein IDs,
 #' locus tags, and descriptive names.
 #'
-#' @param cluster_map Output of `.parseProteinClusters()`.
 #' @param cluster_fasta Path to representative FASTA file used by CD-HIT.
 #'
 #' @return A tibble containing protein metadata.
 #'
 #' @keywords internal
-.clusterNames <- function(cluster_map, cluster_fasta) {
-  # Note: cluster_map_unique computed but not used previously—keeping for parity
-  cluster_map_unique <- cluster_map |>
-    tibble::as_tibble() |>
-    dplyr::distinct() |>
-    dplyr::group_by(cluster) |>
-    dplyr::slice_head(n = 1)
-
+.clusterNames <- function(cluster_fasta) {
   cdhit_output_faa <- Biostrings::readAAStringSet(cluster_fasta)
 
   names_faa <- names(cdhit_output_faa) |>
@@ -1047,20 +1253,26 @@ buildMatrices <- function(cluster_map) .buildProtMatrices(cluster_map)
 #' Cluster proteins with CD-HIT and write results to DuckDB
 #' @export
 CDHIT2duckdb <- function(duckdb_path,
-                         output_path,
+                         output_path = NULL,
                          output_prefix = "cdhit_out",
                          identity = 0.9,
                          word_length = 5,
                          threads = 0,
                          memory = 0,
-                         extra_args = c("-g", "1")) {
-  duckdb_path <- normalizePath(duckdb_path)
+                         extra_args = c("-g", "1"),
+                         verbose = TRUE,
+                         log_path = NULL) {
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
 
-  if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
-    output_path <- dirname(duckdb_path) # e.g., ./results/<bug>
+  paths <- .amr_paths_from_duckdb(duckdb_path)
+
+  if (is.null(output_path)) {
+    output_path <- paths$cdhit
   }
+
   dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
-  output_path <- normalizePath(output_path)
+
+  output_path <- normalizePath(output_path, mustWork = TRUE)
 
   cdhit_outputs <- .runCDHIT(
     duckdb_path,
@@ -1070,19 +1282,33 @@ CDHIT2duckdb <- function(duckdb_path,
     word_length = word_length,
     threads = threads,
     memory = memory,
-    extra_args = extra_args
+    extra_args = extra_args,
+    verbose = verbose,
+    log_path = log_path
   )
-
-  cluster_map <- .parseProteinClusters(cdhit_outputs$clustered_faa)
-  cluster_count <- .buildProtMatrices(cluster_map)
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  DBI::dbWriteTable(con, "protein_count", cluster_count, overwrite = TRUE)
+  stage_path <- tempfile(
+    pattern = paste0(output_prefix, "_membership_"),
+    tmpdir = output_path,
+    fileext = ".tsv"
+  )
+  on.exit(
+    if (file.exists(stage_path)) unlink(stage_path, force = TRUE),
+    add = TRUE
+  )
+
+  .streamProteinClusters(
+    cdhit_outputs$clustered_faa,
+    stage_path = stage_path
+  )
+  .importProteinClusters(con, stage_path)
+  unlink(stage_path, force = TRUE)
 
   cluster_fasta <- cdhit_outputs$cdhit_input_faa
-  cluster_name <- .clusterNames(cluster_map, cluster_fasta)
+  cluster_name <- .clusterNames(cluster_fasta)
   DBI::dbWriteTable(con, "protein_names", cluster_name, overwrite = TRUE)
 
   clustered_faa <- Biostrings::readAAStringSet(cdhit_outputs$clustered_faa)
@@ -1093,9 +1319,6 @@ CDHIT2duckdb <- function(duckdb_path,
     ),
     overwrite = TRUE
   )
-
-  cluster_member <- .extractMembersInClusters(cdhit_outputs$clustered_faa)
-  DBI::dbWriteTable(con, "protein_members", cluster_member, overwrite = TRUE)
 
   invisible(TRUE)
 }
@@ -1108,21 +1331,29 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   prepared separately by the DefenseFinder/CasFinder workflow.
 #' @param docker_image Character. Docker image containing HMMER tools used to
 #'   press the prepared databases. Default: `"staphb/hmmer"`.
-#' @param hmmer_db_url NON-FUNCTIONAL. Character or `NULL`. URL used to download
-#'   a custom HMMER database when `databases` contains names not covered by the
-#'   built-in database definitions. This function is not currently active!
+#' @param hmmer_db_url EXPERIMENTAL. Character or `NULL`. URL used to download
+#'   a custom HMMER database when `databases` contains a name outside the
+#'   built-in database definitions. Custom database support has NOT YET BEEN
+#'   VALIDATED and is not part of the current, supported workflow.
 #' @param verbose Logical. Print status messages while checking, downloading,
 #'   combining, and pressing databases. Default: `TRUE`.
+#' @param log_path Character or `NULL`. Optional path for database preparation
+#'   and external-tool logging.
+#' @param progress Logical. Show download progress when HMM database archives
+#'   must be retrieved. Default: `TRUE`.
 #'
-#' @returns A list of paths to the database hmm files.
-#'
+#' @return A named list for each requested database containing the prepared
+#'   HMM path, pressed HMMER files, cached profile-metadata Parquet path,
+#'   source metadata, and BiocFileCache identifiers.
 #' @keywords internal
 .prepareHmmerDatabases <- function(
     hmmer_db_dir,
     databases = c("Pfam", "COG", "AMRFinder"),
     docker_image = "staphb/hmmer",
     hmmer_db_url = NULL,
-    verbose = TRUE
+    verbose = TRUE,
+    log_path = NULL,
+    progress = TRUE
 ) {
 
   hmmer_db_dir <- normalizePath(
@@ -1135,8 +1366,6 @@ CDHIT2duckdb <- function(duckdb_path,
     recursive = TRUE,
     showWarnings = FALSE
   )
-
-  options(timeout = max(3600, getOption("timeout")))
 
   dbs <- list(
     Pfam = list(
@@ -1233,12 +1462,7 @@ CDHIT2duckdb <- function(duckdb_path,
 
       tmp <- tempfile()
 
-      utils::download.file(
-        url = db$url,
-        destfile = tmp,
-        mode = "wb",
-        method = "libcurl"
-      )
+      .amr_download_file(db$url, tmp, progress = progress)
 
       switch(
         db$type,
@@ -1377,20 +1601,28 @@ CDHIT2duckdb <- function(duckdb_path,
         )
       }
 
-      output <- system2(
-        "docker",
-        args = c(
-          "run",
-          "--rm",
-          "-v",
-          paste0(dirname(hmm_file), ":/db"),
-          docker_image,
-          "hmmpress",
-          file.path("/db", basename(hmm_file))
-        ),
-        stdout = TRUE,
-        stderr = TRUE
-      )
+      output <- .amr_progress_step(
+          paste0("Preparing ", db_name, " HMM database"),
+          system2(
+            "docker",
+            args = c(
+              "run",
+              "--rm",
+              "-v",
+              paste0(dirname(hmm_file), ":/db"),
+              docker_image,
+              "hmmpress",
+              file.path("/db", basename(hmm_file))
+            ),
+            stdout = TRUE,
+            stderr = TRUE
+          ),
+          progress = progress,
+          verbose = verbose,
+          log_path = log_path
+        )
+
+      .log_tool_output(log_path, "HMMER", output)
 
       status <- attr(output, "status")
 
@@ -1410,13 +1642,22 @@ CDHIT2duckdb <- function(duckdb_path,
       hmm_path = hmm_file
     )
 
+    profile_resource <- .hmmer_profile_cache(
+      hmm_file = hmm_file,
+      database = db_name,
+      verbose = verbose
+    )
+
     db_paths[[db_name]] <- list(
       hmm = hmm_file,
+      profiles = profile_resource$path,
       source = db$url,
       type = db$type,
       pressed = pressed_files,
       bfc_rid = bfc_resource$rid,
-      bfc_rname = bfc_resource$rname
+      bfc_rname = bfc_resource$rname,
+      profiles_bfc_rid = profile_resource$rid,
+      profiles_bfc_rname = profile_resource$rname
     )
 
     if (verbose) {
@@ -1435,34 +1676,37 @@ CDHIT2duckdb <- function(duckdb_path,
 
 
 
-#' The function to run HMMER with docker
+#' Run one HMMER chunk job
 #'
-##' @param JOB_NAME Character. Identifier used for the HMMER job and output
-#'   filename.
-#' @param FASTA Character. File name of the protein FASTA chunk to search.
-#' @param DB Character. Name of the HMMER database to search against.
-#' @param total_proteins Integer. Total number of proteins in the full input
-#'   dataset, used to set HMMER's `-Z` and `--domZ` values.
-#' @param output_path Character. Directory containing the FASTA input, HMMER
-#'   output, and final Parquet result.
-#' @param db_paths List. Prepared HMMER database metadata indexed by database
-#'   name.
-#' @param docker_image Character. Docker image containing HMMER. Default:
-#'   `"staphb/hmmer"`.
-#' @param threads Integer. Total CPU budget used when calculating the number
-#'   of threads allocated to this job. Default: `8`.
-#' @param n_workers Integer. Number of HMMER jobs being run in parallel.
-#'   Used to divide the CPU budget among jobs. Default: `8`.
-#' @param verbose Logical. Print progress messages. Default: `TRUE`.
+#' Runs `hmmsearch` for one protein FASTA chunk against one prepared HMM
+#' database. The available CPU budget is divided across concurrently running
+#' HMMER workers. Raw HMMER output is parsed and written, unfiltered, to a
+#' Parquet file for later combination by [.runHMMER()].
 #'
-#' @returns the filename of the parquet file with hmmer output post parsing
+#' @param JOB_NAME Character. Unique name for this HMMER job, used to name
+#'   intermediate and output files.
+#' @param FASTA Character. Filename of the protein FASTA chunk to search.
+#' @param DB Character. Name of the prepared HMM database to search.
+#' @param total_proteins Integer. Total number of representative proteins in the
+#'   dataset, used to set HMMER's `-Z` and `--domZ` search-space values.
+#' @param output_path Character. Directory containing the FASTA input and where
+#'   HMMER intermediate and Parquet outputs should be written.
+#' @param db_paths List. Prepared HMM database metadata indexed by database name.
+#' @param docker_image Character. Docker image containing HMMER.
+#'   Default: `"staphb/hmmer"`.
+#' @param threads Integer. Total CPU budget available to HMMER. Default: `8`.
+#' @param n_workers Integer. Number of HMMER jobs running concurrently. Used to
+#'   divide the CPU budget among jobs. Default: `8`.
+#' @param log_path Character or `NULL`. Optional path for HMMER command output
+#'   logging.
 #'
+#' @return Character path to the parsed Parquet output for this HMMER job.
 #' @keywords internal
 .runHmmerJob <- function(JOB_NAME, FASTA, DB, total_proteins,
                          output_path = NULL, db_paths,
                          docker_image = "staphb/hmmer", threads = 8L,
                          n_workers = 8L,
-                         verbose = TRUE
+                         log_path = NULL
 ) {
   hmmer_input <- file.path(output_path, FASTA)
   hmmer_output <- file.path(output_path, paste0(JOB_NAME, ".tbl"))
@@ -1490,6 +1734,7 @@ CDHIT2duckdb <- function(duckdb_path,
     docker_image,
     "hmmsearch",
     "--notextw",
+    .hmmerReportingArgs(),
     "--cpu", as.character(threads_per_job),
     "-Z", total_proteins,
     "--domZ", total_proteins,
@@ -1498,38 +1743,43 @@ CDHIT2duckdb <- function(duckdb_path,
     .to_container(hmmer_input, mount_host, mount_cont)
   )
 
-  if(verbose) message("Running hmmsearch via Docker...")
-  output <- tryCatch(
-    {
-      system2("docker", args = cmd_args, stdout = TRUE, stderr = TRUE)
-    },
+  stderr_file <- tempfile(pattern = paste0(JOB_NAME, "_"), fileext = ".stderr")
+
+  on.exit(unlink(stderr_file, force = TRUE), add = TRUE)
+
+  status <- tryCatch(
+    system2(
+      "docker",
+      args = cmd_args,
+      stdout = FALSE,
+      stderr = stderr_file
+    ),
     error = function(e) {
       stop("hmmsearch execution failed: ", e$message)
     }
   )
 
-  status <- attr(output, "status")
-  if (!is.null(status) && status != 0L) {
-    stop(sprintf("hmmsearch failed with exit status %s:\n%s", status, paste(output, collapse = "\n")))
+  if (!identical(status, 0L) ||
+      !file.exists(hmmer_output)) {
+    diagnostics <- if (file.exists(stderr_file)) {
+      readLines(stderr_file, warn = FALSE)
+    } else {
+      character()
+    }
+
+    if (length(diagnostics)) {
+      .log_tool_output(log_path, paste0("HMMER failure: ", JOB_NAME), diagnostics)
+    }
+
+    stop("hmmsearch failed for ",
+         JOB_NAME,
+         ". See the processing log for diagnostics.",
+         call. = FALSE)
   }
 
-  if (!file.exists(hmmer_output)) {
-    stop("hmmsearch failed: output file not found. Check stderr:\n", paste(output, collapse = "\n"))
-  }
-
-  if(verbose) message("hmmsearch completed successfully.")
-
-  # Adding an E value cutoff here
-  hmmer_tbl <- .parseHMMEROutput(hmmer_output) |>
-    dplyr::filter(i_evalue <= 1e-5) |>
-    dplyr::select(
-      protein,
-      query_name,
-      query_accession,
-      target_description,
-      i_evalue,
-      domain_score
-    )
+  # Hits are written unfiltered; cutoffs are applied once per database after
+  # the chunks are combined (see .filterHMMER())
+  hmmer_tbl <- .hmmerHits(.parseHMMEROutput(hmmer_output))
 
   hmmer_tbl_filename <- file.path(
     dirname(hmmer_output),
@@ -1542,7 +1792,15 @@ CDHIT2duckdb <- function(duckdb_path,
 }
 
 
-#' Wrapper for preparing HMM databases and running HMMER on protein sequences from duckdb and writing them.
+#' Run HMMER against prepared protein reference databases
+#'
+#' Splits representative protein-cluster sequences into FASTA chunks and runs
+#' HMMER searches against each requested reference database. Chunks for each
+#' database are processed in parallel, then combined into one unfiltered hit
+#' Parquet file per database.
+#'
+#' HMM databases are prepared automatically when needed. Progress reports the
+#' number of completed chunks for the database currently being processed.
 #'
 #' @param duckdb_path Character. Path to the DuckDB database containing
 #'   `protein_cluster_seq`, which provides the protein sequences to analyze.
@@ -1558,21 +1816,32 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   sequences should be divided. Must be a positive integer. The requested
 #'   value is automatically reduced when fewer protein sequences are available.
 #'   Default: `8`.
-#' @param n_workers Integer. Number of parallel HMMER jobs to run. Default: `8`.
-#' @param verbose Logical. Print progress messages. Default: `TRUE`.#'
-#' @returns Invisibily returns completed HMMER Parquet files per requested database.
+#' @param n_workers Integer. Maximum number of HMMER chunk jobs to run in
+#'   parallel. Automatically reduced when fewer chunks are available.
+#'   Default: `8`.
+#' @param verbose Logical. Print persistent HMMER status and diagnostic
+#'   messages. Default: `TRUE`.
+#' @param log_path Character or `NULL`. Optional path for HMMER and external
+#'   tool output logging.
+#' @param progress Logical. Show temporary completed-chunk progress.
+#'   Default: `TRUE`.
+#' @return Invisibly returns a list containing the prepared database paths
+#'   (`databases`) and the unfiltered hit Parquet file of each database
+#'   (`hits`). Hit cutoffs are applied afterwards by [.filterHMMER()].
 #'
 #' @keywords internal
 .runHMMER <- function(duckdb_path,
-                      output_path,
+                      output_path = NULL,
                       threads = 8L,
                       hmmer_db_dir = NULL,
                       databases = c("Pfam", "COG", "AMRFinder"),
                       docker_image = "staphb/hmmer",
                       num_of_splits = 8L,
                       n_workers = 8L,
-                      verbose = TRUE
-) {
+                      verbose = TRUE,
+                      log_path = NULL,
+                      progress = TRUE)
+  {
   # Fail fast if Docker is missing
   if (!nzchar(Sys.which("docker"))) {
     stop("Docker is not available on your PATH but is required to run HMMER.")
@@ -1594,18 +1863,20 @@ CDHIT2duckdb <- function(duckdb_path,
   }
 
   threads <- .resolve_workers(requested = threads)
-  duckdb_path <- .docker_path(duckdb_path)
-  if (missing(output_path) || output_path %in% c(".", "results", "results/")) {
-    output_path <- dirname(duckdb_path)
-  }
-  output_path <- .docker_path(output_path)
-  if (!dir.exists(output_path)) dir.create(output_path, recursive = TRUE)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  paths <- .amr_paths_from_duckdb(duckdb_path)
 
+  if (is.null(output_path)) {
+    output_path <- paths$hmmer
+  }
+
+  dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
+  duckdb_path <- .docker_path(duckdb_path)
+  output_path <- .docker_path(output_path)
 
   prot_seqs <- local({
     con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
     on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
     DBI::dbReadTable(con, "protein_cluster_seq") |>
       tibble::as_tibble()
   })
@@ -1629,12 +1900,14 @@ CDHIT2duckdb <- function(duckdb_path,
   )
 
   # database paths
-  if(verbose) message ("Preparing HMM databases")
+  .log_or_message(log_path, verbose, "Preparing HMM databases")
   db_paths <- .prepareHmmerDatabases(
     hmmer_db_dir = hmmer_db_dir,
     databases = databases,
     docker_image = docker_image,
-    verbose = verbose
+    verbose = verbose,
+    log_path = log_path,
+    progress = progress
   )
 
   db_paths <- db_paths[databases]
@@ -1673,121 +1946,114 @@ CDHIT2duckdb <- function(duckdb_path,
       FASTA = paste0("protein_chunk_", chunk, ".fasta"),
       DB = db
     ) |>
-    dplyr::select(JOB_NAME, FASTA, DB)
+    dplyr::select(JOB_NAME, FASTA, DB, chunk)
 
-  n_workers <- .resolve_workers(requested = n_workers, n_tasks = min(nrow(job_list), threads))
+  n_workers <- .resolve_workers(requested = n_workers, n_tasks = min(actual_chunk_count, threads))
 
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-
-  .amr_set_future_plan(n_workers)
-
-  if (verbose) message("Running HMMER jobs")
   parquet_files <- local({
     old_plan <- future::plan()
-    on.exit(future::plan(old_plan), add = TRUE)
+
+    on.exit(
+      .amr_progress_step(
+        "Closing HMMER workers",
+        future::plan(old_plan),
+        progress = progress,
+        verbose = verbose,
+        log_path = log_path
+      ),
+      add = TRUE
+    )
 
     .amr_set_future_plan(n_workers)
 
-    if (isTRUE(verbose))
-      message("Running HMMER jobs")
+  .log_or_message(log_path, verbose, "Running ", nrow(job_list), " HMMER jobs.")
 
-    furrr::future_map_chr(
-      seq_len(nrow(job_list)),
-      function(i) {
-        .runHmmerJob(
+  purrr::map(seq_along(databases), function(db_i) {
+    db <- databases[[db_i]]
+    db_rows <- which(job_list$DB == db)
+
+    progress_message <- sprintf("HMMER %d/%d: %s chunk", db_i, length(databases), db)
+
+    .amr_with_progress({
+      p <- .amr_progressor(
+        steps = length(db_rows),
+        progress = progress,
+        label = db,
+        message = progress_message
+      )
+
+      p(amount = 0, message = progress_message)
+
+      furrr::future_map_chr(db_rows, function(i) {
+        result <- .runHmmerJob(
           JOB_NAME = job_list$JOB_NAME[[i]],
           FASTA = job_list$FASTA[[i]],
-          DB = job_list$DB[[i]],
+          DB = db,
           total_proteins = total_proteins,
           output_path = output_path,
           db_paths = db_paths,
           docker_image = docker_image,
           threads = threads,
           n_workers = n_workers,
-          verbose = verbose
+          log_path = log_path
         )
-      },
-      .options = furrr::furrr_options(seed = TRUE)
-    )
+
+        p(message = progress_message)
+
+        result
+      }, .options = furrr::furrr_options(seed = TRUE))
+    }, progress = progress, type = "steps")}) |>
+    unlist(use.names = FALSE)
   })
 
-  parquet_tbl <- tibble::tibble(
-    parquet = parquet_files,
-    db = job_list$DB
-  )
+  parquet_tbl <- tibble::tibble(parquet = parquet_files, db = job_list$DB)
 
-  final_parquets <- local({
-    con <- DBI::dbConnect(
-      duckdb::duckdb(),
-      duckdb_path
-    )
+  # One unfiltered hit file per database. Cutoffs are applied afterwards by
+  # .filterHMMER(), and keeping this file lets them change without a new search
+  hits_parquets <- .amr_with_progress(
+    {
+      p <- .amr_progressor(steps = length(databases),
+                           progress = progress,
+                           message = "Combining HMMER hits")
 
-    on.exit(
-      try(DBI::dbDisconnect(con), silent = TRUE),
-      add = TRUE
-    )
+      con <- DBI::dbConnect(duckdb::duckdb())
 
-    purrr::set_names(databases) |>
-      purrr::map(function(database_name) {
+      on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
 
-        if (isTRUE(verbose))
-          message("Combining ", database_name)
+      purrr::set_names(databases) |>
+        purrr::map(function(database_name) {
+          p(amount = 0, message = paste0("Combining HMMER hits: ", database_name))
 
-        db_files <- parquet_tbl |>
-          dplyr::filter(db == database_name) |>
-          dplyr::pull(parquet)
+          db_files <- parquet_tbl |>
+            dplyr::filter(db == database_name) |>
+            dplyr::pull(parquet)
 
-        combined_tbl <- db_files |>
-          purrr::map(arrow::read_parquet) |>
-          dplyr::bind_rows() |>
-          dplyr::left_join(
-            .parse_hmmer_profiles(
-              db_paths[[database_name]]$hmm
-            ) |>
-              dplyr::select(
-                query_name = profile_name,
-                description = profile_description
-              ),
-            by = "query_name"
+          hits_parquet <- file.path(output_path, paste0("protein_", database_name, "_hits.parquet"))
+
+          DBI::dbExecute(
+            con,
+            paste0(
+              "COPY (SELECT * FROM read_parquet([",
+              paste(DBI::dbQuoteString(con, normalizePath(db_files, winslash = "/")), collapse = ", "),
+              "], union_by_name = true)) TO ",
+              DBI::dbQuoteString(con, normalizePath(hits_parquet, winslash = "/", mustWork = FALSE)),
+              " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 3)"
+            )
           )
+          unlink(db_files, force = TRUE)
 
-        final_parquet <- file.path(output_path,
-                                   paste0("protein_", database_name, ".parquet"))
+          .log_or_message(log_path, verbose, "Combined ", database_name, " hits")
+          p(message = paste0("Combined ", database_name))
 
-        .write_compressed_parquet(combined_tbl, final_parquet)
-
-        DBI::dbWriteTable(con, name = paste0("protein_",database_name),
-                          value = combined_tbl, overwrite = TRUE)
-
-        if (isTRUE(verbose))
-          message("Created ",basename(final_parquet))
-
-        final_parquet
-      })
-  })
+          hits_parquet
+        })
+    }, progress = progress, type = "steps")
 
   unlink(
-    list.files(
-      output_path,
-      pattern = "^protein_chunk_.*\\.(fasta|tbl|parquet)$",
-      full.names = TRUE
-    )
+    list.files(output_path, pattern = "^protein_chunk_.*\\.(fasta|tbl|parquet)$", full.names = TRUE)
   )
 
-  invisible(list(
-    databases = db_paths,
-    outputs = final_parquets
-  ))
-
-  # purrr::map(parquet_files, arrow::read_parquet) |>
-  #   dplyr::bind_rows() |>
-  #   .write_compressed_parquet(final_parquet)
-
-  # message("Combined parquet written.")
-
-  # arrow::read_parquet(final_parquet) |>
-  #   DBI::dbWriteTable(conn = con, name = tools::file_path_sans_ext(basename(final_parquet)), overwrite = TRUE)
+  invisible(list(databases = db_paths, hits = hits_parquets))
 }
 
 #' Map HMMER protein annotations to genome-level count matrix and load into DuckDB
@@ -1802,10 +2068,12 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @param databases Character vector of HMMER database names to process.
 #'   Each database must correspond to a `protein_<database>` annotation table
 #'   already present in the DuckDB.
-#' @param output_path Character. Directory where the genome-by-annotation
-#'   Parquet files will be written. Defaults to `dirname(duckdb_path)`.
+#' @param output_path Character or `NULL`. Directory where genome-by-annotation
+#'   Parquet files are written. If `NULL`, defaults to the dataset's `orb/`
+#'   directory.
 #'
-#' @return Invisibly returns the path to the written count Parquet file.
+#' @return Invisibly returns a named list of count-Parquet paths, indexed by
+#'   database.
 #'
 #' @seealso [CDHIT2duckdb()], [runDataProcessing()]
 #'
@@ -1813,89 +2081,58 @@ CDHIT2duckdb <- function(duckdb_path,
 .proteinAnnotations2Duckdb <- function(
     duckdb_path,
     databases,
-    output_path = dirname(duckdb_path)
+    output_path = NULL,
+    verbose = TRUE
 ) {
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  paths <- .amr_paths_from_duckdb(duckdb_path)
 
-  duckdb_path <- .docker_path(duckdb_path)
+  if (is.null(output_path)) {
+    output_path <- paths$orb
+  }
 
-  con <- DBI::dbConnect(
-    duckdb::duckdb(),
-    duckdb_path
-  )
+  dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
+  output_path <- normalizePath(output_path, mustWork = TRUE)
 
+  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  protein_long <- DBI::dbReadTable(
-    con,
-    "protein_count"
-  ) |>
-    tibble::as_tibble() |>
-    tidyr::pivot_longer(
-      cols = -genome_id,
-      names_to = "protein",
-      values_to = "count"
-    ) |>
-    dplyr::filter(count > 0) |>
-    dplyr::mutate(
-      protein = stringr::str_replace(
-        protein,
-        "^fig\\.",
-        "fig|"
-      )
-    )
 
   count_paths <- list()
 
   for (database in databases) {
-
-    annotation_table <- paste0(
-      "protein_",
-      database
-    )
+    annotation_table <- paste0("protein_", database)
 
     if (!DBI::dbExistsTable(con, annotation_table)) {
-
-      warning(
-        annotation_table,
-        " not found in DuckDB. Skipping."
-      )
-
+      warning(annotation_table, " not found in DuckDB. Skipping.")
       next
     }
 
-    message(
-      "Processing ",
+    if (isTRUE(verbose)) {
+      message("Processing ", annotation_table)
+    }
+
+    annotation_sql <- DBI::dbQuoteIdentifier(
+      con,
       annotation_table
     )
 
-    annotation <- DBI::dbReadTable(
+    genome_annot_matrix <- DBI::dbGetQuery(
       con,
-      annotation_table
-    ) |>
-      tibble::as_tibble() |>
-      dplyr::distinct(
-        protein,
-        query_name
+      paste0(
+        "SELECT ",
+        "pc.genome_id, ",
+        "a.query_name, ",
+        "CAST(sum(pc.value) AS INTEGER) AS count ",
+        "FROM protein_count pc ",
+        "JOIN (",
+        "  SELECT DISTINCT protein, query_name ",
+        "  FROM ", annotation_sql,
+        ") a ON pc.protein = a.protein ",
+        "WHERE pc.value > 0 ",
+        "  AND a.query_name IS NOT NULL ",
+        "GROUP BY pc.genome_id, a.query_name"
       )
-
-    genome_annot_matrix <- protein_long |>
-      dplyr::inner_join(
-        annotation |>
-          dplyr::select(
-            protein,
-            query_name
-          ),
-        by = "protein",
-        relationship = "many-to-many"
-      ) |>
-      dplyr::group_by(
-        genome_id,
-        query_name
-      ) |>
-      dplyr::summarise(
-        count = sum(count),
-        .groups = "drop"
-      ) |>
+    ) |>
       tidyr::pivot_wider(
         names_from = query_name,
         values_from = count,
@@ -1909,10 +2146,7 @@ CDHIT2duckdb <- function(duckdb_path,
 
     count_path <- file.path(
       output_path,
-      paste0(
-        count_table,
-        ".parquet"
-      )
+      paste0(count_table, ".parquet")
     )
 
     arrow::write_parquet(
@@ -1929,33 +2163,51 @@ CDHIT2duckdb <- function(duckdb_path,
 
     count_paths[[database]] <- count_path
 
-    message(
-      "Created ",
-      count_table
-    )
+    if (isTRUE(verbose)) {
+      message("Created ", count_table)
+    }
   }
 
   invisible(count_paths)
 }
 
-#' Annotate proteins using DefenseFinder + CasFinder HMMs
-#' Will add to the duckdb + create the parquet file.
+#' Prepare DefenseFinder and CasFinder HMMs and search proteins
 #'
-#' @param defense_db_dir Directory used to store downloaded HMMs
-#' @param docker_image Docker image containing HMMER
-#' @param duckdb_path DuckDB database path
-#' @param output_path Output directory
-#' @param threads Number of HMMER threads
+#' Downloads and prepares the DefenseFinder and CasFinder model collections,
+#' combines their HMM profiles, and runs HMMER against the representative
+#' protein sequences in the selected dataset. Unfiltered hits are written for
+#' [.filterHMMER()].
 #'
-#' @returns Path to annotation parquet
+#' Prepared combined HMMs, pressed indexes, and profile metadata are reused when
+#' already present.
+#'
+#' @param defense_db_dir Character. Directory used to cache DefenseFinder and
+#'   CasFinder model files.
+#' @param docker_image Character. Docker image containing HMMER.
+#'   Default: `"staphb/hmmer"`.
+#' @param duckdb_path Character. Path to the working dataset DuckDB.
+#' @param output_path Character or `NULL`. Directory for HMMER outputs. If
+#'   `NULL`, the dataset HMMER directory is used.
+#' @param threads Integer. CPU budget available to HMMER. Default: `8`.
+#' @param verbose Logical. Print persistent preparation and execution messages.
+#'   Default: `TRUE`.
+#' @param log_path Character or `NULL`. Optional path for external-tool logging.
+#' @param progress Logical. Show download progress when DefenseFinder or
+#'   CasFinder model archives must be retrieved. Default: `TRUE`.
+#'
+#' @return Invisibly returns a list containing prepared DefenseFinder and
+#'   CasFinder HMM/profile-cache metadata (`databases`) and their unfiltered
+#'   hit Parquet files (`hits`).
 #' @keywords internal
 .defenseHMMER <- function(
     defense_db_dir,
     docker_image = "staphb/hmmer",
-    duckdb_path = "inst/extdata/Sfl.duckdb",
+    duckdb_path,
     output_path = NULL,
     threads = 8L,
-    verbose = TRUE
+    verbose = TRUE,
+    log_path = NULL,
+    progress = TRUE
 ) {
 
   if (!nzchar(Sys.which("docker"))) {
@@ -1963,59 +2215,34 @@ CDHIT2duckdb <- function(duckdb_path,
   }
 
   threads <- .resolve_workers(requested = threads)
-  defense_db_dir <- normalizePath(
-    defense_db_dir,
-    mustWork = FALSE
-  )
-
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  paths <- .amr_paths_from_duckdb(duckdb_path)
+  defense_db_dir <- normalizePath(defense_db_dir, mustWork = FALSE)
   if (is.null(output_path)) {
-    output_path <- dirname(
-      normalizePath(
-        duckdb_path,
-        mustWork = FALSE
-      )
-    )
+    output_path <- paths$hmmer
   }
-
-  dir.create(
-    defense_db_dir,
-    recursive = TRUE,
-    showWarnings = FALSE
-  )
-
-  dir.create(
-    output_path,
-    recursive = TRUE,
-    showWarnings = FALSE
-  )
+  dir.create(defense_db_dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
+  output_path <- normalizePath(output_path, mustWork = TRUE)
 
   ####################################################################
   # download repositories
   ####################################################################
 
-  defense_dir <- file.path(
-    defense_db_dir,
-    "DefenseFinder"
-  )
+  defense_dir <- file.path(defense_db_dir, "DefenseFinder")
 
-  cas_dir <- file.path(
-    defense_db_dir,
-    "CasFinder"
-  )
+  cas_dir <- file.path(defense_db_dir, "CasFinder")
 
   if (!dir.exists(defense_dir)) {
 
-    if(verbose) message(
-      "Downloading DefenseFinder models"
-    )
+    .log_or_message(log_path, verbose, "Downloading DefenseFinder models")
 
     tmp <- tempfile(fileext = ".zip")
 
-    utils::download.file(
-      "https://github.com/mdmparis/defense-finder-models/archive/refs/heads/master.zip",
-      tmp,
-      mode = "wb",
-      method = "libcurl"
+    .amr_download_file(
+      url = "https://github.com/mdmparis/defense-finder-models/archive/refs/heads/master.zip",
+      destfile = tmp,
+      progress = progress
     )
 
     utils::unzip(
@@ -2028,18 +2255,13 @@ CDHIT2duckdb <- function(duckdb_path,
 
   if (!dir.exists(cas_dir)) {
 
-    if(verbose) message(
-      "Downloading CasFinder models"
-    )
+    .log_or_message(log_path, verbose, "Downloading CasFinder models")
 
     tmp <- tempfile(fileext = ".zip")
 
-    utils::download.file(
-      "https://github.com/macsy-models/CasFinder/archive/refs/heads/main.zip",
+    .amr_download_file(url = "https://github.com/macsy-models/CasFinder/archive/refs/heads/main.zip",
       tmp,
-      mode = "wb",
-      method = "libcurl"
-    )
+      progress = progress)
 
     utils::unzip(
       tmp,
@@ -2049,7 +2271,7 @@ CDHIT2duckdb <- function(duckdb_path,
     unlink(tmp)
   }
 
-  ####################################################################
+    ####################################################################
   # helper
   ####################################################################
 
@@ -2057,6 +2279,32 @@ CDHIT2duckdb <- function(duckdb_path,
     repo_dir,
     db_name
   ) {
+
+    combined_hmm <- file.path(
+      repo_dir,
+      paste0(
+        db_name,
+        ".hmm"
+      )
+    )
+
+    pressed_files <- paste0(
+      combined_hmm,
+      c(
+        ".h3m",
+        ".h3i",
+        ".h3f",
+        ".h3p"
+      )
+    )
+
+    prepared <- file.exists(combined_hmm) &&
+      all(file.exists(pressed_files)) &&
+      all(file.info(pressed_files)$mtime >= file.info(combined_hmm)$mtime)
+
+    if (prepared) {
+      return(combined_hmm)
+    }
 
     profile_dirs <- list.dirs(
       repo_dir,
@@ -2068,7 +2316,6 @@ CDHIT2duckdb <- function(duckdb_path,
       basename(profile_dirs) == "profiles"
     ]
 
-    # moving to purrr implementation
     hmm_files <- profile_dirs |>
       purrr::map(\(x) list.files(x,
                                  pattern = "\\.hmm$",
@@ -2114,17 +2361,11 @@ CDHIT2duckdb <- function(duckdb_path,
       )
     }
 
-    combined_hmm <- file.path(
-      repo_dir,
-      paste0(
-        db_name,
-        ".hmm"
-      )
+    # Rebuild combined HMMs and all pressed indexes as one cached unit
+    unlink(
+      c(combined_hmm, pressed_files),
+      force = TRUE
     )
-
-    if (file.exists(combined_hmm)) {
-      unlink(combined_hmm)
-    }
 
     file.create(combined_hmm)
 
@@ -2136,57 +2377,87 @@ CDHIT2duckdb <- function(duckdb_path,
       )
     }
 
-    pressed_files <- paste0(
-      combined_hmm,
-      c(
-        ".h3m",
-        ".h3i",
-        ".h3f",
-        ".h3p"
-      )
+    .log_or_message(
+      log_path,
+      verbose,
+      "Running hmmpress for ",
+      db_name
     )
 
-    if (!all(file.exists(pressed_files))) {
+    stderr_file <- tempfile(
+      pattern = paste0(
+        "hmmpress_",
+        db_name,
+        "_"
+      ),
+      fileext = ".stderr"
+    )
 
-      if(verbose) message(
-        "Running hmmpress for ",
-        db_name
-      )
+    on.exit(
+      unlink(
+        stderr_file,
+        force = TRUE
+      ),
+      add = TRUE
+    )
 
-      output <- system2(
+    status <- tryCatch(
+      system2(
         "docker",
         args = c(
           "run",
           "--rm",
           "-v",
-          paste0(
-            dirname(combined_hmm),
-            ":/db"
-          ),
+          paste0(dirname(combined_hmm), ":/db"),
           docker_image,
           "hmmpress",
-          file.path(
-            "/db",
-            basename(combined_hmm)
-          )
+          file.path("/db", basename(combined_hmm))
         ),
-        stdout = TRUE,
-        stderr = TRUE
-      )
+        stdout = FALSE,
+        stderr = stderr_file
+      ),
+      error = function(e) {
+        stop(
+          "hmmpress execution failed for ",
+          db_name,
+          ": ",
+          e$message
+        )
+      }
+    )
 
-      status <- attr(output, "status")
+    if (
+      !identical(status, 0L) ||
+      !all(file.exists(pressed_files))
+    ) {
 
-      if ((!is.null(status) && status != 0L) || !all(file.exists(pressed_files))) {
+        diagnostics <- if (file.exists(stderr_file)) {
+          readLines(
+            stderr_file,
+            warn = FALSE
+          )
+        } else {
+          character()
+        }
+
+        if (length(diagnostics)) {
+          .log_tool_output(
+            log_path,
+            paste0(
+              "HMMER failure: ",
+              db_name
+            ),
+            diagnostics
+          )
+        }
 
         stop(
           "hmmpress failed for ",
           db_name,
-          "\n",
-          paste(output,
-                collapse = "\n")
+          ". See the processing log for diagnostics.",
+          call. = FALSE
         )
       }
-    }
 
     combined_hmm
   }
@@ -2195,15 +2466,27 @@ CDHIT2duckdb <- function(duckdb_path,
   # build separate databases
   ####################################################################
 
-  defense_hmm <- build_database(
+  defense_hmm <- .amr_progress_step(
+  "Preparing DefenseFinder HMM database",
+  build_database(
     defense_dir,
     "DefenseFinder"
-  )
+  ),
+  progress = progress,
+  verbose = verbose,
+  log_path = log_path
+)
 
-  cas_hmm <- build_database(
+cas_hmm <- .amr_progress_step(
+  "Preparing CasFinder HMM database",
+  build_database(
     cas_dir,
     "CasFinder"
-  )
+  ),
+  progress = progress,
+  verbose = verbose,
+  log_path = log_path
+)
 
   defense_bfc <- .amr_bfc_register_hmmer(
     database = "DefenseCas",
@@ -2215,6 +2498,20 @@ CDHIT2duckdb <- function(duckdb_path,
     database = "DefenseCas",
     component = "CasFinder",
     hmm_path = cas_hmm
+  )
+
+  defense_profiles <- .hmmer_profile_cache(
+    hmm_file = defense_hmm,
+    database = "DefenseCas",
+    verbose = verbose,
+    component = "DefenseFinder"
+  )
+
+  cas_profiles <- .hmmer_profile_cache(
+    hmm_file = cas_hmm,
+    database = "DefenseCas",
+    verbose = verbose,
+    component = "CasFinder"
   )
 
   ####################################################################
@@ -2250,94 +2547,120 @@ CDHIT2duckdb <- function(duckdb_path,
   ####################################################################
 
   databases <- list(
-    DefenseFinder = defense_hmm,
-    CasFinder = cas_hmm
+    DefenseFinder = list(
+      hmm = defense_hmm,
+      profiles = defense_profiles$path
+    ),
+    CasFinder = list(
+      hmm = cas_hmm,
+      profiles = cas_profiles$path
+    )
   )
 
-  combined_tbl <- purrr::imap_dfr(
-    databases, function(hmm_file, db_name) {
+  purrr::iwalk(
+    databases, function(database, db_name) {
+    .log_or_message(log_path, verbose, "Running ", db_name)
 
-      if (isTRUE(verbose))
-        message("Running ", db_name)
+    hmm_file <- database$hmm
 
-      tbl_file <- file.path(output_path, paste0("protein_", db_name, ".tbl")
-      )
+    tbl_file <- file.path(output_path, paste0("protein_", db_name, ".tbl"))
 
-      output <- system2(
-        "docker",
-        args = c(
-          "run",
-          "--rm",
-          "-v",
-          paste0(output_path, ":/work"),
-          "-v",
-          paste0(dirname(hmm_file), ":/db"),
-          docker_image,
-          "hmmsearch",
-          "--notextw",
-          "--cpu",
-          as.character(threads),
-          "-Z", total_proteins,
-          "--domZ", total_proteins,
-          "--domtblout",
-          file.path(
-            "/work",
-            basename(tbl_file)
-          ),
-          file.path(
-            "/db",
-            basename(hmm_file)
-          ),
-          "/work/protein_DefenseCas.faa"
-        ),
-        stdout = TRUE,
-        stderr = TRUE
-      )
+    stderr_file <- tempfile(pattern = paste0("hmmer_", db_name, "_"),
+                            fileext = ".stderr")
 
-      status <- attr(output, "status")
+      status <- .amr_progress_step(
+                  paste0("Running ", db_name, " HMMER"),
+                  tryCatch(
+                    system2(
+                      "docker",
+                      args = c(
+                        "run",
+                        "--rm",
+                        "-v",
+                        paste0(output_path, ":/work"),
+                        "-v",
+                        paste0(dirname(hmm_file), ":/db"),
+                        docker_image,
+                        "hmmsearch",
+                        "--notextw",
+                        .hmmerReportingArgs(),
+                        "--cpu",
+                        as.character(threads),
+                        "-Z",
+                        total_proteins,
+                        "--domZ",
+                        total_proteins,
+                        "--domtblout",
+                        file.path("/work", basename(tbl_file)),
+                        file.path("/db", basename(hmm_file)),
+                        "/work/protein_DefenseCas.faa"
+                      ),
+                      stdout = FALSE,
+                      stderr = stderr_file
+                    ),
+                    error = function(e) {
+                      stop(
+                        "hmmsearch execution failed for ",
+                        db_name,
+                        ": ",
+                        e$message
+                      )
+                    }
+                  ),
+                  progress = progress,
+                  verbose = verbose,
+                  log_path = log_path
+                )
 
-      if ((!is.null(status) && status != 0L) || !file.exists(tbl_file)) {
+      if (
+        !identical(status, 0L) ||
+        !file.exists(tbl_file)
+      ) {
+        diagnostics <- if (file.exists(stderr_file)) {
+          readLines(
+            stderr_file,
+            warn = FALSE
+          )
+        } else {
+          character()
+        }
+
+        if (length(diagnostics)) {
+          .log_tool_output(
+            log_path,
+            paste0(
+              "HMMER failure: ",
+              db_name
+            ),
+            diagnostics
+          )
+        }
+
+        unlink(
+          stderr_file,
+          force = TRUE
+        )
+
         stop(
           "hmmsearch failed for ",
           db_name,
-          "\n",
-          paste(output, collapse = "\n")
+          ". See the processing log for diagnostics.",
+          call. = FALSE
         )
       }
 
-      .parseHMMEROutput(tbl_file) |>
-        dplyr::select(
-          protein,
-          query_name
-        ) |>
-        dplyr::mutate(
-          database = db_name
-        ) |>
-        dplyr::left_join(
-          .parse_hmmer_profiles(hmm_file) |>
-            dplyr::select(
-              query_name = profile_name,
-              query_accession = profile_accession,
-              description = profile_description
-            ),
-          by = "query_name"
-        )
+      unlink(
+        stderr_file,
+        force = TRUE
+      )
+
+      # Keep the unfiltered hits; cutoffs are applied by .filterHMMER()
+      .write_compressed_parquet(
+        .hmmerHits(.parseHMMEROutput(tbl_file)),
+        file.path(output_path, paste0("protein_", db_name, "_hits.parquet"))
+      )
     }
   )
-
-  parquet_file <- file.path(output_path, "protein_DefenseCas.parquet")
-
-  .write_compressed_parquet(combined_tbl, parquet_file)
-
-  local({
-    con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-
-    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-    DBI::dbWriteTable(con, "protein_DefenseCas", combined_tbl, overwrite = TRUE)
-  })
-
-  message("Created protein_DefenseCas")
 
   unlink(
     c(fasta_file, file.path(output_path, paste0("protein_", names(databases), ".tbl")))
@@ -2347,16 +2670,395 @@ CDHIT2duckdb <- function(duckdb_path,
     databases = list(
       DefenseFinder = list(
         hmm = defense_hmm,
+        profiles = defense_profiles$path,
         bfc_rid = defense_bfc$rid,
-        bfc_rname = defense_bfc$rname
+        bfc_rname = defense_bfc$rname,
+        profiles_bfc_rid = defense_profiles$rid,
+        profiles_bfc_rname = defense_profiles$rname
       ),
       CasFinder = list(
         hmm = cas_hmm,
+        profiles = cas_profiles$path,
         bfc_rid = cas_bfc$rid,
-        bfc_rname = cas_bfc$rname
+        bfc_rname = cas_bfc$rname,
+        profiles_bfc_rid = cas_profiles$rid,
+        profiles_bfc_rname = cas_profiles$rname
       )
     ),
-    output = parquet_file
+    hits = file.path(output_path, paste0("protein_", names(databases), "_hits.parquet"))
+  ))
+}
+
+
+# Retain candidates passing HMMER's acceleration filters, including scores whose
+# E-values exceed the default reporting limit
+.hmmerReportingArgs <- function() c("-T", "-1e6", "--domT", "-1e6")
+
+.checkHmmerFallback <- function(evalue, coverage) {
+  if (!is.numeric(evalue) || length(evalue) != 1L ||
+      !is.finite(evalue) || evalue <= 0) {
+    stop("`hmmer_fallback_evalue` must be a finite number greater than 0.", call. = FALSE)
+  }
+  if (!is.numeric(coverage) || length(coverage) != 1L ||
+      !is.finite(coverage) || coverage <= 0 || coverage > 1) {
+    stop("`hmmer_fallback_coverage` must be a number in (0, 1].", call. = FALSE)
+  }
+}
+
+#' Filter HMMER hits and write the annotation tables
+#'
+#' Applies the hit cutoffs to the unfiltered hits saved by [.runHMMER()] and
+#' [.defenseHMMER()], then writes one annotation Parquet file and DuckDB table
+#' per database (`protein_<database>`). Because the unfiltered hits are kept,
+#' this can be run again with other cutoffs without re-running HMMER. Filtering
+#' runs in DuckDB, so the full hit table never has to fit in R memory.
+#'
+#' Pfam, AMRFinder, DefenseFinder and CasFinder hits are judged on the bit score
+#' cutoff their curators define in each profile (`GA`, or `TC` for AMRFinder):
+#' both the sequence and the domain score must reach it. A profile that defines
+#' no cutoff uses the configurable E-value and profile-coverage fallback.
+#' Unknown profile names and incomplete cutoff pairs are errors.
+#'
+#' COG profiles define no cutoffs, so COG hits must have a sequence and a domain
+#' E-value at or below `cog_evalue`. The default, 1e-4, is the cutoff NCBI uses to
+#' assign proteins to COGs (COG database update 2024, Nucleic Acids Res
+#' 53:D356). NCBI also keeps only the highest-scoring non-overlapping footprints
+#' of a protein, so a COG hit is dropped when it shares more than `cog_overlap`
+#' of its length with a better hit (lower E-value, then higher score) on the same
+#' protein. Two COGs on different regions, as in fused enzymes, are both kept.
+#'
+#' Hits to related profiles that overlap are otherwise kept: each profile is its
+#' own count column downstream, so removing them would change those counts.
+#'
+#' @param duckdb_path Character. Path to the working dataset DuckDB, where the
+#'   `protein_<database>` tables are written.
+#' @param output_path Character. Directory holding the `protein_<name>_hits.parquet`
+#'   files, and where the `protein_<database>.parquet` files are written.
+#' @param databases Character vector of HMMER database names. `DefenseCas` stands
+#'   for the DefenseFinder and CasFinder searches.
+#' @param profiles Named character vector of profile metadata Parquet files (from
+#'   [.hmmer_profile_cache()]), named by searched database: `Pfam`, `COG`,
+#'   `AMRFinder`, `DefenseFinder`, `CasFinder`. They carry the `GA`/`TC` cutoffs
+#'   and the profile descriptions.
+#' @param cog_evalue Numeric. E-value for COG hits. Default: `1e-4`.
+#' @param cog_overlap Numeric between 0 and 1. Share of a COG hit's length that
+#'   it may overlap a better COG hit on the same protein. Default: `0.1`, which
+#'   tolerates the few residues two fused domains can share.
+#' @param tolerance Numeric. Bit score slack for the one-decimal rounding of
+#'   scores in HMMER's output: a hit scoring exactly at a cutoff can print up to
+#'   0.05 below it. Default: `0.05`.
+#' @param verbose Logical. Print progress messages.
+#' @param log_path Character or `NULL`. Optional processing log.
+#'
+#' @param fallback_evalue Maximum sequence and independent-domain E-values
+#'   when neither curated cutoff is present. Default: `1e-3`.
+#' @param fallback_coverage Minimum profile coverage for the fallback. Default: `0.5`.
+#'
+#' @return Invisibly returns the annotation Parquet file of each database.
+#' @keywords internal
+.filterHMMER <- function(duckdb_path,
+                         output_path,
+                         databases,
+                         profiles,
+                         cog_evalue = 1e-4,
+                         cog_overlap = 0.1,
+                         tolerance = 0.05,
+                         verbose = TRUE,
+                         log_path = NULL,
+                         fallback_evalue = 1e-3,
+                         fallback_coverage = 0.5) {
+  .checkHmmerFallback(fallback_evalue, fallback_coverage)
+  if (!is.numeric(cog_evalue) || length(cog_evalue) != 1L || is.na(cog_evalue) || cog_evalue <= 0) {
+    stop("`cog_evalue` must be a single number greater than 0.", call. = FALSE)
+  }
+
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  output_path <- normalizePath(output_path, mustWork = TRUE)
+
+  duck <- DBI::dbConnect(duckdb::duckdb())
+  on.exit(try(DBI::dbDisconnect(duck, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  file_sql <- function(path) {
+    DBI::dbQuoteString(duck, normalizePath(path, winslash = "/", mustWork = FALSE))
+  }
+
+  # The hits of one searched database that pass its cutoffs
+  gate <- function(name) {
+    hits <- file.path(output_path, paste0("protein_", name, "_hits.parquet"))
+    if (!name %in% names(profiles)) {
+      stop("Missing profile metadata for ", name, ".", call. = FALSE)
+    }
+    profile_join <- paste0(
+      " FROM read_parquet(", file_sql(hits), ") h LEFT JOIN (",
+      "SELECT profile_name, max(ga_seq) AS ga_seq, max(ga_dom) AS ga_dom, ",
+      "max(tc_seq) AS tc_seq, max(tc_dom) AS tc_dom ",
+      "FROM read_parquet(", file_sql(profiles[[name]]), ") GROUP BY profile_name",
+      ") p ON h.query_name = p.profile_name "
+    )
+    unknown <- DBI::dbGetQuery(duck, paste0(
+      "SELECT DISTINCT h.query_name", profile_join,
+      "WHERE p.profile_name IS NULL LIMIT 5"
+    ))
+    if (nrow(unknown)) {
+      stop("Unknown HMMER profile(s) in ", name, ": ",
+           paste(unknown$query_name, collapse = ", "), call. = FALSE)
+    }
+    cutoff <- switch(name, COG = NA_character_, AMRFinder = "tc", "ga")
+
+    keep_sql <- if (is.na(cutoff)) {
+      sprintf("h.sequence_evalue <= %1$.10g AND h.i_evalue <= %1$.10g", cog_evalue)
+    } else {
+      seq_col <- paste0("p.", cutoff, "_seq")
+      dom_col <- paste0("p.", cutoff, "_dom")
+
+      partial <- DBI::dbGetQuery(duck, paste0(
+        "SELECT DISTINCT h.query_name", profile_join, "WHERE (",
+        seq_col, " IS NULL) <> (", dom_col, " IS NULL) LIMIT 5"
+      ))
+      if (nrow(partial)) {
+        stop("Incomplete curated cutoff pair in ", name, ": ",
+             paste(partial$query_name, collapse = ", "), call. = FALSE)
+      }
+      sprintf(
+        paste0(
+          "((%1$s IS NOT NULL AND %2$s IS NOT NULL AND ",
+          "h.sequence_score >= %1$s - %3$.10g AND h.domain_score >= %2$s - %3$.10g) OR ",
+          "(%1$s IS NULL AND %2$s IS NULL AND ",
+          "h.sequence_evalue <= %4$.10g AND h.i_evalue <= %4$.10g AND ",
+          "h.profile_coverage >= %5$.10g))"
+        ),
+        seq_col, dom_col, tolerance + 1e-6, fallback_evalue, fallback_coverage
+      )
+    }
+
+    kept <- DBI::dbGetQuery(
+      duck,
+      paste0(
+        "SELECT h.*", profile_join, "WHERE ", keep_sql
+      )
+    )
+
+    n_hits <- DBI::dbGetQuery(
+      duck,
+      paste0("SELECT count(*) AS n FROM read_parquet(", file_sql(hits), ")")
+    )$n[[1L]]
+
+    .log_or_message(log_path, verbose, name, ": kept ", nrow(kept), " of ", n_hits, " hits")
+
+    tibble::as_tibble(kept)
+  }
+
+  # Drop a hit that shares more than `cog_overlap` of its length with a better
+  # hit on the same protein
+  best_hit_per_region <- function(hits) {
+    hits <- hits[order(hits$protein, hits$i_evalue, -hits$domain_score), ]
+    keep <- rep(TRUE, nrow(hits))
+
+    for (rows in Filter(function(r) length(r) > 1L, split(seq_len(nrow(hits)), hits$protein))) {
+      kept_from <- hits$env_from[rows[[1L]]]
+      kept_to <- hits$env_to[rows[[1L]]]
+
+      for (r in rows[-1L]) {
+        from <- hits$env_from[r]
+        to <- hits$env_to[r]
+        shared <- max(pmax(0, pmin(to, kept_to) - pmax(from, kept_from) + 1))
+
+        if (shared / (to - from + 1) > cog_overlap) {
+          keep[r] <- FALSE
+        } else {
+          kept_from <- c(kept_from, from)
+          kept_to <- c(kept_to, to)
+        }
+      }
+    }
+
+    hits[keep, ]
+  }
+
+  descriptions <- function(name) {
+    arrow::read_parquet(profiles[[name]]) |>
+      dplyr::select(
+        query_name = profile_name,
+        query_accession = profile_accession,
+        description = profile_description
+      )
+  }
+
+  purrr::set_names(databases) |>
+    purrr::map(function(database) {
+      annotation <- if (identical(database, "DefenseCas")) {
+        purrr::map(c("DefenseFinder", "CasFinder"), function(name) {
+          gate(name) |>
+            dplyr::select(protein, query_name) |>
+            dplyr::mutate(database = name) |>
+            dplyr::left_join(descriptions(name), by = "query_name")
+        }) |>
+          dplyr::bind_rows()
+      } else {
+        hits <- gate(database)
+
+        if (identical(database, "COG")) {
+          hits <- best_hit_per_region(hits)
+          .log_or_message(log_path, verbose, "COG: ", nrow(hits), " hits after keeping the best hit per region")
+        }
+
+        hits |>
+          dplyr::select(protein, query_name, target_description, i_evalue, domain_score) |>
+          dplyr::left_join(descriptions(database), by = "query_name") |>
+          dplyr::relocate(query_accession, .after = query_name)
+      }
+
+      parquet <- file.path(output_path, paste0("protein_", database, ".parquet"))
+
+      .write_compressed_parquet(annotation, parquet)
+      DBI::dbWriteTable(con, paste0("protein_", database), annotation, overwrite = TRUE)
+
+      .log_or_message(log_path, verbose, "Created ", basename(parquet))
+
+      parquet
+    })
+}
+
+
+#' Annotate proteins with HMMER and write the results to DuckDB
+#'
+#' Runs the HMMER searches for the requested databases on the representative
+#' protein sequences of a dataset, applies the hit cutoffs, and writes one
+#' annotation table per database. This is the HMMER step of
+#' [runDataProcessing()], available on its own.
+#'
+#' Pfam, COG and AMRFinder are searched with the prepared reference databases;
+#' `DefenseCas` stands for the DefenseFinder and CasFinder model collections.
+#' Hits are kept when they pass the curated `GA`/`TC` cutoffs of the profile
+#' (or the fallback E-value and coverage when a profile has none); COG hits also
+#' need `cog_evalue` and keep the best hit per protein region. The unfiltered
+#' hits stay in `output_path`.
+#'
+#' Requires Docker. The `protein_cluster_seq` table must exist, so run
+#' [CDHIT2duckdb()] first.
+#'
+#' @param duckdb_path Character. Path to the per-bug DuckDB containing
+#'   `protein_cluster_seq`. The `protein_<database>` tables are written to it.
+#' @param output_path Character or `NULL`. Directory for the HMMER Parquet
+#'   outputs. If `NULL`, the dataset's HMMER folder is used.
+#' @param databases Character vector. HMMER databases to run.
+#'   Default: `c("Pfam", "COG", "AMRFinder", "DefenseCas")`.
+#' @param hmmer_db_dir Character or `NULL`. Directory holding the HMMER
+#'   databases. If `NULL`, the default amRdata HMMER cache is used.
+#' @param docker_image Character. Docker image containing HMMER.
+#'   Default: `"staphb/hmmer"`.
+#' @param threads Integer. Total CPU budget for HMMER. Default: `8`.
+#' @param num_of_splits Integer. Number of chunks the protein sequences are
+#'   divided into. Default: `8`.
+#' @param n_workers Integer. Maximum number of chunk jobs run in parallel.
+#'   Default: `8`.
+#' @param cog_evalue Numeric. E-value cutoff for COG hits. Default: `1e-4`.
+#' @param fallback_evalue Numeric. Maximum E-value for profiles without
+#'   curated cutoffs. Default: `1e-3`.
+#' @param fallback_coverage Numeric. Minimum profile coverage for profiles
+#'   without curated cutoffs. Default: `0.5`.
+#' @param verbose Logical. Print status messages. Default: `TRUE`.
+#' @param log_path Character or `NULL`. Optional path for logging.
+#' @param progress Logical. Show temporary progress. Default: `TRUE`.
+#'
+#' @return Invisibly returns a list with `annotations` (the annotation Parquet
+#'   file of each database) and `databases` (the prepared databases and profile
+#'   metadata of the generic and `DefenseCas` searches, recorded in the run
+#'   manifest by [runDataProcessing()]).
+#'
+#' @seealso [CDHIT2duckdb()], [runDataProcessing()]
+#'
+#' @examples
+#' \dontrun{
+#' HMMER2duckdb("data/Shigella_flexneri/work/Sfl.duckdb")
+#' }
+#'
+#' @export
+HMMER2duckdb <- function(duckdb_path,
+                         output_path = NULL,
+                         databases = c("Pfam", "COG", "AMRFinder", "DefenseCas"),
+                         hmmer_db_dir = NULL,
+                         docker_image = "staphb/hmmer",
+                         threads = 8L,
+                         num_of_splits = 8L,
+                         n_workers = 8L,
+                         cog_evalue = 1e-4,
+                         fallback_evalue = 1e-3,
+                         fallback_coverage = 0.5,
+                         verbose = TRUE,
+                         log_path = NULL,
+                         progress = TRUE) {
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  if (is.null(output_path)) {
+    output_path <- .amr_paths_from_duckdb(duckdb_path)$hmmer
+  }
+  if (is.null(hmmer_db_dir)) {
+    hmmer_db_dir <- .defaultHmmerDbDir()
+  }
+
+  generic_databases <- intersect(databases, c("Pfam", "COG", "AMRFinder"))
+
+  hmmer_result <- NULL
+  if (length(generic_databases)) {
+    hmmer_result <- .runHMMER(
+      duckdb_path = duckdb_path,
+      output_path = output_path,
+      threads = threads,
+      hmmer_db_dir = hmmer_db_dir,
+      databases = generic_databases,
+      docker_image = docker_image,
+      num_of_splits = num_of_splits,
+      n_workers = n_workers,
+      verbose = verbose,
+      log_path = log_path,
+      progress = progress
+    )
+  }
+
+  defense_result <- NULL
+  if ("DefenseCas" %in% databases) {
+    defense_result <- .defenseHMMER(
+      defense_db_dir = file.path(hmmer_db_dir, "DefenseCas"),
+      docker_image = docker_image,
+      duckdb_path = duckdb_path,
+      output_path = output_path,
+      threads = threads,
+      verbose = verbose,
+      log_path = log_path,
+      progress = progress
+    )
+  }
+
+  # Apply the hit cutoffs to the unfiltered hits and write the annotation tables
+  .amr_status("Filtering HMMER hits", verbose = verbose, log_path = log_path)
+
+  annotations <- .filterHMMER(
+    duckdb_path = duckdb_path,
+    output_path = output_path,
+    databases = databases,
+    profiles = unlist(
+      c(
+        purrr::map(hmmer_result$databases, "profiles"),
+        purrr::map(defense_result$databases, "profiles")
+      ),
+      use.names = TRUE
+    ),
+    cog_evalue = cog_evalue,
+    fallback_evalue = fallback_evalue,
+    fallback_coverage = fallback_coverage,
+    verbose = verbose,
+    log_path = log_path
+  )
+
+  invisible(list(
+    annotations = annotations,
+    databases = list(
+      generic = hmmer_result$databases,
+      DefenseCas = defense_result$databases
+    )
   ))
 }
 
@@ -2368,41 +3070,39 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   already contain the tables written by [prepareGenomes()] and the upstream
 #'   genome-processing steps.
 #' @param path the path to working directory
+#' @param evidence_mode Character or `NULL`. Which AMR evidence to keep:
+#'   `"lab_only"`, `"lab_or_comp"`, `"comp_only"`, or `"any"`. If `NULL`
+#'   (default), uses the mode recorded by [prepareGenomes()] in the dataset
+#'   manifest, or `"lab_only"` if none is recorded. An explicit value that
+#'   disagrees with the manifest is an error.
 #'
 #' @export
-cleanMetaData <- function(duckdb_path, path) {
-  duckdb_path <- normalizePath(duckdb_path)
-  # If no explicit path is provided (or a generic one), choose results/<bug>/ when
-  # the DuckDB lives under data/<bug>/, or else fall back to the DuckDB directory.
-  if (missing(path) || path %in% c(".", "results", "results/")) {
-    bug_dir <- dirname(duckdb_path)
-    mapped_results <- sub(
-      paste0(.Platform$file.sep, "data", .Platform$file.sep),
-      paste0(.Platform$file.sep, "results", .Platform$file.sep),
-      bug_dir,
-      fixed = TRUE
-    )
-    path <- if (!identical(mapped_results, bug_dir)) mapped_results else bug_dir
+cleanMetaData <- function(duckdb_path, path = NULL, evidence_mode = NULL) {
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  evidence_mode <- .amr_resolve_evidence_mode(duckdb_path, evidence_mode)
+  paths <- .amr_paths_from_duckdb(duckdb_path)
+  if (is.null(path)) {
+    path <- paths$orb
   }
 
-  path <- normalizePath(path, mustWork = FALSE)
-  if (!dir.exists(path)) dir.create(path, recursive = TRUE)
+  dir.create(path, recursive = TRUE, showWarnings = FALSE)
+  path <- normalizePath(path, mustWork = TRUE)
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+  # Only entries with a country code (short_name) are kept; any other raw entry
+  # fails the join below and gets NA for its country.
   clean_countries <- cleaned_bvbrc_countries |>
+    dplyr::filter(!is.na(.data$short_name)) |>
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
-
-  # Define lab methods
-  lab_methods <- c("Disk diffusion", "MIC", "Broth dilution", "Agar dilution", "Biofosun Gram-positive panels broth dilution",
-                  "Vitek_2-P607_card", "cation-adjusted Mueller-Hinton broth", "gradient_diffusion", "kirby-bauer_disc_diffusion")
 
   dplyr::tbl(con, "filtered") |>
     tibble::as_tibble() |>
     dplyr::select("genome.genome_id") |>
     dplyr::left_join(dplyr::tbl(con, "metadata") |>
       tibble::as_tibble(), by = dplyr::join_by("genome.genome_id" == "genome_drug.genome_id")) |>
+    .amr_filter_evidence(evidence_mode) |>
     dplyr::select(
       "genome.genome_id", "genome_drug.antibiotic",
       "genome_drug.genome_name", "genome_drug.evidence", "genome_drug.laboratory_typing_method",
@@ -2411,17 +3111,26 @@ cleanMetaData <- function(duckdb_path, path) {
       "genome.isolation_country", "genome.host_common_name",
       "genome.isolation_source", "genome.species"
     ) |>
-    dplyr::mutate(genome_drug.evidence = dplyr::case_when(
-      genome_drug.laboratory_typing_method %in% lab_methods ~ "Laboratory Method",
-      genome_drug.laboratory_typing_method == "Computational Prediction"  ~ "Computational Method",
-      TRUE ~ genome_drug.evidence)) |>
-    dplyr::filter(genome_drug.evidence == "Laboratory Method") |>
     dplyr::left_join(clean_drug, by = c("genome_drug.antibiotic" = "original_drug")) |>
     dplyr::filter(!is.na(cleaned_drug)) |>
     dplyr::left_join(drug_class, by = c("cleaned_drug" = "drug")) |>
     dplyr::left_join(drug_abbr, by = c("cleaned_drug" = "drug")) |>
     dplyr::left_join(class_abbr, by = "drug_class") |>
     dplyr::filter(genome_drug.resistant_phenotype %in% c("Resistant", "Susceptible")) |>
+    DBI::dbWriteTable(conn = con, name = "filtered_metadata", overwrite = TRUE)
+
+  # Exclude genome-drug pairs with conflicting resistance phenotypes
+  # We could save the phentoype conflicts out as a Parquet later if we want!
+  filtered_metadata <- DBI::dbReadTable(con, "filtered_metadata")
+  conflicts <- filtered_metadata |>
+    dplyr::group_by(genome.genome_id, drug_abbr) |>
+    dplyr::filter(dplyr::n_distinct(genome_drug.resistant_phenotype) > 1L) |>
+    dplyr::ungroup()
+
+  DBI::dbWriteTable(con, "metadata_phenotype_conflicts", conflicts, overwrite = TRUE)
+
+  dplyr::anti_join(filtered_metadata, conflicts,
+                   by = c("genome.genome_id", "drug_abbr")) |>
     DBI::dbWriteTable(conn = con, name = "filtered_metadata", overwrite = TRUE)
 
   resistance_summary <- DBI::dbReadTable(con, "filtered_metadata") |>
@@ -2436,7 +3145,13 @@ cleanMetaData <- function(duckdb_path, path) {
       num_resistant_classes = stringr::str_count(resistant_classes, "_") + 1
     )
 
-  year_breaks <- seq(1980, 2026, by = 5)
+  # What year is it?!
+  current_year <- as.integer(format(Sys.Date(), "%Y"))
+  last_year_break <- (floor(current_year / 5) + 1L) * 5L
+  year_breaks <- seq(1980, last_year_break, by = 5)
+
+  # 2025-era code doesn't handle 2026 very well, so updating above
+  # year_breaks <- seq(1980, 2026, by = 5)
   dplyr::tbl(con, "filtered_metadata") |>
     tibble::as_tibble() |>
     dplyr::mutate(genome_drug.antibiotic = cleaned_drug) |>
@@ -2465,46 +3180,94 @@ cleanMetaData <- function(duckdb_path, path) {
     )) |>
     DBI::dbWriteTable(conn = con, name = "cleaned_metadata", overwrite = TRUE)
 
-  # Parquet output path
-  metadata_parquet <- file.path(path, "metadata.parquet") # cleaned_metadata exported as 'metadata'
-
-  # Also export AMR/genome/original metadata
+  # Final metadata Parquets
+  metadata_parquet <- file.path(path, "metadata.parquet")
   amr_phenotype_parquet <- file.path(path, "amr_phenotype.parquet")
   genome_data_parquet <- file.path(path, "genome_data.parquet")
   original_metadata_parquet <- file.path(path, "original_metadata.parquet")
+  metadata_qc_parquet <- file.path(path, "metadata_qc.parquet")
+  metadata_qc_rejections_parquet <- file.path(path, "metadata_qc_rejections.parquet")
+  selected_genomes_parquet <- file.path(path,"selected_genomes.parquet")
 
-  writeCompressedParquet <- function(df, path) {
-    arrow::write_parquet(
-      df,
-      path,
-      compression = "zstd",
-      compression_level = 9,
-      use_dictionary = TRUE
-    )
-  }
+  db_name <- file.path(path, paste0(tools::file_path_sans_ext(basename(duckdb_path)), "_parquet.duckdb"))
 
-  db_name <- duckdb_path |>
-    stringr::str_split_i(".duckdb", i = 1) |>
-    paste0("_parquet.duckdb")
-  con_new <- DBI::dbConnect(duckdb::duckdb(), db_name)
+  con_new <- .amr_connect_dataset_db(db_name)
   on.exit(try(DBI::dbDisconnect(con_new), silent = TRUE), add = TRUE)
 
-  # Views below reference parquet files by bare filename. Point DuckDB at the
-  # parquet directory so schema inference at CREATE VIEW time can resolve them.
-  DBI::dbExecute(con_new, sprintf("SET file_search_path='%s'", path))
+  # Cleaned analysis metadata
+  DBI::dbReadTable(con,"cleaned_metadata") |>
+    .write_compressed_parquet(metadata_parquet)
 
-  # cleaned_metadata -> parquet + view (as metadata)
-  DBI::dbReadTable(con, "cleaned_metadata") |> writeCompressedParquet(metadata_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW metadata AS SELECT * FROM read_parquet('%s')", basename(metadata_parquet)))
+  DBI::dbExecute(con_new,sprintf(
+      "CREATE OR REPLACE VIEW metadata AS SELECT * FROM read_parquet('%s')",
+      basename(metadata_parquet)
+    )
+  )
 
-  # debug/complete views: amr_phenotype, genome_data, original_metadata
-  DBI::dbReadTable(con, "amr_phenotype") |> writeCompressedParquet(amr_phenotype_parquet)
-  DBI::dbReadTable(con, "genome_data") |> writeCompressedParquet(genome_data_parquet)
-  DBI::dbReadTable(con, "metadata") |> writeCompressedParquet(original_metadata_parquet)
+  # Original metadata tables retained in the ORB
+  DBI::dbReadTable(con, "amr_phenotype") |>
+    .write_compressed_parquet(amr_phenotype_parquet)
+  DBI::dbReadTable(con, "genome_data") |>
+    .write_compressed_parquet(genome_data_parquet)
+  DBI::dbReadTable(con, "metadata") |>
+    .write_compressed_parquet(original_metadata_parquet)
+  DBI::dbExecute(con_new, sprintf(
+      "CREATE OR REPLACE VIEW amr_phenotype AS SELECT * FROM read_parquet('%s')",
+      basename(amr_phenotype_parquet)
+    )
+  )
 
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW amr_phenotype AS SELECT * FROM read_parquet('%s')", basename(amr_phenotype_parquet)))
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_data AS SELECT * FROM read_parquet('%s')", basename(genome_data_parquet)))
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW original_metadata AS SELECT * FROM read_parquet('%s')", basename(original_metadata_parquet)))
+  DBI::dbExecute(con_new, sprintf(
+      "CREATE OR REPLACE VIEW genome_data AS SELECT * FROM read_parquet('%s')",
+      basename(genome_data_parquet)
+    )
+  )
+  DBI::dbExecute(con_new, sprintf(
+      "CREATE OR REPLACE VIEW original_metadata AS SELECT * FROM read_parquet('%s')",
+      basename(original_metadata_parquet)
+    )
+  )
+
+  # Metadata QC audit
+  DBI::dbReadTable(con, "metadata_qc") |>
+    .write_compressed_parquet(metadata_qc_parquet)
+  DBI::dbReadTable(con, "metadata_qc_rejections") |>
+    .write_compressed_parquet(metadata_qc_rejections_parquet)
+  DBI::dbExecute(con_new, sprintf(
+      "CREATE OR REPLACE VIEW metadata_qc AS SELECT * FROM read_parquet('%s')",
+      basename(metadata_qc_parquet)
+    )
+  )
+  DBI::dbExecute(con_new, sprintf(
+      paste0(
+        "CREATE OR REPLACE VIEW metadata_qc_rejections ",
+        "AS SELECT * FROM read_parquet('%s')"
+      ),
+      basename(metadata_qc_rejections_parquet)
+    )
+  )
+
+  # Snapshot of selected genomes
+  selected_genomes <- DBI::dbReadTable(con, "filtered") |>
+    tibble::as_tibble()
+
+  if (!"genome.genome_id" %in% names(selected_genomes)) {
+    stop("Table 'filtered' does not contain 'genome.genome_id'.")
+  }
+
+  selected_genomes <- selected_genomes |>
+    dplyr::transmute(genome_id = as.character(.data[["genome.genome_id"]])) |>
+    dplyr::filter(!is.na(genome_id), nzchar(genome_id)) |>
+    dplyr::distinct() |>
+    dplyr::arrange(genome_id)
+
+  .write_compressed_parquet(selected_genomes, selected_genomes_parquet)
+
+  DBI::dbExecute(con_new,sprintf(
+      "CREATE OR REPLACE VIEW selected_genomes AS SELECT * FROM read_parquet('%s')",
+      basename(selected_genomes_parquet)
+    )
+  )
 
   invisible(TRUE)
 }
@@ -2516,25 +3279,21 @@ cleanMetaData <- function(duckdb_path, path) {
 #'   already contain the tables written by [prepareGenomes()] and the upstream
 #'   genome-processing steps.
 #' @param path the path to working directory
+#' @param verbose Logical. Print status messages during feature export. Default 'TRUE'.
 #'
 #' @export
-cleanData <- function(duckdb_path, path) {
-  duckdb_path <- normalizePath(duckdb_path)
-  # If no explicit path is provided (or a generic one), choose results/<bug>/ when
-  # the DuckDB lives under data/<bug>/, or else fall back to the DuckDB directory.
-  if (missing(path) || path %in% c(".", "results", "results/")) {
-    bug_dir <- dirname(duckdb_path)
-    mapped_results <- sub(
-      paste0(.Platform$file.sep, "data", .Platform$file.sep),
-      paste0(.Platform$file.sep, "results", .Platform$file.sep),
-      bug_dir,
-      fixed = TRUE
-    )
-    path <- if (!identical(mapped_results, bug_dir)) mapped_results else bug_dir
+cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+
+  paths <- .amr_paths_from_duckdb(duckdb_path)
+
+  if (is.null(path)) {
+    path <- paths$orb
   }
 
-  path <- normalizePath(path, mustWork = FALSE)
-  if (!dir.exists(path)) dir.create(path, recursive = TRUE)
+  dir.create(path, recursive = TRUE, showWarnings = FALSE)
+
+  path <- normalizePath(path, mustWork = TRUE)
 
   # Fun new manifest action allows cleanData to find applicable database names
   manifest_path <- .manifest_find_latest(duckdb_path)
@@ -2553,26 +3312,21 @@ cleanData <- function(duckdb_path, path) {
 
   hmmer_stage <- NULL
 
-  for (run in rev(manifest$runs)) {
-    stages <- run$stages %||% list()
-
+  for (run in rev(manifest$runs %||% list())) {
     matches <- purrr::keep(
-      stages,
+      run$stages %||% list(),
       ~ identical(.x$name, "hmmer") &&
         identical(.x$status, "success")
     )
 
     if (length(matches)) {
-      hmmer_stage <- matches[[1]]
+      hmmer_stage <- matches[[length(matches)]]
       break
     }
   }
 
   if (is.null(hmmer_stage)) {
-    stop(
-      "No successful HMMER stage found in manifest: ",
-      manifest_path
-    )
+    stop("No successful HMMER stage found in manifest: ", manifest_path)
   }
 
   hmmer_databases <- unlist(
@@ -2589,7 +3343,8 @@ cleanData <- function(duckdb_path, path) {
   .proteinAnnotations2Duckdb(
     duckdb_path = duckdb_path,
     databases = hmmer_databases,
-    output_path = path
+    output_path = path,
+    verbose = verbose
   )
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
@@ -2609,40 +3364,47 @@ cleanData <- function(duckdb_path, path) {
   protein_cluster_seq_parquet <- file.path(path, "protein_seqs.parquet")
   protein_cluster_member_parquet <- file.path(path, "protein_members.parquet")
 
-  writeCompressedParquet <- function(df, path) {
-    arrow::write_parquet(
-      df,
-      path,
-      compression = "zstd",
-      compression_level = 9,
-      use_dictionary = TRUE
+  writeDuckDBParquet <- function(sql, path) {
+    path_sql <- DBI::dbQuoteString(
+      con,
+      normalizePath(path, winslash = "/", mustWork = FALSE)
+    )
+
+    DBI::dbExecute(
+      con,
+      paste0(
+        "COPY (", sql, ") TO ", path_sql,
+        " (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9, PRESERVE_ORDER false)"
+      )
     )
   }
 
-  db_name <- duckdb_path |>
-    stringr::str_split_i(".duckdb", i = 1) |>
-    paste0("_parquet.duckdb")
-  con_new <- DBI::dbConnect(duckdb::duckdb(), db_name)
+  db_name <- file.path(
+    path,
+    paste0(
+      tools::file_path_sans_ext(
+        basename(duckdb_path)
+      ),
+      "_parquet.duckdb"
+    )
+  )
+
+  con_new <- .amr_connect_dataset_db(db_name)
   on.exit(try(DBI::dbDisconnect(con_new), silent = TRUE), add = TRUE)
 
-  # Views below reference parquet files by bare filename. Point DuckDB at the
-  # parquet directory so schema inference at CREATE VIEW time can resolve them.
-  DBI::dbExecute(con_new, sprintf("SET file_search_path='%s'", path))
-
-  # gene_count -> long parquet + view
-  DBI::dbReadTable(con, "gene_count") |>
-    tidyr::pivot_longer(-genome_id, names_to = "gene", values_to = "value") |>
-    dplyr::filter(!is.na(value) & value != "") |>
-    dplyr::mutate(value = as.integer(value)) |>
-    writeCompressedParquet(genes_parquet)
+  # Introducing the sparse ORB! Absence of a row means zero going forward.
+  # This previously happened in amRml for subset matrices, but we can do it early
+  # and save space, time, and compute.
+  writeDuckDBParquet(
+    "SELECT CAST(genome_id AS VARCHAR) AS genome_id, CAST(gene AS VARCHAR) AS gene, CAST(value AS INTEGER) AS value FROM gene_count WHERE value <> 0",
+    genes_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_count AS SELECT * FROM read_parquet('%s')", basename(genes_parquet)))
 
-  # protein_count -> long parquet + view
-  DBI::dbReadTable(con, "protein_count") |>
-    tidyr::pivot_longer(-genome_id, names_to = "protein", values_to = "value") |>
-    dplyr::filter(!is.na(value) & value != "") |>
-    dplyr::mutate(value = as.integer(value)) |>
-    writeCompressedParquet(proteins_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(genome_id AS VARCHAR) AS genome_id, CAST(protein AS VARCHAR) AS protein, CAST(value AS INTEGER) AS value FROM protein_count WHERE value <> 0",
+    proteins_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_count AS SELECT * FROM read_parquet('%s')", basename(proteins_parquet)))
 
   # HMMER annotation counts -> long Parquet + views per database in manifest
@@ -2668,7 +3430,8 @@ cleanData <- function(duckdb_path, path) {
       dplyr::rename(!!database := annotation) |>
       dplyr::filter(!is.na(value) & value != "") |>
       dplyr::mutate(value = as.integer(value)) |>
-      writeCompressedParquet(count_parquet)
+      dplyr::filter(!is.na(value) & value != 0L) |>
+      .write_compressed_parquet(count_parquet)
 
     DBI::dbExecute(
       con_new,
@@ -2680,21 +3443,23 @@ cleanData <- function(duckdb_path, path) {
     )
   }
 
-  # gene_struct -> long parquet + view
-  DBI::dbReadTable(con, "gene_struct") |>
-    tidyr::pivot_longer(-genome_id, names_to = "struct", values_to = "value") |>
-    dplyr::filter(!is.na(value) & value != "") |>
-    dplyr::mutate(value = as.integer(value)) |>
-    writeCompressedParquet(struct_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(genome_id AS VARCHAR) AS genome_id, CAST(struct AS VARCHAR) AS struct, CAST(value AS INTEGER) AS value FROM gene_struct WHERE value <> 0",
+    struct_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW struct AS SELECT * FROM read_parquet('%s')", basename(struct_parquet)))
 
   # names/seq tables -> parquet + views
-  DBI::dbReadTable(con, "gene_names") |> writeCompressedParquet(gene_names_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(Gene AS VARCHAR) AS Gene, CAST(Annotation AS VARCHAR) AS Annotation FROM gene_names",
+    gene_names_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_names AS SELECT * FROM read_parquet('%s')", basename(gene_names_parquet)))
 
-  DBI::dbReadTable(con, "protein_names") |>
-    dplyr::select(-locus_tag) |>
-    writeCompressedParquet(protein_names_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(proteinID AS VARCHAR) AS proteinID, CAST(proteinName AS VARCHAR) AS proteinName FROM protein_names",
+    protein_names_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_names AS SELECT * FROM read_parquet('%s')", basename(protein_names_parquet)))
 
   # Parsing through the different HMMER result Parquets
@@ -2711,7 +3476,7 @@ cleanData <- function(duckdb_path, path) {
     )
 
     DBI::dbReadTable(con, annotation_table) |>
-      writeCompressedParquet(annotation_parquet)
+      .write_compressed_parquet(annotation_parquet)
 
     DBI::dbExecute(
       con_new,
@@ -2723,16 +3488,28 @@ cleanData <- function(duckdb_path, path) {
     )
   }
 
-  DBI::dbReadTable(con, "gene_ref_seq") |> writeCompressedParquet(gene_ref_seq_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(name AS VARCHAR) AS name, CAST(sequence AS VARCHAR) AS sequence FROM gene_ref_seq",
+    gene_ref_seq_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW gene_seqs AS SELECT * FROM read_parquet('%s')", basename(gene_ref_seq_parquet)))
 
-  DBI::dbReadTable(con, "protein_cluster_seq") |> writeCompressedParquet(protein_cluster_seq_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(name AS VARCHAR) AS name, CAST(sequence AS VARCHAR) AS sequence FROM protein_cluster_seq",
+    protein_cluster_seq_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_seqs AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_seq_parquet)))
 
-  DBI::dbReadTable(con, "protein_members") |> writeCompressedParquet(protein_cluster_member_parquet)
-  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_members AS SELECT * FROM read_parquet('%s')", protein_cluster_member_parquet))
+  writeDuckDBParquet(
+    "SELECT CAST(cluster AS VARCHAR) AS cluster, CAST(member AS VARCHAR) AS member FROM protein_members",
+    protein_cluster_member_parquet
+  )
+  DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW protein_members AS SELECT * FROM read_parquet('%s')", basename(protein_cluster_member_parquet)))
 
-  DBI::dbReadTable(con, "genome_gene_protein") |> writeCompressedParquet(genome_gene_protein_parquet)
+  writeDuckDBParquet(
+    "SELECT CAST(genome_ids AS VARCHAR) AS genome_ids, CAST(Gene AS VARCHAR) AS Gene, CAST(protein_ids AS VARCHAR) AS protein_ids FROM genome_gene_protein",
+    genome_gene_protein_parquet
+  )
   DBI::dbExecute(con_new, sprintf("CREATE OR REPLACE VIEW genome_gene_protein AS SELECT * FROM read_parquet('%s')", basename(genome_gene_protein_parquet)))
 
   invisible(TRUE)
@@ -2761,19 +3538,19 @@ cleanData <- function(duckdb_path, path) {
 #' \enumerate{
 #'   \item **Panaroo** via [runPanaroo2Duckdb()] -> writes:
 #'     \itemize{
-#'       \item `gene_count` (genome x gene counts)\cr
+#'       \item `gene_count` (sparse long genome-gene counts)\cr
 #'       \item `gene_names`\cr
-#'       \item `gene_struct` (structural variants)\cr
+#'       \item `gene_struct` (sparse long struct variants)\cr
 #'       \item `gene_ref_seq`, `genome_gene_protein`
 #'     }
 #'   \item **CD-HIT** via [CDHIT2duckdb()] -> writes:
 #'     \itemize{
-#'       \item `protein_count` (genome x protein-cluster counts)\cr
+#'       \item `protein_count` (sparse long genome-protein-cluster counts)\cr
 #'       \item `protein_names`\cr
 #'       \item `protein_cluster_seq` (representative sequences)\cr
 #'       \item `protein_members`
 #'     }
-#'   \item **HMMER** via the configured HMMER databases -> writes:
+#'   \item **HMMER** via [HMMER2duckdb()] -> writes:
 #'     \itemize{
 #'       \item `protein_<database>` annotation tables\cr
 #'       \item `protein_<database>_count` genome-by-annotation count tables
@@ -2783,8 +3560,8 @@ cleanData <- function(duckdb_path, path) {
 #'         Parquet files to `output_path`, and builds a **Parquet-backed DuckDB**
 #'         (`*_parquet.duckdb`) with views over those Parquets.
 #'
-#'   \item **Dyad feature mapping** via [buildDyadFeatureMap()] -> writes the
-#'         protein-gene dyad feature network used for downstream graph analysis.
+#'   \item **Dyad feature mapping** via [buildDyadFeatureMap()] -> writes a compact
+#'         `dyads.parquet` and registers virtual graph views in the ORB DuckDB.
 #' }
 #'
 #' @param duckdb_path Character. Path to the **per-selection DuckDB** produced by
@@ -2809,6 +3586,13 @@ cleanData <- function(duckdb_path, path) {
 #' @param export_tabular_data Logical. If TRUE, automatically call
 #'   [exportProcessedData()] after the processing pipeline completes to create
 #'   the default human-readable exports. Default: `FALSE`.
+#'
+#' @param evidence_mode Character or `NULL`. Which AMR evidence metadata
+#'   cleaning keeps: `"lab_only"`, `"lab_or_comp"`, `"comp_only"`, or `"any"`.
+#'   If `NULL` (default), uses the mode recorded by [prepareGenomes()] in the
+#'   dataset manifest, or `"lab_only"` if none is recorded. A value that
+#'   disagrees with the manifest is an error, so processing can't diverge from
+#'   the genomes that were selected and downloaded.
 #'
 #' @param panaroo_split_jobs Logical. If `TRUE`, Panaroo runs in multiple batches
 #'   that can be merged by [.mergePanaroo()]. If `FALSE`, Panaroo runs once on all
@@ -2847,8 +3631,24 @@ cleanData <- function(duckdb_path, path) {
 #' @param hmmer_num_splits Integer. Number of protein-sequence chunks for HMMER.
 #'   Default: `8`.
 #' @param hmmer_workers Integer. Number of parallel HMMER workers. Default: `8`.
+#' @param cog_evalue Numeric. E-value that COG hits must meet (sequence and
+#'   domain independent E-values), because COG profiles define no bit score
+#'   cutoffs. Hits to Pfam, AMRFinder, DefenseFinder and CasFinder profiles are
+#'   judged on the curator-defined bit score cutoff instead (`GA`, or `TC` for
+#'   AMRFinder). Profiles without cutoffs use the fallback below. Default:
+#'   `1e-4`, the E-value NCBI uses to assign proteins to COGs (COG database
+#'   update 2024); the original NCBI method uses PSI-BLAST/PSSMs.
+#' @param hmmer_fallback_evalue Maximum sequence and independent-domain E-values
+#'   for profiles without GA/TC. Provisional default: `1e-3`.
+#' @param hmmer_fallback_coverage Minimum profile coverage for profiles without
+#'   GA/TC. Provisional default: `0.5`.
 #'
-#' @param verbose Logical. Print progress messages. Default: `TRUE`.
+#' @param verbose Logical. Print persistent status and diagnostic messages.
+#'   Routine workflow output is suppressed when `FALSE`; warnings and errors are
+#'   still reported. Default: `FALSE`.
+#' @param progress Logical. Show temporary progress for long-running operations.
+#'   This is independent of `verbose`. Defaults to `TRUE`, unless overridden by
+#'   the `amRdata.progress` option.
 #'
 #' @return
 #' Invisibly returns a list with:
@@ -2859,9 +3659,16 @@ cleanData <- function(duckdb_path, path) {
 #'   \item `log_path` - path to a plain-text progress log, appended to as each
 #'     stage starts and finishes. Tail it (e.g. `tail -f <log_path>`) to watch
 #'     progress without parsing the full JSON provenance manifest.
+#'   \item `report_files` - paths of the metadata summary report and exploratory
+#'     plots written to the ORB (empty if they could not be written)
 #' }
 #'
 #' @details
+#' CDS that would translate entirely to unknown amino acids are automatically
+#' removed from copied Panaroo GFFs before clustering, with individual removals
+#' recorded in `panaroo_invalid_cds_audit.csv` in the Panaroo output directory.
+#' This check also runs when `panaroo_strip_pseudogenes = FALSE`.
+#'
 #' **Docker & Platform Notes**
 #' * Panaroo, CD-HIT, and HMMER run inside Docker containers.
 #' * HMMER databases are stored separately from individual bug directories and
@@ -2880,6 +3687,10 @@ cleanData <- function(duckdb_path, path) {
 #'   over the generated Parquet files.
 #' * Records processing parameters, software versions, database selections, and
 #'   other provenance information in the dataset manifest.
+#' * Writes a metadata summary report (`amr_metadata_summary.md`) and an
+#'   exploratory plot PDF (`amRdata_exploratory_plots.pdf`) to the ORB, via
+#'   [writeMetadataReports()]. A failure to write either only
+#'   warns; it does not fail the run.
 #' * Creates the protein-gene dyad feature map for downstream graph analysis.
 #' * If `export_tabular_data = TRUE`, exports features in human-readable CSVs.
 #'   Additional export options are available by calling `exportProcessedData()`
@@ -2893,14 +3704,15 @@ cleanData <- function(duckdb_path, path) {
 #' **Resuming a Failed Run**
 #' * Set `resume = TRUE` to avoid re-running stages that already completed
 #'   successfully in the most recent prior attempt (per the dataset manifest).
-#' * Resuming is driven entirely by the manifest plus a check that the
-#'   previously recorded output files still exist --- it does not re-validate
-#'   the contents of those outputs, so don't rely on it if files may have
-#'   been altered or deleted since the failed run.
+#' * Reuse requires that parameters that would affect results match the prior run.
+#'   Changed or missing parameters will rerun that stage and downstream stages.
+#'   Adjusting thread and worker counts does not invalidate reuse. Resuming does 
+#'   not re-validate the contents of prior outputs, so don't rely on it if files 
+#'   may have been altered or deleted since the failed run.
 #'
 #' @seealso
 #' [prepareGenomes()], [runPanaroo2Duckdb()], [CDHIT2duckdb()], [cleanMetaData()],
-#' [cleanData()]
+#' [cleanData()], [writeMetadataReports()]
 #'
 #' @examples
 #' \dontrun{
@@ -2917,11 +3729,11 @@ cleanData <- function(duckdb_path, path) {
 #'
 #' @export
 runDataProcessing <- function(
-    duckdb_path,
-    output_path = NULL,
+    duckdb_path = NULL,
     threads = 8,
     resume = FALSE,
     export_tabular_data = FALSE,
+    evidence_mode = NULL,
 
 
     # Panaroo
@@ -2953,29 +3765,73 @@ runDataProcessing <- function(
     hmmer_docker_image = "staphb/hmmer",
     hmmer_num_splits = 8L,
     hmmer_workers = 8L,
+    cog_evalue = 1e-4,
 
     # Metadata cleaning
-    verbose = TRUE
+    verbose = FALSE,
+    progress = getOption("amRdata.progress", TRUE),
+    hmmer_fallback_evalue = 1e-3,
+    hmmer_fallback_coverage = 0.5
 ) {
+  .checkHmmerFallback(hmmer_fallback_evalue, hmmer_fallback_coverage)
   panaroo_refind_mode <- match.arg(panaroo_refind_mode)
+  if (!is.numeric(cog_evalue) || length(cog_evalue) != 1L ||
+      is.na(cog_evalue) || cog_evalue <= 0) {
+    stop("`cog_evalue` must be a single number greater than 0.", call. = FALSE)
+  }
+
+  # User supplied nothing? Go fetch what's eligible to run
+  if (is.null(duckdb_path)) {
+    duckdb_path <- .amr_select_processing_dataset()
+  }
 
   requested_threads <- threads
   threads <- .resolve_workers(requested = threads)
-  duckdb_path <- normalizePath(duckdb_path)
-  out_dir <- if (is.null(output_path)) dirname(duckdb_path) else normalizePath(output_path)
+  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
+  evidence_mode <- .amr_resolve_evidence_mode(duckdb_path, evidence_mode)
+  paths <- .amr_paths_from_duckdb(duckdb_path)
 
-  # Plain-text progress log, tailable while the pipeline runs (see the JSON
-  # manifest below for full provenance, which is less convenient to watch live)
-  log_path <- file.path(
-    out_dir,
-    paste0(tools::file_path_sans_ext(basename(duckdb_path)), "_processing.log")
+  purrr::walk(
+    c(
+      paths$panaroo,
+      paths$cdhit,
+      paths$hmmer,
+      paths$orb
+    ),
+    ~ dir.create(
+      .x,
+      recursive = TRUE,
+      showWarnings = FALSE
+    )
   )
-  progress <- function(...) {
-    msg <- paste0(...)
-    if (isTRUE(verbose)) message(msg)
-    .log_write(log_path, msg)
+
+  log_path <- paths$processing_log
+
+  if (file.exists(log_path)) {
+    unlink(log_path, force = TRUE)
   }
-  progress("runDataProcessing() started for ", duckdb_path)
+
+  .log_write(log_path, "Started runDataProcessing().")
+
+  if (isTRUE(verbose)) {
+    message(
+      "Individual tool output will be written to:\n",
+      "  ",
+      normalizePath(log_path, mustWork = FALSE)
+    )
+  }
+
+
+
+  status <- function(...) {
+    .amr_status(
+      ...,
+      verbose = verbose,
+      log_path = log_path
+    )
+  }
+
+  status("Extracting features...")
 
   # Find the latest manifest
   manifest_path <- .manifest_find_latest(duckdb_path)
@@ -2991,7 +3847,7 @@ runDataProcessing <- function(
   # Append a new processing run to the existing manifest
   manifest <- .manifest_resume(
     manifest_path = manifest_path,
-    base_dir = dirname(dirname(dirname(duckdb_path))),
+    base_dir = dirname(dirname(paths$root)),
     hash_files = FALSE
   )
 
@@ -3002,10 +3858,59 @@ runDataProcessing <- function(
   } else {
     NULL
   }
-  resume_completed <- .resume_plan(prev_run, stage_order)
+  if (is.null(hmmer_db_dir)) hmmer_db_dir <- .defaultHmmerDbDir()
+  dir.create(hmmer_db_dir, recursive = TRUE, showWarnings = FALSE)
+  hmmer_db_dir <- normalizePath(hmmer_db_dir, mustWork = TRUE)
+
+  # Compare results-affecting parameters
+  stage_parameters <- list(
+    panaroo = list(
+      core_threshold = panaroo_core_threshold,
+      len_dif_percent = panaroo_len_dif_percent,
+      cluster_threshold = panaroo_cluster_threshold,
+      family_seq_identity = panaroo_family_seq_identity,
+      split_jobs = panaroo_split_jobs,
+      refind_mode = panaroo_refind_mode,
+      strip_pseudogenes = panaroo_strip_pseudogenes,
+      remove_all_x_cds = TRUE
+    ),
+    cdhit = list(
+      identity = cdhit_identity,
+      word_length = cdhit_word_length,
+      extra_args = cdhit_extra_args,
+      output_prefix = cdhit_output_prefix
+    ),
+    hmmer = list(
+      databases = hmmer_databases,
+      database_dir = hmmer_db_dir,
+      database_cache = "BiocFileCache",
+      docker_image = hmmer_docker_image,
+      cutoffs = list(
+        cog_evalue = cog_evalue,
+        fallback_evalue = hmmer_fallback_evalue,
+        fallback_coverage = hmmer_fallback_coverage,
+        reporting_args = .hmmerReportingArgs(),
+        bit_score_tolerance = formals(.filterHMMER)$tolerance,
+        cog_overlap = formals(.filterHMMER)$cog_overlap
+      )
+    )
+  )
+  resume_completed <- .resume_plan(prev_run, stage_order, stage_parameters)
+
+  reuse_stage <- function(manifest, name) {
+    prior <- .manifest_prior_stage(prev_run, name)
+    .manifest_stage(
+      manifest, name = name, status = "success",
+      parameters = prior$parameters,
+      inputs = duckdb_path,
+      outputs = purrr::map_chr(prior$outputs, "path"),
+      tool = prior$tool, metrics = prior$metrics,
+      message = "Resumed: reused successful output from a previous run."
+    )
+  }
 
   if (any(resume_completed)) {
-    progress(
+    status(
       "Resuming: skipping already-completed stage(s): ",
       paste(stage_order[resume_completed], collapse = ", ")
     )
@@ -3015,7 +3920,7 @@ runDataProcessing <- function(
 
   on.exit(
     if (run_failed) {
-      progress("FAILED: runDataProcessing() exited before successful completion.")
+      status("FAILED: runDataProcessing() exited before successful completion.")
       .manifest_finish(
         manifest,
         status = "failed",
@@ -3044,50 +3949,28 @@ runDataProcessing <- function(
     message = "Started data-processing run.",
     details = list(
       duckdb_path = duckdb_path,
-      output_path = out_dir
+      panaroo_dir = paths$panaroo,
+      cdhit_dir = paths$cdhit,
+      hmmer_dir = paths$hmmer,
+      orb_dir = paths$orb
     )
   )
 
   # 1) Panaroo (run + optional merge) -> write Panaroo tables
   if (resume_completed[["panaroo"]]) {
-    progress("Skipping Panaroo (resume): reusing output from the previous run.")
+    status("Skipping Panaroo (resume): reusing output from the previous run.")
 
     pan_dir <- .manifest_prior_stage(prev_run, "panaroo")$outputs[[1]]$path
 
-    manifest <- .manifest_stage(
-      manifest,
-      name = "panaroo",
-      status = "skipped",
-      inputs = duckdb_path,
-      outputs = c(
-        pan_dir,
-        duckdb_path
-      ),
-      tool = list(
-        name = "Panaroo",
-        docker_image = "staphb/panaroo:1.7.0"
-      ),
-      message = "Resumed: reused successful output from a previous run."
-    )
+    manifest <- reuse_stage(manifest, "panaroo")
   } else {
-    progress("Running Panaroo and writing gene & struct tables to DuckDB.")
-
     # Log!
     manifest <- .manifest_stage(
       manifest,
       name = "panaroo",
       status = "running",
-      parameters = list(
-        core_threshold = panaroo_core_threshold,
-        len_dif_percent = panaroo_len_dif_percent,
-        cluster_threshold = panaroo_cluster_threshold,
-        family_seq_identity = panaroo_family_seq_identity,
-        threads_requested = requested_threads,
-        threads_used = threads,
-        split_jobs = panaroo_split_jobs,
-        refind_mode = panaroo_refind_mode,
-        strip_pseudogenes = panaroo_strip_pseudogenes
-      ),
+      parameters = c(stage_parameters$panaroo,
+                     list(threads_requested = requested_threads, threads_used = threads)),
       inputs = duckdb_path,
       tool = list(
         name = "Panaroo",
@@ -3095,40 +3978,39 @@ runDataProcessing <- function(
       )
     )
 
-    pan_dir <- runPanaroo2Duckdb(
-      duckdb_path            = duckdb_path,
-      output_path            = out_dir,
-      core_threshold         = panaroo_core_threshold,
-      len_dif_percent        = panaroo_len_dif_percent,
-      cluster_threshold      = panaroo_cluster_threshold,
-      family_seq_identity    = panaroo_family_seq_identity,
-      threads                = threads,
-      split_jobs             = panaroo_split_jobs,
-      refind_mode            = panaroo_refind_mode,
-      strip_pseudogenes      = panaroo_strip_pseudogenes,
-      pseudogene_clean_dir   = panaroo_pseudogene_clean_dir,
-      write_pseudogene_audit = panaroo_write_pseudogene_audit,
-      verbose                = verbose
+    pan_dir <- .amr_progress_step(
+      "Running Panaroo",
+      runPanaroo2Duckdb(
+        duckdb_path            = duckdb_path,
+        output_path            = paths$panaroo,
+        core_threshold         = panaroo_core_threshold,
+        len_dif_percent        = panaroo_len_dif_percent,
+        cluster_threshold      = panaroo_cluster_threshold,
+        family_seq_identity    = panaroo_family_seq_identity,
+        threads                = threads,
+        split_jobs             = panaroo_split_jobs,
+        refind_mode            = panaroo_refind_mode,
+        strip_pseudogenes      = panaroo_strip_pseudogenes,
+        pseudogene_clean_dir   = panaroo_pseudogene_clean_dir,
+        write_pseudogene_audit = panaroo_write_pseudogene_audit,
+        verbose                = verbose,
+        log_path               = log_path
+      ),
+      progress = progress,
+      verbose = verbose,
+      log_path = log_path
     )
 
     manifest <- .manifest_stage(
       manifest,
       name = "panaroo",
       status = "success",
-      parameters = list(
-        core_threshold = panaroo_core_threshold,
-        len_dif_percent = panaroo_len_dif_percent,
-        cluster_threshold = panaroo_cluster_threshold,
-        family_seq_identity = panaroo_family_seq_identity,
-        threads = threads,
-        split_jobs = panaroo_split_jobs,
-        refind_mode = panaroo_refind_mode,
-        strip_pseudogenes = panaroo_strip_pseudogenes
-      ),
+      parameters = c(stage_parameters$panaroo, list(threads = threads)),
       inputs = duckdb_path,
       outputs = c(
         pan_dir,
-        duckdb_path
+        duckdb_path,
+        file.path(paths$panaroo, "panaroo_invalid_cds_audit.csv")
       ),
       tool = list(
         name = "Panaroo",
@@ -3136,46 +4018,20 @@ runDataProcessing <- function(
         docker_image = "staphb/panaroo:1.7.0"
       )
     )
-    progress("Finished Panaroo.")
   }
 
   # 2) CD-HIT -> write `protein` tables
   if (resume_completed[["cdhit"]]) {
-    progress("Skipping CD-HIT (resume): reusing output from the previous run.")
+    status("Skipping CD-HIT (resume): reusing output from the previous run.")
 
-    manifest <- .manifest_stage(
-      manifest,
-      name = "cdhit",
-      status = "skipped",
-      inputs = duckdb_path,
-      outputs = c(
-        file.path(out_dir, paste0(cdhit_output_prefix, "_input.fa")),
-        file.path(out_dir, paste0(cdhit_output_prefix, "_proteins")),
-        file.path(duckdb_path)
-      ),
-      tool = list(
-        name = "CD-HIT",
-        version = "4.8.1",
-        docker_image = "weizhongli1987/cdhit:4.8.1"
-      ),
-      message = "Resumed: reused successful output from a previous run."
-    )
+    manifest <- reuse_stage(manifest, "cdhit")
   } else {
-    progress("Running CD-HIT and writing protein tables to DuckDB.")
-
     # Log!
     manifest <- .manifest_stage(
       manifest,
       name = "cdhit",
       status = "running",
-      parameters = list(
-        identity = cdhit_identity,
-        word_length = cdhit_word_length,
-        memory = cdhit_memory,
-        threads = threads,
-        extra_args = cdhit_extra_args,
-        output_prefix = cdhit_output_prefix
-      ),
+      parameters = c(stage_parameters$cdhit, list(memory = cdhit_memory, threads = threads)),
       inputs = duckdb_path,
       tool = list(
         name = "CD-HIT",
@@ -3184,34 +4040,35 @@ runDataProcessing <- function(
       )
     )
 
-    CDHIT2duckdb(
-      duckdb_path   = duckdb_path,
-      output_path   = out_dir,
-      output_prefix = cdhit_output_prefix,
-      identity      = cdhit_identity,
-      word_length   = cdhit_word_length,
-      threads       = threads,
-      memory        = cdhit_memory,
-      extra_args    = cdhit_extra_args
+    .amr_progress_step(
+      "Running CD-HIT",
+      CDHIT2duckdb(
+        duckdb_path   = duckdb_path,
+        output_path   = paths$cdhit,
+        output_prefix = cdhit_output_prefix,
+        identity      = cdhit_identity,
+        word_length   = cdhit_word_length,
+        threads       = threads,
+        memory        = cdhit_memory,
+        extra_args    = cdhit_extra_args,
+        verbose       = verbose,
+        log_path      = log_path
+      ),
+      progress = progress,
+      verbose = verbose,
+      log_path = log_path
     )
 
     manifest <- .manifest_stage(
       manifest,
       name = "cdhit",
       status = "success",
-      parameters = list(
-        identity = cdhit_identity,
-        word_length = cdhit_word_length,
-        memory = cdhit_memory,
-        threads = threads,
-        extra_args = cdhit_extra_args,
-        output_prefix = cdhit_output_prefix
-      ),
+      parameters = c(stage_parameters$cdhit, list(memory = cdhit_memory, threads = threads)),
       inputs = duckdb_path,
       outputs = c(
-        file.path(out_dir, paste0(cdhit_output_prefix, "_input.fa")),
-        file.path(out_dir, paste0(cdhit_output_prefix, "_proteins")),
-        file.path(duckdb_path)
+        file.path(paths$cdhit, paste0(cdhit_output_prefix, "_input.fa")),
+        file.path(paths$cdhit, paste0(cdhit_output_prefix, "_proteins")),
+        duckdb_path
       ),
       tool = list(
         name = "CD-HIT",
@@ -3219,55 +4076,23 @@ runDataProcessing <- function(
         docker_image = "weizhongli1987/cdhit:4.8.1"
       )
     )
-    progress("Finished CD-HIT.")
   }
 
   # 3) HMMER -> write HMM-based match tables for desired databases
-  hmmer_db_dir <- if (is.null(hmmer_db_dir)) {
-    .defaultHmmerDbDir()
-  } else {
-    normalizePath(hmmer_db_dir, mustWork = FALSE)
-  }
-
-  dir.create(
-    hmmer_db_dir,
-    recursive = TRUE,
-    showWarnings = FALSE
-  )
-
-  hmmer_result <- NULL
-  defense_result <- NULL
-
   if (resume_completed[["hmmer"]]) {
-    progress("Skipping HMMER (resume): reusing output from the previous run.")
+    status("Skipping HMMER (resume): reusing output from the previous run.")
 
-    manifest <- .manifest_stage(
-      manifest,
-      name = "hmmer",
-      status = "skipped",
-      inputs = duckdb_path,
-      tool = list(
-        name = "HMMER",
-        docker_image = hmmer_docker_image
-      ),
-      message = "Resumed: reused successful output from a previous run."
-    )
+    manifest <- reuse_stage(manifest, "hmmer")
   } else {
-    progress("Running HMMER with databases: ", paste(hmmer_databases, collapse = ", "))
+    status("Running HMMER with databases: ", paste(hmmer_databases, collapse = ", "))
 
     manifest <- .manifest_stage(
       manifest,
       name = "hmmer",
       status = "running",
-      parameters = list(
-        databases = hmmer_databases,
-        database_dir = hmmer_db_dir,
-        database_cache = "BiocFileCache",
-        docker_image = hmmer_docker_image,
-        threads = threads,
-        num_of_splits = hmmer_num_splits,
-        workers = hmmer_workers
-      ),
+      parameters = c(stage_parameters$hmmer,
+                     list(threads = threads, num_of_splits = hmmer_num_splits,
+                          workers = hmmer_workers)),
       inputs = duckdb_path,
       tool = list(
         name = "HMMER",
@@ -3276,43 +4101,32 @@ runDataProcessing <- function(
       )
     )
 
-    generic_databases <- intersect(
-      hmmer_databases,
-      c("Pfam", "COG", "AMRFinder")
+    hmmer_result <- HMMER2duckdb(
+      duckdb_path = duckdb_path,
+      output_path = paths$hmmer,
+      databases = hmmer_databases,
+      hmmer_db_dir = hmmer_db_dir,
+      docker_image = hmmer_docker_image,
+      threads = threads,
+      num_of_splits = hmmer_num_splits,
+      n_workers = hmmer_workers,
+      cog_evalue = cog_evalue,
+      fallback_evalue = hmmer_fallback_evalue,
+      fallback_coverage = hmmer_fallback_coverage,
+      verbose = verbose,
+      log_path = log_path,
+      progress = progress
     )
-
-    if (length(generic_databases)) {
-      hmmer_result <- .runHMMER(
-                                duckdb_path = duckdb_path,
-                                output_path = out_dir,
-                                threads = threads,
-                                hmmer_db_dir = hmmer_db_dir,
-                                databases = generic_databases,
-                                docker_image = hmmer_docker_image,
-                                num_of_splits = hmmer_num_splits,
-                                n_workers = hmmer_workers,
-                                verbose = verbose
-                              )
-                            }
-
-
-
-    if ("DefenseCas" %in% hmmer_databases) {
-      defense_result <- .defenseHMMER(
-        defense_db_dir = file.path(hmmer_db_dir, "DefenseCas"),
-        docker_image = hmmer_docker_image,
-        duckdb_path = duckdb_path,
-        output_path = out_dir,
-        threads = threads,
-        verbose = verbose
-      )
-    }
   }
 
   # Verify expected outputs regardless of whether HMMER just ran or was skipped
   expected_outputs <- file.path(
-    out_dir,
-    paste0("protein_", hmmer_databases, ".parquet")
+    paths$hmmer,
+    paste0(
+      "protein_",
+      hmmer_databases,
+      ".parquet"
+    )
   )
 
   missing_outputs <- expected_outputs[!file.exists(expected_outputs)]
@@ -3328,16 +4142,13 @@ runDataProcessing <- function(
 
   missing_tables <- local({
     con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
-
+    
     on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
+    
     expected_tables[
-      !vapply(
+      !purrr::map_lgl(
         expected_tables,
-        function(tbl) {
-          DBI::dbExistsTable(con, tbl)
-        },
-        logical(1)
+        ~ DBI::dbExistsTable(con, .x)
       )
     ]
   })
@@ -3354,20 +4165,18 @@ runDataProcessing <- function(
       manifest,
       name = "hmmer",
       status = "success",
-      parameters = list(
-        databases = hmmer_databases,
-        database_dir = hmmer_db_dir,
-        database_cache = "BiocFileCache",
-        docker_image = hmmer_docker_image,
-        threads = threads,
-        num_of_splits = hmmer_num_splits,
-        workers = hmmer_workers
-      ),
+      parameters = c(stage_parameters$hmmer,
+                     list(threads = threads, num_of_splits = hmmer_num_splits,
+                          workers = hmmer_workers)),
       inputs = duckdb_path,
       outputs = c(
-        purrr::map(
-          hmmer_databases,
-          ~ file.path(out_dir, paste0("protein_", .x, ".parquet"))
+        file.path(
+          paths$hmmer,
+          paste0(
+            "protein_",
+            hmmer_databases,
+            ".parquet"
+          )
         ),
         duckdb_path
       ),
@@ -3377,8 +4186,8 @@ runDataProcessing <- function(
           hmmer_databases
         ),
         database_provenance = list(
-          generic = if (!is.null(hmmer_result)) hmmer_result$databases else NULL,
-          DefenseCas = if (!is.null(defense_result)) defense_result$databases else NULL
+          generic = hmmer_result$databases$generic,
+          DefenseCas = hmmer_result$databases$DefenseCas
         )
       ),
       tool = list(
@@ -3386,87 +4195,211 @@ runDataProcessing <- function(
         docker_image = hmmer_docker_image
       )
     )
-    progress("Finished HMMER.")
+    status("Finished HMMER.")
   }
 
   # 4) Clean metadata and export Parquet + Parquet-backed DuckDB
-  progress("Cleaning metadata and exporting Parquet-backed views.")
-  cleanMetaData(duckdb_path = duckdb_path, path = out_dir)
-  cleanData(duckdb_path = duckdb_path, path = out_dir)
+  .amr_progress_step("Building resource bundle", {
+      cleanMetaData(
+        duckdb_path = duckdb_path,
+        path = paths$orb,
+        evidence_mode = evidence_mode
+      )
 
-  parquet_duckdb_path <- paste0(
-    stringr::str_split_i(duckdb_path, ".duckdb", i = 1),
-    "_parquet.duckdb"
+      # Markdown summary + exploratory plot PDF of the cleaned metadata
+      report_files <- writeMetadataReports(paths$orb, status = status)
+
+      cleanData(
+        duckdb_path = duckdb_path,
+        path = paths$orb,
+        verbose = verbose
+      )
+    },
+    progress = progress,
+    verbose = verbose,
+    log_path = log_path
   )
 
-  # With all features completed, create the dyad feature map
-if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all features and exporting Parquet-backed views.")
-  buildDyadFeatureMap(duckdb_path = duckdb_path, output_path = out_dir)
+  parquet_duckdb_path <- paths$parquet_duckdb
 
-  # And if the user wants to export processed data
-  if (export_tabular_data == TRUE) {
-    if (isTRUE(verbose))
-      message("\n============================================")
-      message("Exporting human-readable processed data tables.")
-      message("Additional export options are available through `exportProcessedData()`.")
-      message("\n============================================")
+  dyads_parquet <- .amr_progress_step(
+    "Building virtual protein-gene dyad map",
+    buildDyadFeatureMap(
+      duckdb_path = duckdb_path,
+      output_path = paths$orb,
+      threads = min(threads, 4L)
+    ),
+    progress = progress,
+    verbose = verbose,
+    log_path = log_path
+  )
 
-    # Export with default parameters
-    exportProcessedData(duckdb_path = duckdb_path,
-                        output_path = out_dir,
-                        verbose = verbose)
+  parquet_duckdb_path <- normalizePath(
+    parquet_duckdb_path,
+    mustWork = TRUE
+  )
+
+  if (isTRUE(export_tabular_data)) {
+    .amr_progress_step(
+      "Exporting processed data",
+      exportProcessedData(
+        duckdb_path = paths$parquet_duckdb,
+        output_path = paths$exports,
+        verbose = verbose
+      ),
+      progress = progress,
+      verbose = verbose,
+      log_path = log_path
+    )
   }
 
-  if (isTRUE(verbose)) {
-    message("\n============================================")
-    message("Completed data-processing workflow successfully.")
-    message("Parquet-backed DuckDB created at:")
-    message("  ", normalizePath(parquet_duckdb_path))
-    message("\nYou can use the amRml package to train machine")
-    message("learning models for AMR using this file path.")
-    message("For example:")
-    message("  runMLmodels(\"", normalizePath(parquet_duckdb_path), "\")")
-    message("============================================\n")
-  }
+  expected_orb_contents <- c(
+    "metadata",
+    "amr_phenotype",
+    "genome_data",
+    "original_metadata",
+    "metadata_qc",
+    "metadata_qc_rejections",
+    "selected_genomes",
+
+    "gene_count",
+    "gene_names",
+    "gene_seqs",
+    "genome_gene_protein",
+    "struct",
+
+    "protein_count",
+    "protein_names",
+    "protein_seqs",
+    "protein_members",
+
+    paste0(
+      "protein_",
+      hmmer_databases
+    ),
+    paste0(
+      "protein_",
+      hmmer_databases,
+      "_count"
+    ),
+
+    "dyads",
+    "genome_dyad",
+    "dyad_protein_cluster",
+    "struct_gene",
+    "dyad_struct",
+      purrr::map_chr(
+        .dyadHmmerSpecs(hmmer_databases),
+        "dyad_view"
+      ),
+      "dyad_feature"
+    )
+
+  local({
+    con_orb <- .amr_connect_dataset_db(
+      parquet_duckdb_path,
+      read_only = TRUE
+    )
+
+    on.exit(
+      try(
+        DBI::dbDisconnect(con_orb),
+        silent = TRUE
+      ),
+      add = TRUE
+    )
+
+    available_relations <- DBI::dbListTables(
+      con_orb
+    )
+
+    missing_relations <- setdiff(
+      expected_orb_contents,
+      available_relations
+    )
+
+    if (length(missing_relations)) {
+      stop(
+        "ORB validation failed. Missing expected relation(s):\n",
+        paste(
+          missing_relations,
+          collapse = "\n"
+        )
+      )
+    }
+
+    purrr::walk(
+      expected_orb_contents,
+      function(relation) {
+        relation_sql <- DBI::dbQuoteIdentifier(
+          con_orb,
+          relation
+        )
+
+        DBI::dbGetQuery(
+          con_orb,
+          paste0(
+            "SELECT * FROM ",
+            relation_sql,
+            " LIMIT 0"
+          )
+        )
+      }
+    )
+  })
 
   # Final Parquets generated by this run
   parquet_files <- c(
-    # Metadata outputs
-    file.path(out_dir, "metadata.parquet"),
-    file.path(out_dir, "amr_phenotype.parquet"),
-    file.path(out_dir, "genome_data.parquet"),
-    file.path(out_dir, "original_metadata.parquet"),
+    # Metadata and QC outputs
+    file.path(paths$orb, "metadata.parquet"),
+    file.path(paths$orb, "amr_phenotype.parquet"),
+    file.path(paths$orb, "genome_data.parquet"),
+    file.path(paths$orb, "original_metadata.parquet"),
+    file.path(paths$orb, "metadata_qc.parquet"),
+    file.path(paths$orb, "metadata_qc_rejections.parquet"),
+    file.path(paths$orb, "selected_genomes.parquet"),
 
     # Core feature outputs
-    file.path(out_dir, "gene_count.parquet"),
-    file.path(out_dir, "gene_names.parquet"),
-    file.path(out_dir, "gene_seqs.parquet"),
-    file.path(out_dir, "genome_gene_protein.parquet"),
-    file.path(out_dir, "struct.parquet"),
-    file.path(out_dir, "protein_count.parquet"),
-    file.path(out_dir, "protein_names.parquet"),
-    file.path(out_dir, "protein_seqs.parquet"),
-    file.path(out_dir, "protein_members.parquet"),
+    file.path(paths$orb, "gene_count.parquet"),
+    file.path(paths$orb, "gene_names.parquet"),
+    file.path(paths$orb, "gene_seqs.parquet"),
+    file.path(paths$orb, "genome_gene_protein.parquet"),
+    file.path(paths$orb, "struct.parquet"),
+    file.path(paths$orb, "protein_count.parquet"),
+    file.path(paths$orb, "protein_names.parquet"),
+    file.path(paths$orb, "protein_seqs.parquet"),
+    file.path(paths$orb, "protein_members.parquet"),
 
     # HMMER outputs
+    file.path(paths$orb, paste0("protein_", hmmer_databases, ".parquet")),
     file.path(
-      out_dir,
-      paste0("protein_", hmmer_databases, ".parquet")
-    ),
-    file.path(
-      out_dir,
+      paths$orb,
       paste0("protein_", hmmer_databases, "_count.parquet")
     ),
 
-    # Dyad feature map
-    file.path(out_dir, "dyad_feature.parquet")
+    # Compact dyad dimension; feature edges remain virtual in the ORB DuckDB
+    dyads_parquet
   )
 
-  # Record only files that exist, so manifest reflects successful runs
-  parquet_files <- normalizePath(
-    parquet_files[file.exists(parquet_files)],
-    mustWork = TRUE
-  )
+  missing_parquet_files <- parquet_files[!file.exists(parquet_files)]
+
+  if (length(missing_parquet_files)) {
+    stop(
+      "ORB build is incomplete. Missing expected file(s):\n",
+      paste(missing_parquet_files, collapse = "\n")
+    )
+  }
+
+  if (!file.exists(parquet_duckdb_path)) {
+    stop(
+      "ORB build is incomplete. Parquet-backed DuckDB was not created: ",
+      parquet_duckdb_path
+    )
+  }
+
+  parquet_files <- normalizePath(parquet_files, mustWork = TRUE)
+
+  parquet_duckdb_path <- normalizePath(parquet_duckdb_path, mustWork = TRUE)
 
   # Log!
   manifest <- .manifest_stage(
@@ -3474,6 +4407,7 @@ if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all f
     name = "clean_metadata_and_export",
     status = "success",
     parameters = list(
+      evidence_mode = evidence_mode,
       reference_data = c(
         "clean_drug",
         "drug_class",
@@ -3483,13 +4417,12 @@ if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all f
       )
     ),
     inputs = duckdb_path,
-    outputs = c(
-      parquet_files,
-      parquet_duckdb_path
-    ),
+    # Reports are non-essential, so only the ones written by this run are listed
+    outputs = c(parquet_files, report_files, parquet_duckdb_path),
     metrics = list(
       parquet_duckdb = parquet_duckdb_path,
-      parquet_files = parquet_files
+      parquet_files = parquet_files,
+      report_files = as.list(report_files)
     )
   )
 
@@ -3501,69 +4434,86 @@ if (isTRUE(verbose)) message("Building the mapping of protein|gene dyad to all f
     details = list(
       producer = "amRdata",
       producer_run_id = processing_run_id,
-      directory = normalizePath(
-        out_dir,
-        mustWork = FALSE
+      path_mode = "relative_to_manifest",
+      directory = ".",
+      parquet_duckdb = basename(
+        paths$parquet_duckdb
       ),
-      parquet_duckdb = normalizePath(
-        parquet_duckdb_path,
-        mustWork = FALSE
-      ),
-      metadata_parquet = normalizePath(
-        file.path(out_dir, "metadata.parquet"),
-        mustWork = FALSE
-      )
+      metadata_parquet = "metadata.parquet",
+      metadata_qc_parquet = "metadata_qc.parquet",
+      metadata_qc_rejections_parquet =
+        "metadata_qc_rejections.parquet",
+      selected_genomes_parquet =
+        "selected_genomes.parquet",
+      dyads_parquet = "dyads.parquet",
+      dyad_representation = "virtual",
+      dyad_feature_relation = "dyad_feature",
+      dyad_hmmer_mapping = "protein_members.member_to_cluster"
     )
   )
 
-  progress("Completed data-processing workflow successfully. Parquet-backed DuckDB: ", normalizePath(parquet_duckdb_path))
+  manifest <- .manifest_finish(manifest, status = "success")
 
-  manifest <- .manifest_finish(
-    manifest,
-    status = "success"
-  )
+  status("Features ready.")
+  message("Data processing complete.")
+  # Shown unconditionally (not just when verbose) so users know the reports
+  # exist; status() already prints it when verbose, so only add it otherwise.
+  report_msg <- .reportFilesMessage(report_files)
+  if (!is.null(report_msg)) {
+    if (!isTRUE(verbose)) message(report_msg)
+    status(report_msg)
+  }
 
   run_failed <- FALSE
 
-  invisible(list(
-    duckdb_path = duckdb_path,
-    panaroo_output = pan_dir,
-    parquet_duckdb_path = normalizePath(parquet_duckdb_path),
-    log_path = log_path
-  ))
+  invisible(
+    list(
+      duckdb_path = duckdb_path,
+      panaroo_output = pan_dir,
+      parquet_duckdb_path = normalizePath(parquet_duckdb_path),
+      log_path = log_path,
+      report_files = report_files
+    )
+  )
 }
 
-#' Export processed tables from DuckDB database
+
+
+#' Export processed data from an amRdata ORB
 #'
-#' Reads tables from the DuckDB database produced by the `runDataProcessing()` workflow
-#' and exports them as CSV, TSV, Parquet, and/or XLSX. This is an optional step
-#' that allows users to take their processed data outside our amR workflow for
-#' use in their own custom analyses. This is not required to run `amRml`!
+#' Exports processed relations from the resource bundle (ORB) produced by
+#' [runDataProcessing()] as CSV, TSV, Parquet, and/or XLSX. This is an optional
+#' step that allows users to take their processed data outside our amR workflow
+#' for use in their own custom analyses. This is not required to run `amRml`!
 #'
-#' @param duckdb_path Character. Path to the DuckDB database created by the
-#'   workflow (for example, `Sar.duckdb`).
-#' @param output_path Character or NULL. Directory for exports. Defaults to
-#'   file.path(dirname(duckdb_path), "processed_exports").
+#' If `duckdb_path` is `NULL`, available ORBs are discovered automatically. A
+#' single ORB is selected automatically; when multiple ORBs are available in an
+#' interactive session, a selection menu is shown.
+#'
+#' @param duckdb_path Character or NULL. Path to an amRdata ORB directory,
+#'   ORB DuckDB, or working DuckDB associated with a completed ORB. If NULL,
+#'   available ORBs are discovered automatically.
+#' @param output_path Character or NULL. Directory for exports. Defaults to the
+#'   dataset `exports/` directory.
 #' @param amr_phenotype_mode Character. One of "separate" or "append".
 #'   "separate" exports the AMR labels as a separate wide table.
-#'   "append" joins those labels onto the main feature tables before export.
+#'   "append" also joins those labels onto genome-level feature count tables.
 #' @param export_formats Character vector. Any of "csv", "tsv", "parquet", "xlsx".
 #' @param export_sequences Logical. If TRUE, also exports gene and protein
-#'   sequence tables and the genome-to-gene-to-protein mapping. Default FALSE.
+#'   sequence and mapping relations detected in the ORB. Default FALSE.
 #' @param export_dyads Logical. If TRUE, exports the optional dyad annotation
 #'   table. Each row represents a protein-gene dyad with semicolon-separated
-#'   mapped feature values for structural annotations and the HMMER databases
-#'   recorded in the dataset manifest. The export uses `export_formats`.
-#'   Default FALSE.
-#' @param tables Character vector or NULL. Tables to export. If NULL, exports
-#'   the standard processed tables plus HMMER tables recorded in the manifest.
+#'   mapped feature values. The export uses `export_formats`. Default FALSE.
+#' @param tables Character vector or NULL. Relations to export. If NULL,
+#'   exportable relations are discovered automatically from the ORB.
 #' @param export_tables Logical. If TRUE, write the selected tables to disk.
 #'   Default TRUE.
 #' @param verbose Logical. If TRUE, prints progress messages.
 #'
-#' @return Invisibly returns a list containing the export path, table names, and mode.
+#' @return Invisibly returns a list containing the ORB path, export path,
+#'   exported table names, and export settings.
 #' @export
-exportProcessedData <- function(duckdb_path,
+exportProcessedData <- function(duckdb_path = NULL,
                                 output_path = NULL,
                                 amr_phenotype_mode = c("separate", "append"),
                                 export_formats = c("csv"),
@@ -3572,28 +4522,90 @@ exportProcessedData <- function(duckdb_path,
                                 tables = NULL,
                                 export_tables = TRUE,
                                 verbose = TRUE) {
-  duckdb_path <- normalizePath(duckdb_path, mustWork = TRUE)
 
-  if (length(amr_phenotype_mode) > 1L) {
-    message("`amr_phenotype_mode` not specified; defaulting to 'separate'.")
+  requested_duckdb_path <- duckdb_path
+
+  duckdb_path <- .amr_resolve_export_orb(
+    duckdb_path
+  )
+
+  paths <- .amr_paths_from_dataset_db(
+    duckdb_path
+  )
+
+  if (isTRUE(verbose)) {
+    message(
+      "Using processed ORB: ",
+      duckdb_path
+    )
   }
-  amr_phenotype_mode <- match.arg(amr_phenotype_mode)
 
-  export_formats <- unique(tolower(export_formats))
-  export_formats[export_formats == "excel"] <- "xlsx"
+  if (length(amr_phenotype_mode) > 1L &&
+      isTRUE(verbose)) {
+    message(
+      "`amr_phenotype_mode` not specified; defaulting to 'separate'."
+    )
+  }
 
-  allowed_formats <- c("csv", "tsv", "xlsx", "parquet")
-  unknown_formats <- setdiff(export_formats, allowed_formats)
+  amr_phenotype_mode <- match.arg(
+    amr_phenotype_mode
+  )
+
+  export_formats <- unique(
+    tolower(export_formats)
+  )
+
+  export_formats[
+    export_formats == "excel"
+  ] <- "xlsx"
+
+  allowed_formats <- c(
+    "csv",
+    "tsv",
+    "xlsx",
+    "parquet"
+  )
+
+  unknown_formats <- setdiff(
+    export_formats,
+    allowed_formats
+  )
+
   if (length(unknown_formats)) {
-    stop("Unsupported export format(s): ", paste(unknown_formats, collapse = ", "))
+    stop(
+      "Unsupported export format(s): ",
+      paste(
+        unknown_formats,
+        collapse = ", "
+      ),
+      call. = FALSE
+    )
   }
 
-  if (isTRUE(export_tables) && !length(export_formats)) {
-    stop("At least one export format must be supplied when export_tables = TRUE.")
+  if (
+    isTRUE(export_tables) &&
+    !length(export_formats)
+  ) {
+    stop(
+      "At least one export format must be supplied when export_tables = TRUE.",
+      call. = FALSE
+    )
   }
 
-  warn_text_exports <- any(export_formats %in% c("csv", "tsv", "xlsx"))
-  if (isTRUE(export_tables) && warn_text_exports) {
+  warn_text_exports <- any(
+    export_formats %in% c(
+      "csv",
+      "tsv",
+      "xlsx"
+    )
+  )
+
+  if (
+    isTRUE(export_tables) &&
+    warn_text_exports &&
+    isTRUE(verbose)
+  ) {
+
     message(
       "\nNote: CSV, TSV, and Excel exports are intended primarily for human readability.\n",
       "However, BV-BRC genome accession are differentiated by trailing zero values.\n",
@@ -3605,115 +4617,191 @@ exportProcessedData <- function(duckdb_path,
     )
   }
 
-  if ("xlsx" %in% export_formats && !requireNamespace("writexl", quietly = TRUE)) {
-    stop("Format 'xlsx' was requested but package 'writexl' is not available.")
+  if (
+    "xlsx" %in% export_formats &&
+    !requireNamespace(
+      "writexl",
+      quietly = TRUE
+    )
+  ) {
+    stop(
+      "Format 'xlsx' was requested but package 'writexl' is not available.",
+      call. = FALSE
+    )
   }
 
   if (is.null(output_path)) {
-    output_path <- file.path(dirname(duckdb_path), "processed_exports")
+    output_path <- paths$exports
   }
-  output_path <- normalizePath(output_path, mustWork = FALSE)
-  dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
 
-  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path, read_only = TRUE)
-  DBI::dbExecute(
-    con,
-    sprintf(
-      "SET file_search_path='%s'",
-      dirname(normalizePath(duckdb_path))
-    )
+  dir.create(
+    output_path,
+    recursive = TRUE,
+    showWarnings = FALSE
   )
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  available_tables <- DBI::dbListTables(con)
+  output_path <- normalizePath(
+    output_path,
+    mustWork = TRUE
+  )
+
+  con <- .amr_connect_dataset_db(
+    duckdb_path,
+    read_only = TRUE
+  )
+
+  on.exit(
+    try(
+      DBI::dbDisconnect(con),
+      silent = TRUE
+    ),
+    add = TRUE
+  )
+
+  available_tables <- sort(
+    DBI::dbListTables(con)
+  )
+
   if (!length(available_tables)) {
-    stop("No tables found in DuckDB: ", duckdb_path)
+    stop(
+      "No relations found in ORB: ",
+      duckdb_path,
+      call. = FALSE
+    )
   }
 
   read_tbl <- function(tbl) {
-    tibble::as_tibble(DBI::dbReadTable(con, tbl))
+    tibble::as_tibble(
+      DBI::dbReadTable(
+        con,
+        tbl
+      )
+    )
   }
 
   write_one <- function(df, stem) {
-    df <- .preserve_export_id_text(df)
+
+    df <- .preserve_export_id_text(
+      df
+    )
 
     if ("csv" %in% export_formats) {
       utils::write.table(
-        df, file = file.path(output_path, paste0(stem, ".csv")),
-        sep = ",", row.names = FALSE, col.names = TRUE,
-        quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
-        )
+        df,
+        file = file.path(
+          output_path,
+          paste0(
+            stem,
+            ".csv"
+          )
+        ),
+        sep = ",",
+        row.names = FALSE,
+        col.names = TRUE,
+        quote = TRUE,
+        na = "",
+        qmethod = "double",
+        fileEncoding = "UTF-8"
+      )
     }
+
     if ("tsv" %in% export_formats) {
       utils::write.table(
-        df, file = file.path(output_path, paste0(stem, ".tsv")),
-        sep = "\t", row.names = FALSE, col.names = TRUE,
-        quote = TRUE, na = "", qmethod = "double", fileEncoding = "UTF-8"
-        )
+        df,
+        file = file.path(
+          output_path,
+          paste0(
+            stem,
+            ".tsv"
+          )
+        ),
+        sep = "\t",
+        row.names = FALSE,
+        col.names = TRUE,
+        quote = TRUE,
+        na = "",
+        qmethod = "double",
+        fileEncoding = "UTF-8"
+      )
     }
+
     if ("parquet" %in% export_formats) {
-      arrow::write_parquet(df, file.path(output_path, paste0(stem, ".parquet")))
+      arrow::write_parquet(
+        df,
+        file.path(
+          output_path,
+          paste0(
+            stem,
+            ".parquet"
+          )
+        )
+      )
     }
+
     if ("xlsx" %in% export_formats) {
-      writexl::write_xlsx(list(data = df), file.path(output_path, paste0(stem, ".xlsx")))
-    }
-  }
-
-  # Determine which HMMER databases were actually run from the latest
-  # successful `runDataProcessing()` manifest
-  manifest_path <- .manifest_find_latest(duckdb_path)
-
-  hmmer_databases <- character()
-
-  if (!is.null(manifest_path)) {
-    manifest <- jsonlite::read_json(
-      manifest_path,
-      simplifyVector = FALSE
-    )
-
-    successful_hmmer <- list()
-
-    for (run in rev(manifest$runs %||% list())) {
-      stages <- run$stages %||% list()
-
-      matches <- purrr::keep(
-        stages,
-        ~ identical(.x$name, "hmmer") &&
-          identical(.x$status, "success")
+      writexl::write_xlsx(
+        list(
+          data = df
+        ),
+        file.path(
+          output_path,
+          paste0(
+            stem,
+            ".xlsx"
+          )
+        )
       )
-
-      if (length(matches)) {
-        successful_hmmer <- matches[[1]]
-        break
-      }
     }
+  }
 
-    if (length(successful_hmmer)) {
-      hmmer_databases <- unlist(
-        successful_hmmer$parameters$databases %||% character(),
-        use.names = FALSE
+  # ID HMMER outputs from ORB
+  hmmer_count_tables <- grep(
+    "^protein_.+_count$",
+    available_tables,
+    value = TRUE
+  )
+
+  hmmer_databases <- sub(
+    "^protein_(.+)_count$",
+    "\\1",
+    hmmer_count_tables
+  )
+
+  hmmer_databases <- hmmer_databases[
+    paste0(
+      "protein_",
+      hmmer_databases
+    ) %in% available_tables
+  ]
+
+  hmmer_databases <- unique(
+    hmmer_databases
+  )
+
+  if (
+    length(hmmer_databases) &&
+    isTRUE(verbose)
+  ) {
+    message(
+      "HMMER outputs detected in ORB: ",
+      paste(
+        hmmer_databases,
+        collapse = ", "
       )
-      hmmer_databases <- unique(as.character(hmmer_databases))
-    }
-  }
-
-  if (!length(hmmer_databases) && isTRUE(verbose)) {
-    message(
-      "No successful HMMER runs were found in the manifest. ",
-      "HMMER tables will not be selected automatically."
-    )
-  } else if (isTRUE(verbose)) {
-    message(
-      "Successful HMMER runs were identified in the manifest: ",
-      paste(hmmer_databases, collapse = ", ")
     )
   }
 
+  # AMR phenotype table
   build_amr_wide <- function() {
-    source_tbl <- if ("metadata" %in% available_tables) {
-      "metadata"
-    } else if ("amr_phenotype" %in% available_tables) {
+
+    source_tbl <- if (
+      "amr_phenotype" %in% available_tables
+    ) {
       "amr_phenotype"
+    } else if (
+      "metadata" %in% available_tables
+    ) {
+      "metadata"
     } else {
       NULL
     }
@@ -3722,24 +4810,84 @@ exportProcessedData <- function(duckdb_path,
       return(NULL)
     }
 
-    md <- read_tbl(source_tbl)
+    md <- read_tbl(
+      source_tbl
+    )
 
-    needed <- c("genome.genome_id", "genome_drug.antibiotic", "genome_drug.resistant_phenotype")
-    if (!all(needed %in% names(md))) {
+    genome_col <- c(
+      "genome_drug.genome_id",
+      "genome.genome_id",
+      "genome_id"
+    )
+
+    genome_col <- genome_col[
+      genome_col %in% names(md)
+    ]
+
+    antibiotic_col <- c(
+      "genome_drug.antibiotic",
+      "antibiotic"
+    )
+
+    antibiotic_col <- antibiotic_col[
+      antibiotic_col %in% names(md)
+    ]
+
+    phenotype_col <- c(
+      "genome_drug.resistant_phenotype",
+      "phenotype"
+    )
+
+    phenotype_col <- phenotype_col[
+      phenotype_col %in% names(md)
+    ]
+
+    if (
+      !length(genome_col) ||
+      !length(antibiotic_col) ||
+      !length(phenotype_col)
+    ) {
       return(NULL)
     }
 
+    genome_col <- genome_col[[1]]
+    antibiotic_col <- antibiotic_col[[1]]
+    phenotype_col <- phenotype_col[[1]]
+
     md |>
       dplyr::transmute(
-        genome_id = as.character(`genome.genome_id`),
-        antibiotic = as.character(`genome_drug.antibiotic`),
-        phenotype = as.character(`genome_drug.resistant_phenotype`)
+        genome_id = as.character(
+          .data[[genome_col]]
+        ),
+        antibiotic = as.character(
+          .data[[antibiotic_col]]
+        ),
+        phenotype = as.character(
+          .data[[phenotype_col]]
+        )
       ) |>
-      dplyr::filter(!is.na(genome_id), !is.na(antibiotic), !is.na(phenotype)) |>
+      dplyr::filter(
+        !is.na(genome_id),
+        nzchar(genome_id),
+        !is.na(antibiotic),
+        nzchar(antibiotic),
+        !is.na(phenotype),
+        nzchar(phenotype)
+      ) |>
       dplyr::distinct() |>
-      dplyr::group_by(genome_id, antibiotic) |>
+      dplyr::group_by(
+        genome_id,
+        antibiotic
+      ) |>
       dplyr::summarise(
-        phenotype = paste(sort(unique(phenotype)), collapse = ";"),
+        phenotype = paste(
+          sort(
+            unique(
+              phenotype
+            )
+          ),
+          collapse = ";"
+        ),
         .groups = "drop"
       ) |>
       tidyr::pivot_wider(
@@ -3747,107 +4895,122 @@ exportProcessedData <- function(duckdb_path,
         values_from = phenotype,
         values_fill = NA_character_
       ) |>
-      dplyr::arrange(genome_id)
+      dplyr::arrange(
+        genome_id
+      )
   }
 
-  table_specs <- list(
-    gene_count = list(source = "gene_count", stem = "gene_count", appendable = TRUE),
-    protein_count = list(source = "protein_count", stem = "protein_count", appendable = TRUE),
-    struct = list(source = "gene_struct", stem = "struct", appendable = TRUE),
-    gene_names = list(source = "gene_names", stem = "gene_names", appendable = FALSE),
-    protein_names = list(source = "protein_names", stem = "protein_names", appendable = FALSE),
-    metadata = list(source = "metadata", stem = "metadata", appendable = FALSE),
-    genome_data = list(source = "genome_data", stem = "genome_data", appendable = FALSE),
-    amr_phenotype_wide = list(source = NULL, stem = "amr_phenotype_wide", appendable = FALSE)
+  phenotype_wide <- build_amr_wide()
+
+  if (!is.null(phenotype_wide)) {
+    phenotype_wide <- .preserve_export_id_text(
+      phenotype_wide
+    )
+  }
+
+  # Determine the exports by beholding the ORB
+  sequence_tables <- c(
+    "gene_seqs",
+    "protein_seqs",
+    "protein_members",
+    "genome_gene_protein"
   )
 
-  # Add only the HMMER databases recorded in the manifest.
-  for (database in hmmer_databases) {
-    annotation_key <- paste0("protein_", database)
-    count_key <- paste0(annotation_key, "_count")
-
-    table_specs[[annotation_key]] <- list(
-      source = annotation_key,
-      stem = annotation_key,
-      appendable = FALSE
+  dyad_relations <- unique(c(
+    "dyads",
+    "genome_dyad",
+    "member_dyads",
+    "genome_cluster_dyad",
+    "struct_gene",
+    grep(
+      "^dyad_",
+      available_tables,
+      value = TRUE
     )
+  ))
 
-    table_specs[[count_key]] <- list(
-      source = count_key,
-      stem = count_key,
-      appendable = TRUE
-    )
-  }
-
-  if (isTRUE(export_sequences)) {
-    table_specs$gene_seqs <- list(
-      source = "gene_ref_seq",
-      stem = "gene_seqs",
-      appendable = FALSE
-    )
-
-    table_specs$protein_seqs <- list(
-      source = "protein_cluster_seq",
-      stem = "protein_seqs",
-      appendable = FALSE
-    )
-
-    table_specs$genome_gene_protein <- list(
-      source = "genome_gene_protein",
-      stem = "genome_gene_protein",
-      appendable = FALSE
-    )
-  }
+  default_exclusions <- c(
+    "amr_phenotype",
+    sequence_tables,
+    dyad_relations
+  )
 
   if (is.null(tables)) {
-    selected_keys <- c(
-      "gene_count",
-      "protein_count",
-      "struct",
-      "gene_names",
-      "protein_names",
-      "metadata",
-      "genome_data",
-      "amr_phenotype_wide",
-      paste0(
-        "protein_",
-        hmmer_databases,
-        "_count"
-      ),
-      paste0(
-        "protein_",
-        hmmer_databases
-      )
+
+    selected_tables <- setdiff(
+      available_tables,
+      default_exclusions
     )
 
-    selected_keys <- selected_keys[selected_keys %in% names(table_specs)]
-
     if (isTRUE(export_sequences)) {
-      selected_keys <- c(selected_keys, "gene_seqs", "protein_seqs", "genome_gene_protein")
+      selected_tables <- unique(c(
+        selected_tables,
+        intersect(
+          sequence_tables,
+          available_tables
+        )
+      ))
     }
+
+    selected_tables <- unique(c(
+      selected_tables,
+      "amr_phenotype_wide"
+    ))
+
   } else {
-    selected_keys <- intersect(as.character(tables), names(table_specs))
+
+    requested_tables <- unique(
+      as.character(tables)
+    )
+
+    selectable_tables <- c(
+      available_tables,
+      "amr_phenotype_wide"
+    )
+
+    missing_tables <- setdiff(
+      requested_tables,
+      selectable_tables
+    )
+
+    if (
+      length(missing_tables) &&
+      isTRUE(verbose)
+    ) {
+      message(
+        "Requested relation(s) not present in ORB: ",
+        paste(
+          missing_tables,
+          collapse = ", "
+        )
+      )
+    }
+
+    selected_tables <- intersect(
+      requested_tables,
+      selectable_tables
+    )
   }
 
-  if (!length(selected_keys)) {
-    stop("No requested tables were found in the DuckDB.")
+  if (!length(selected_tables)) {
+    stop(
+      "No requested relations were found in the ORB.",
+      call. = FALSE
+    )
   }
 
-  # Ensuring we don't accidentally pass a NULL through silently
-  phenotype_wide <- build_amr_wide()
-  if (!is.null(phenotype_wide)) {
-    phenotype_wide <- .preserve_export_id_text(phenotype_wide)
-  }
-  exported <- character(0)
+  exported <- character()
 
-  # Optionally export a mapping table rooted on the protein-gene dyads
+  # Optional dyad annotations
   if (isTRUE(export_dyads)) {
+
     dyad_tbl <- .exportDyadAnnotations(
       duckdb_path = duckdb_path,
       verbose = verbose
     )
 
     if (isTRUE(export_tables)) {
+
       write_one(
         dyad_tbl,
         "dyad_annotations"
@@ -3859,53 +5022,107 @@ exportProcessedData <- function(duckdb_path,
       )
 
       if (isTRUE(verbose)) {
-        message("Exported: dyad_annotations")
+        message(
+          "Exported: dyad_annotations"
+        )
       }
     }
   }
 
-  for (key in selected_keys) {
-    spec <- table_specs[[key]]
+  for (table in selected_tables) {
 
-    if (key == "amr_phenotype_wide") {
+    if (identical(
+      table,
+      "amr_phenotype_wide"
+    )) {
+
       if (is.null(phenotype_wide)) {
-        if (isTRUE(verbose)) message("Skipping amr_phenotype_wide: no AMR source table found.")
+
+        if (isTRUE(verbose)) {
+          message(
+            "Skipping amr_phenotype_wide: no AMR source relation found."
+          )
+        }
+
         next
       }
-      write_one(phenotype_wide, spec$stem)
-      exported <- c(exported, spec$stem)
-      if (isTRUE(verbose)) message("Exported: ", spec$stem)
-      next
+
+      df <- phenotype_wide
+
+    } else {
+
+      df <- .preserve_export_id_text(
+        read_tbl(
+          table
+        )
+      )
     }
 
-    if (is.null(spec$source) || !(spec$source %in% available_tables)) {
-      if (isTRUE(verbose)) message("Skipping missing table: ", key)
-      next
-    }
+    out_stem <- table
 
-    df <- .preserve_export_id_text(read_tbl(spec$source))
-    out_stem <- spec$stem
+    appendable <- table %in% c(
+      "gene_count",
+      "protein_count",
+      "struct"
+    ) ||
+      grepl(
+        "^protein_.+_count$",
+        table
+      )
 
-    if (identical(amr_phenotype_mode, "append") &&
-        isTRUE(spec$appendable) &&
-        !is.null(phenotype_wide) &&
-        "genome_id" %in% names(df)) {
-      df <- dplyr::left_join(df, phenotype_wide, by = "genome_id")
-      df <- .preserve_export_id_text(df)
-      out_stem <- paste0(spec$stem, "_with_phenotypes")
+    if (
+      identical(
+        amr_phenotype_mode,
+        "append"
+      ) &&
+      isTRUE(appendable) &&
+      !is.null(phenotype_wide) &&
+      "genome_id" %in% names(df)
+    ) {
+
+      df <- dplyr::left_join(
+        df,
+        phenotype_wide,
+        by = "genome_id"
+      )
+
+      df <- .preserve_export_id_text(
+        df
+      )
+
+      out_stem <- paste0(
+        table,
+        "_with_phenotypes"
+      )
     }
 
     if (isTRUE(export_tables)) {
-      write_one(df, out_stem)
-      exported <- c(exported, out_stem)
+
+      write_one(
+        df,
+        out_stem
+      )
+
+      exported <- c(
+        exported,
+        out_stem
+      )
 
       if (isTRUE(verbose)) {
-        message("Exported: ", out_stem)
+        message(
+          "Exported: ",
+          out_stem
+        )
       }
     }
   }
 
+  manifest_path <- .manifest_find_latest(
+    duckdb_path
+  )
+
   invisible(list(
+    requested_duckdb_path = requested_duckdb_path,
     duckdb_path = duckdb_path,
     output_path = output_path,
     tables = exported,
@@ -3915,4 +5132,962 @@ exportProcessedData <- function(duckdb_path,
     hmmer_databases = hmmer_databases,
     manifest_path = manifest_path
   ))
+}
+
+#' Remove local amRdata dataset files
+#'
+#' Removes disposable intermediate files from an amRdata dataset while
+#' retaining the final ORB and any human-readable exports.
+#'
+#' If `dataset_path` is not supplied in an interactive session, registered
+#' amRdata dataset manifests are used to identify available datasets. A single
+#' available dataset is selected automatically; when multiple datasets are
+#' available, an interactive menu is shown.
+#'
+#' With `complete_remove = TRUE`, the entire dataset directory is permanently
+#' removed after strict structural validation and interactive confirmation. If your
+#' directory structure does not conform to expectations, you will have to manually
+#' delete your data. This is a safety mechanism so you don't accidentally delete
+#' the photos of your children on your desktop.
+#'
+#' @param dataset_path Character scalar or `NULL`. Path to the amRdata dataset
+#'   directory, for example `"data/Shigella_flexneri"`. If `NULL`
+#'   interactively, registered dataset manifests are used to select a dataset.
+#' @param complete_remove Logical. If `FALSE` (default), remove only disposable
+#'   build directories and retain `orb/` and `exports/`. If `TRUE`, permanently
+#'   remove the entire validated amRdata dataset directory.
+#' @param verbose Logical. Print cleanup messages. Default `TRUE`.
+#'
+#' @return Invisibly returns the removed paths. For a cancelled selection or
+#'   complete removal, invisibly returns `FALSE`.
+#'
+#' @export
+removeLocalFiles <- function(
+    dataset_path = NULL,
+    complete_remove = FALSE,
+    verbose = TRUE
+) {
+
+  if (is.null(dataset_path)) {
+    candidates <- .amr_cleanup_datasets()
+
+    if (!nrow(candidates)) {
+      stop(
+        "No amRdata datasets available for cleanup were found.",
+        call. = FALSE
+      )
+    }
+
+    if (nrow(candidates) == 1L) {
+      dataset_path <- candidates$dataset_path[[1]]
+    } else {
+      if (!interactive()) {
+        stop(
+          "`dataset_path` must be supplied when multiple datasets are available ",
+          "in a non-interactive session.",
+          call. = FALSE
+        )
+      }
+
+      choices <- paste0(
+        candidates$label,
+        " [",
+        candidates$dataset_id,
+        "]"
+      )
+
+      selection <- utils::menu(
+        choices = choices,
+        title = "Select an amRdata dataset to clean:"
+      )
+
+      if (selection == 0L) {
+        return(invisible(FALSE))
+      }
+
+      dataset_path <- candidates$dataset_path[[selection]]
+    }
+  }
+
+  if (
+    length(complete_remove) != 1L ||
+    is.na(complete_remove) ||
+    !is.logical(complete_remove)
+  ) {
+    stop(
+      "`complete_remove` must be TRUE or FALSE.",
+      call. = FALSE
+    )
+  }
+
+  dataset_path <- normalizePath(
+    dataset_path,
+    mustWork = TRUE
+  )
+
+  if (!dir.exists(dataset_path)) {
+    stop(
+      "`dataset_path` must be an amRdata dataset directory.",
+      call. = FALSE
+    )
+  }
+
+  data_dir <- dirname(dataset_path)
+
+  if (!identical(basename(data_dir), "data")) {
+    stop(
+      "Removal refused: dataset directory is not directly ",
+      "inside a directory named 'data/'.",
+      call. = FALSE
+    )
+  }
+
+  orb_dir <- file.path(
+    dataset_path,
+    "orb"
+  )
+
+  if (!dir.exists(orb_dir)) {
+    stop(
+      "Dataset does not contain an 'orb/' directory: ",
+      dataset_path,
+      call. = FALSE
+    )
+  }
+
+  # Calculate disk use without relying on platform-specific shell commands
+  path_bytes <- function(path) {
+    if (
+      !file.exists(path) &&
+      !dir.exists(path)
+    ) {
+      return(0)
+    }
+
+    if (!dir.exists(path)) {
+      size <- file.info(path)$size
+
+      if (is.na(size)) {
+        return(0)
+      }
+
+      return(
+        as.numeric(size)
+      )
+    }
+
+    files <- list.files(
+      path,
+      all.files = TRUE,
+      full.names = TRUE,
+      recursive = TRUE,
+      include.dirs = FALSE,
+      no.. = TRUE
+    )
+
+    if (!length(files)) {
+      return(0)
+    }
+
+    info <- file.info(files)
+
+    sum(as.numeric(info$size[!info$isdir &
+                               !is.na(info$size)]), na.rm = TRUE)
+  }
+
+  format_bytes <- function(bytes) {
+    bytes <- as.numeric(bytes)
+
+    if (
+      length(bytes) != 1L ||
+      is.na(bytes) ||
+      !is.finite(bytes) ||
+      bytes < 0
+    ) {
+      return("unknown")
+    }
+
+    units <- c(
+      "B",
+      "KiB",
+      "MiB",
+      "GiB",
+      "TiB"
+    )
+
+    if (bytes == 0) {
+      return("0 B")
+    }
+
+    unit_index <- min(
+      floor(
+        log(
+          bytes,
+          base = 1024
+        )
+      ) + 1L,
+      length(units)
+    )
+
+    value <- bytes / 1024^(unit_index - 1L)
+
+    if (unit_index == 1L) {
+      sprintf(
+        "%.0f %s",
+        value,
+        units[[unit_index]]
+      )
+    } else {
+      sprintf(
+        "%.2f %s",
+        value,
+        units[[unit_index]]
+      )
+    }
+  }
+
+  if (isTRUE(complete_remove)) {
+    # Reject filesystem roots and especially important directories even if
+    # someone has created an unusual path named "data"
+    protected_paths <- unique(c(
+      normalizePath(path.expand("~"), mustWork = FALSE),
+      normalizePath(getwd(), mustWork = FALSE),
+      normalizePath(data_dir, mustWork = FALSE)
+    ))
+
+    if (identical(dirname(dataset_path), dataset_path) ||
+        dataset_path %in% protected_paths) {
+      stop("Complete removal refused: protected path.", call. = FALSE)
+    }
+
+    # Do not perform destructive recursive deletion through a symlinked
+    # dataset root
+    root_link <- Sys.readlink(dataset_path)
+
+    if (length(root_link) &&
+        !is.na(root_link) &&
+        nzchar(root_link)
+    ) {
+      stop("Complete removal refused: dataset directory is a symbolic link.",
+           call. = FALSE)
+    }
+
+    # The top level must look exactly like an amRdata dataset. Any foreign
+    # material causes a hard stop rather than being silently deleted.
+    allowed_entries <- c(
+      "genomes",
+      "panaroo",
+      "cd-hit",
+      "hmmer",
+      "work",
+      "orb",
+      "exports",
+      ".DS_Store"
+    )
+
+    top_entries <- list.files(
+      dataset_path,
+      all.files = TRUE,
+      no.. = TRUE
+    )
+
+    unexpected_entries <- setdiff(
+      top_entries,
+      allowed_entries
+    )
+
+    if (length(unexpected_entries)) {
+      stop(
+        "Complete removal refused: unexpected top-level file(s) or ",
+        "directory/directories were found:\n",
+        paste(
+          unexpected_entries,
+          collapse = "\n"
+        ),
+        call. = FALSE
+      )
+    }
+
+    # Reject symlinked top-level dataset components as an additional safety
+    top_paths <- file.path(
+      dataset_path,
+      setdiff(
+        top_entries,
+        ".DS_Store"
+      )
+    )
+
+    if (length(top_paths)) {
+      link_targets <- Sys.readlink(
+        top_paths
+      )
+
+      linked_entries <- basename(
+        top_paths[
+          !is.na(link_targets) &
+            nzchar(link_targets)
+        ]
+      )
+
+      if (length(linked_entries)) {
+        stop(
+          "Complete removal refused: symbolic link(s) found inside ",
+          "the dataset root:\n",
+          paste(
+            linked_entries,
+            collapse = "\n"
+          ),
+          call. = FALSE
+        )
+      }
+    }
+
+    # A real amRdata dataset must contain at least one valid amR dataset
+    # manifest. For complete removal we intentionally do not require a
+    # successful run, because failed/incomplete builds also need to be
+    # removable
+    manifest_paths <- list.files(
+      orb_dir,
+      pattern = "^manifest_.*\\.json$",
+      full.names = TRUE
+    )
+
+    if (!length(manifest_paths)) {
+      stop(
+        "Complete removal refused: no amRdata manifest was found in 'orb/'.",
+        call. = FALSE
+      )
+    }
+
+    manifest_paths <- manifest_paths[
+      order(
+        file.info(manifest_paths)$mtime,
+        decreasing = TRUE
+      )
+    ]
+
+    manifest <- NULL
+    manifest_path <- NULL
+
+    for (candidate_path in manifest_paths) {
+      candidate <- tryCatch(
+        jsonlite::read_json(
+          candidate_path,
+          simplifyVector = FALSE
+        ),
+        error = function(e) {
+          NULL
+        }
+      )
+
+      if (is.null(candidate)) {
+        next
+      }
+
+      valid_manifest <- tryCatch(
+        {
+          .manifest_validate(
+            candidate
+          )
+
+          TRUE
+        },
+        error = function(e) {
+          FALSE
+        }
+      )
+
+      if (
+        isTRUE(valid_manifest) &&
+        identical(
+          candidate$manifest_type %||% "",
+          "amR_dataset"
+        )
+      ) {
+        manifest <- candidate
+        manifest_path <- candidate_path
+        break
+      }
+    }
+
+    if (is.null(manifest)) {
+      stop(
+        "Complete removal refused: no valid amRdata dataset manifest ",
+        "was found.",
+        call. = FALSE
+      )
+    }
+
+    dataset_id <- as.character(
+      manifest$dataset_id %||% ""
+    )
+
+    if (!nzchar(dataset_id)) {
+      stop(
+        "Complete removal refused: manifest does not contain a dataset ID.",
+        call. = FALSE
+      )
+    }
+
+    user_bacs <- unlist(
+      manifest$dataset$selection$user_bacs %||% character(),
+      use.names = FALSE
+    )
+
+    if (!length(user_bacs)) {
+      stop(
+        "Complete removal refused: manifest does not identify the ",
+        "dataset selection.",
+        call. = FALSE
+      )
+    }
+
+    expected_dataset_name <- paste(
+      user_bacs,
+      collapse = "__"
+    ) |>
+      stringr::str_replace_all(
+        "\\s+",
+        "_"
+      ) |>
+      stringr::str_replace_all(
+        "[^A-Za-z0-9._-]",
+        ""
+      )
+
+    if (!identical(
+      basename(dataset_path),
+      expected_dataset_name
+    )) {
+      stop(
+        "Complete removal refused: dataset directory name does not match ",
+        "the dataset recorded in the manifest.\n",
+        "Expected: ",
+        expected_dataset_name,
+        "\nFound: ",
+        basename(dataset_path),
+        call. = FALSE
+      )
+    }
+
+    expected_dataset_id <- .generateDBname(
+      user_bacs
+    )
+
+    if (!identical(
+      dataset_id,
+      expected_dataset_id
+    )) {
+      stop(
+        "Complete removal refused: manifest dataset ID does not match ",
+        "the dataset selection.",
+        call. = FALSE
+      )
+    }
+
+    # Any DuckDB files that exist must use the canonical names
+    work_dir <- file.path(
+      dataset_path,
+      "work"
+    )
+
+    work_duckdbs <- if (dir.exists(work_dir)) {
+      list.files(
+        work_dir,
+        pattern = "\\.duckdb$",
+        full.names = FALSE
+      )
+    } else {
+      character()
+    }
+
+    orb_duckdbs <- list.files(
+      orb_dir,
+      pattern = "\\.duckdb$",
+      full.names = FALSE
+    )
+
+    unexpected_work_duckdbs <- setdiff(
+      work_duckdbs,
+      paste0(
+        dataset_id,
+        ".duckdb"
+      )
+    )
+
+    unexpected_orb_duckdbs <- setdiff(
+      orb_duckdbs,
+      paste0(
+        dataset_id,
+        "_parquet.duckdb"
+      )
+    )
+
+    unexpected_duckdbs <- c(
+      unexpected_work_duckdbs,
+      unexpected_orb_duckdbs
+    )
+
+    if (length(unexpected_duckdbs)) {
+      stop(
+        "Complete removal refused: unexpected DuckDB file(s) were found:\n",
+        paste(
+          unexpected_duckdbs,
+          collapse = "\n"
+        ),
+        call. = FALSE
+      )
+    }
+
+    dataset_bytes <- path_bytes(
+      dataset_path
+    )
+
+    # Requiring interactive confirmation protects against accidental execution
+    # from command history and prevents unattended scripts from recursively
+    # deleting complete datasets
+    if (!interactive()) {
+      stop(
+        "Complete removal requires an interactive R session so deletion ",
+        "can be explicitly confirmed.",
+        call. = FALSE
+      )
+    }
+
+    cat(
+      "\n",
+      "PERMANENT DATASET REMOVAL\n",
+      "=========================\n",
+      "This will permanently delete the entire amRdata dataset,\n",
+      "including its ORB, Parquet files, manifests, exports, all\n",
+      "genomes, and intermediate build files.\n\n",
+      "Dataset:\n",
+      dataset_path,
+      "\n\n",
+      "Disk space to reclaim: ",
+      format_bytes(dataset_bytes),
+      "\n\n",
+      sep = ""
+    )
+
+    confirmation <- readline(
+      paste0(
+        "Are you sure? Type '",
+        basename(dataset_path),
+        "' to confirm: "
+      )
+    )
+
+    if (!identical(
+      trimws(confirmation),
+      basename(dataset_path)
+    )) {
+      if (isTRUE(verbose)) {
+        message(
+          "Complete removal cancelled. Nothing was deleted."
+        )
+      }
+
+      return(
+        invisible(FALSE)
+      )
+    }
+
+    unlink(
+      dataset_path,
+      recursive = TRUE,
+      force = TRUE
+    )
+
+    if (dir.exists(dataset_path)) {
+      stop(
+        "Complete removal was requested, but the dataset directory ",
+        "could not be fully removed:\n",
+        dataset_path,
+        call. = FALSE
+      )
+    }
+
+    if (isTRUE(verbose)) {
+      message(
+        "Completely removed amRdata dataset: ",
+        dataset_path,
+        "\nReclaimed ",
+        format_bytes(dataset_bytes),
+        " of disk space."
+      )
+    }
+
+    return(
+      invisible(dataset_path)
+    )
+  }
+
+  # Basic default cleanup, still retain ORB and exports
+  parquet_duckdb <- list.files(
+    orb_dir,
+    pattern = "_parquet\\.duckdb$",
+    full.names = TRUE
+  )
+
+  if (!length(parquet_duckdb)) {
+    stop(
+      "Local build files cannot be removed yet.\n\n",
+      "This dataset has been prepared with `prepareGenomes()`, but it has not ",
+      "yet completed `runDataProcessing()`. The final processed ORB ",
+      "(`*_parquet.duckdb`) does not exist yet.\n\n",
+      "The current genome and working files are still needed to complete data ",
+      "processing, so `removeLocalFiles()` will not remove them.\n\n",
+      "Next step:\n",
+      "  runDataProcessing(...)\n\n",
+      "After data processing completes successfully, run:\n",
+      "  removeLocalFiles()\n\n",
+      "If you instead want to permanently discard this dataset, use:\n",
+      "  removeLocalFiles(..., complete_remove = TRUE)",
+      call. = FALSE
+    )
+  }
+
+  if (length(parquet_duckdb) > 1L) {
+    stop(
+      "Local build files cannot be removed safely.\n\n",
+      "Expected one final '*_parquet.duckdb' file in:\n  ",
+      orb_dir,
+      "\nFound: ",
+      length(parquet_duckdb),
+      "\n\nMultiple ORBs are unexpected. No files were removed.\n",
+      "You may have to delete this stuff manually.",
+      call. = FALSE
+    )
+  }
+
+  parquet_duckdb <- normalizePath(
+    parquet_duckdb[[1]],
+    mustWork = TRUE
+  )
+
+  paths <- .amr_paths_from_dataset_db(
+    parquet_duckdb
+  )
+
+  manifest_path <- .manifest_find_latest(
+    parquet_duckdb,
+    require_success = TRUE
+  )
+
+  if (is.null(manifest_path)) {
+    stop(
+      "No successful dataset manifest was found. ",
+      "Local build files will not be removed."
+    )
+  }
+
+  manifest <- jsonlite::read_json(
+    manifest_path,
+    simplifyVector = FALSE
+  )
+
+  .manifest_validate(
+    manifest
+  )
+
+  artifact <- manifest$artifacts$amRml_input %||% NULL
+
+  if (
+    is.null(artifact) ||
+    !identical(
+      artifact$status,
+      "ready"
+    )
+  ) {
+    stop(
+      "The dataset is not marked as a ready amRml input. ",
+      "Local build files will not be removed."
+    )
+  }
+
+  producer_run_id <- artifact$producer_run_id %||% NULL
+
+  if (
+    is.null(producer_run_id) ||
+    !nzchar(producer_run_id)
+  ) {
+    stop(
+      "The ready ORB does not identify its producing run. ",
+      "Local build files will not be removed."
+    )
+  }
+
+  run_ids <- purrr::map_chr(
+    manifest$runs %||% list(),
+    ~ .x$run_id %||% ""
+  )
+
+  run_index <- which(
+    run_ids == producer_run_id
+  )
+
+  if (length(run_index) != 1L) {
+    stop(
+      "Could not uniquely identify the run that produced the ORB. ",
+      "Local build files will not be removed."
+    )
+  }
+
+  producer_run <- manifest$runs[[run_index]]
+
+  if (!identical(
+    producer_run$status,
+    "success"
+  )) {
+    stop(
+      "The run that produced the ORB is not marked successful. ",
+      "Local build files will not be removed."
+    )
+  }
+
+  hmmer_stage <- NULL
+
+  for (run in rev(
+    manifest$runs[
+      seq_len(run_index)
+    ]
+  )) {
+    matches <- purrr::keep(
+      run$stages %||% list(),
+      ~ identical(
+        .x$name,
+        "hmmer"
+      ) &&
+        identical(
+          .x$status,
+          "success"
+        )
+    )
+
+    if (length(matches)) {
+      hmmer_stage <- matches[[length(matches)]]
+      break
+    }
+  }
+
+  if (is.null(hmmer_stage)) {
+    stop(
+      "No successful HMMER stage was found at or before the ",
+      "ORB-producing run. Local build files will not be removed."
+    )
+  }
+
+  hmmer_databases <- unlist(
+    hmmer_stage$parameters$databases %||% character(),
+    use.names = FALSE
+  )
+
+  hmmer_databases <- unique(
+    as.character(
+      hmmer_databases
+    )
+  )
+
+  required_orb_files <- c(
+    paths$parquet_duckdb,
+
+    file.path(
+      paths$orb,
+      c(
+        "metadata.parquet",
+        "metadata_qc.parquet",
+        "metadata_qc_rejections.parquet",
+        "selected_genomes.parquet",
+        "amr_phenotype.parquet",
+        "genome_data.parquet",
+        "original_metadata.parquet",
+
+        "gene_count.parquet",
+        "gene_names.parquet",
+        "gene_seqs.parquet",
+        "genome_gene_protein.parquet",
+        "struct.parquet",
+
+        "protein_count.parquet",
+        "protein_names.parquet",
+        "protein_seqs.parquet",
+        "protein_members.parquet",
+
+        "dyads.parquet"
+      )
+    ),
+
+    file.path(
+      paths$orb,
+      paste0(
+        "protein_",
+        hmmer_databases,
+        ".parquet"
+      )
+    ),
+
+    file.path(
+      paths$orb,
+      paste0(
+        "protein_",
+        hmmer_databases,
+        "_count.parquet"
+      )
+    )
+  )
+
+  missing_orb_files <- required_orb_files[
+    !file.exists(required_orb_files)
+  ]
+
+  if (length(missing_orb_files)) {
+    stop(
+      "ORB validation failed. Local build files will not be removed.\n",
+      "Missing expected ORB file(s):\n",
+      paste(
+        missing_orb_files,
+        collapse = "\n"
+      )
+    )
+  }
+
+  remove_paths <- c(
+    paths$genomes,
+    paths$panaroo,
+    paths$cdhit,
+    paths$hmmer,
+    paths$work
+  )
+
+  remove_paths <- remove_paths[
+    dir.exists(remove_paths)
+  ]
+
+  reclaimed_bytes <- sum(
+    purrr::map_dbl(
+      remove_paths,
+      path_bytes
+    )
+  )
+
+  retained_bytes <- sum(
+    purrr::map_dbl(
+      c(
+        paths$orb,
+        paths$exports
+      ),
+      path_bytes
+    )
+  )
+
+  if (!length(remove_paths)) {
+    if (isTRUE(verbose)) {
+      message(
+        "No local build files found to remove.\n",
+        "The retained ORB and exports are still present.\n",
+        "To remove the entire dataset, please use:\n",
+        "  removeLocalFiles(complete_remove = TRUE)"
+      )
+    }
+
+    return(
+      invisible(character())
+    )
+  }
+
+  if (!interactive()) {
+    stop(
+      "Local file cleanup requires an interactive R session so deletion ",
+      "can be explicitly confirmed.",
+      call. = FALSE
+    )
+  }
+
+  cat(
+    "\n",
+    "LOCAL FILE CLEANUP\n",
+    "==================\n",
+    "The following amRdata working directories will be permanently removed:\n\n",
+    paste0(
+      "  - ",
+      basename(remove_paths),
+      "/",
+      collapse = "\n"
+    ),
+    "\n\n",
+    "Dataset:\n  ",
+    dataset_path,
+    "\n\n",
+    "Disk space to reclaim: ",
+    format_bytes(reclaimed_bytes),
+    "\n\n",
+    "Retained:\n",
+    "  - orb/     final processed amRdata/ML-ready data\n",
+    "  - exports/ user-exported files (e.g., TSVs or Parquets) \n\n",
+    "Note: these directories may contain useful tool-specific outputs such as\n",
+    "Panaroo pangenomes. Copy anything you want to retain before continuing.\n\n",
+    "To remove the entire dataset instead, use:\n",
+    "  removeLocalFiles(..., complete_remove = TRUE)\n\n",
+    sep = ""
+  )
+
+  confirmation <- readline(
+    "Continue? [y/N]: "
+  )
+
+  if (!tolower(trimws(confirmation)) %in% c("y", "yes", "you betcha")) {
+    if (isTRUE(verbose)) {
+      message(
+        "Local file cleanup cancelled. Nothing was deleted."
+      )
+    }
+
+    return(
+      invisible(FALSE)
+    )
+  }
+
+  if (length(remove_paths)) {
+    purrr::walk(
+      remove_paths,
+      ~ unlink(
+        .x,
+        recursive = TRUE,
+        force = TRUE
+      )
+    )
+  }
+
+  remaining <- remove_paths[
+    dir.exists(remove_paths)
+  ]
+
+  if (length(remaining)) {
+    stop(
+      "Some local build directories could not be removed:\n",
+      paste(
+        remaining,
+        collapse = "\n"
+      )
+    )
+  }
+
+  if (isTRUE(verbose)) {
+    message(
+      "Removed local build files.\n",
+      "Reclaimed ",
+      format_bytes(reclaimed_bytes),
+      " of disk space.\n",
+      "ORB and exports retained (",
+      format_bytes(retained_bytes),
+      ").\n",
+      "To remove the entire dataset later, use:\n",
+      "  removeLocalFiles(complete_remove = TRUE)"
+    )
+  }
+
+  invisible(
+    remove_paths
+  )
 }

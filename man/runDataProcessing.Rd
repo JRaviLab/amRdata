@@ -5,11 +5,11 @@
 \title{Run the full amRdata processing pipeline (Panaroo -> CD-HIT -> HMMER -> Parquet)}
 \usage{
 runDataProcessing(
-  duckdb_path,
-  output_path = NULL,
+  duckdb_path = NULL,
   threads = 8,
   resume = FALSE,
   export_tabular_data = FALSE,
+  evidence_mode = NULL,
   panaroo_split_jobs = FALSE,
   panaroo_core_threshold = 0.9,
   panaroo_len_dif_percent = 0.95,
@@ -29,7 +29,11 @@ runDataProcessing(
   hmmer_docker_image = "staphb/hmmer",
   hmmer_num_splits = 8L,
   hmmer_workers = 8L,
-  verbose = TRUE
+  cog_evalue = 1e-04,
+  verbose = FALSE,
+  progress = getOption("amRdata.progress", TRUE),
+  hmmer_fallback_evalue = 0.001,
+  hmmer_fallback_coverage = 0.5
 )
 }
 \arguments{
@@ -37,10 +41,6 @@ runDataProcessing(
 \code{\link[=prepareGenomes]{prepareGenomes()}} (e.g., \code{"data/<Bug>/<Abbrev>.duckdb"}). This DB must
 already contain the tables written by \code{\link[=prepareGenomes]{prepareGenomes()}} and the upstream
 genome-processing steps.}
-
-\item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo,
-CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
-\code{dirname(duckdb_path)}.}
 
 \item{threads}{Integer. Shared concurrency budget used across Panaroo, CD-HIT,
 and HMMER. Defaults to \code{8}.}
@@ -57,6 +57,13 @@ run, since they're fast and idempotent. Default: \code{FALSE}.}
 \item{export_tabular_data}{Logical. If TRUE, automatically call
 \code{\link[=exportProcessedData]{exportProcessedData()}} after the processing pipeline completes to create
 the default human-readable exports. Default: \code{FALSE}.}
+
+\item{evidence_mode}{Character or \code{NULL}. Which AMR evidence metadata
+cleaning keeps: \code{"lab_only"}, \code{"lab_or_comp"}, \code{"comp_only"}, or \code{"any"}.
+If \code{NULL} (default), uses the mode recorded by \code{\link[=prepareGenomes]{prepareGenomes()}} in the
+dataset manifest, or \code{"lab_only"} if none is recorded. A value that
+disagrees with the manifest is an error, so processing can't diverge from
+the genomes that were selected and downloaded.}
 
 \item{panaroo_split_jobs}{Logical. If \code{TRUE}, Panaroo runs in multiple batches
 that can be merged by \code{\link[=.mergePanaroo]{.mergePanaroo()}}. If \code{FALSE}, Panaroo runs once on all
@@ -112,7 +119,31 @@ Default: \code{8}.}
 
 \item{hmmer_workers}{Integer. Number of parallel HMMER workers. Default: \code{8}.}
 
-\item{verbose}{Logical. Print progress messages. Default: \code{TRUE}.}
+\item{cog_evalue}{Numeric. E-value that COG hits must meet (sequence and
+domain independent E-values), because COG profiles define no bit score
+cutoffs. Hits to Pfam, AMRFinder, DefenseFinder and CasFinder profiles are
+judged on the curator-defined bit score cutoff instead (\code{GA}, or \code{TC} for
+AMRFinder). Profiles without cutoffs use the fallback below. Default:
+\code{1e-4}, the E-value NCBI uses to assign proteins to COGs (COG database
+update 2024); the original NCBI method uses PSI-BLAST/PSSMs.}
+
+\item{verbose}{Logical. Print persistent status and diagnostic messages.
+Routine workflow output is suppressed when \code{FALSE}; warnings and errors are
+still reported. Default: \code{FALSE}.}
+
+\item{progress}{Logical. Show temporary progress for long-running operations.
+This is independent of \code{verbose}. Defaults to \code{TRUE}, unless overridden by
+the \code{amRdata.progress} option.}
+
+\item{hmmer_fallback_evalue}{Maximum sequence and independent-domain E-values
+for profiles without GA/TC. Provisional default: \code{1e-3}.}
+
+\item{hmmer_fallback_coverage}{Minimum profile coverage for profiles without
+GA/TC. Provisional default: \code{0.5}.}
+
+\item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo,
+CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
+\code{dirname(duckdb_path)}.}
 }
 \value{
 Invisibly returns a list with:
@@ -123,6 +154,8 @@ Invisibly returns a list with:
 \item \code{log_path} - path to a plain-text progress log, appended to as each
 stage starts and finishes. Tail it (e.g. \verb{tail -f <log_path>}) to watch
 progress without parsing the full JSON provenance manifest.
+\item \code{report_files} - paths of the metadata summary report and exploratory
+plots written to the ORB (empty if they could not be written)
 }
 }
 \description{
@@ -144,6 +177,11 @@ internal helpers (Dockerized tools where applicable) and records processing
 parameters and provenance in the dataset manifest.
 }
 \details{
+CDS that would translate entirely to unknown amino acids are automatically
+removed from copied Panaroo GFFs before clustering, with individual removals
+recorded in \code{panaroo_invalid_cds_audit.csv} in the Panaroo output directory.
+This check also runs when \code{panaroo_strip_pseudogenes = FALSE}.
+
 \strong{Docker & Platform Notes}
 \itemize{
 \item Panaroo, CD-HIT, and HMMER run inside Docker containers.
@@ -167,6 +205,10 @@ upstream curation workflow.
 over the generated Parquet files.
 \item Records processing parameters, software versions, database selections, and
 other provenance information in the dataset manifest.
+\item Writes a metadata summary report (\code{amr_metadata_summary.md}) and an
+exploratory plot PDF (\code{amRdata_exploratory_plots.pdf}) to the ORB, via
+\code{\link[=writeMetadataReports]{writeMetadataReports()}}. A failure to write either only
+warns; it does not fail the run.
 \item Creates the protein-gene dyad feature map for downstream graph analysis.
 \item If \code{export_tabular_data = TRUE}, exports features in human-readable CSVs.
 Additional export options are available by calling \code{exportProcessedData()}
@@ -184,10 +226,11 @@ stage parameters.
 \itemize{
 \item Set \code{resume = TRUE} to avoid re-running stages that already completed
 successfully in the most recent prior attempt (per the dataset manifest).
-\item Resuming is driven entirely by the manifest plus a check that the
-previously recorded output files still exist --- it does not re-validate
-the contents of those outputs, so don't rely on it if files may have
-been altered or deleted since the failed run.
+\item Reuse requires that parameters that would affect results match the prior run.
+Changed or missing parameters will rerun that stage and downstream stages.
+Adjusting thread and worker counts does not invalidate reuse. Resuming does
+not re-validate the contents of prior outputs, so don't rely on it if files
+may have been altered or deleted since the failed run.
 }
 }
 \section{Pipeline Steps}{
@@ -195,19 +238,19 @@ been altered or deleted since the failed run.
 \enumerate{
 \item \strong{Panaroo} via \code{\link[=runPanaroo2Duckdb]{runPanaroo2Duckdb()}} -> writes:
 \itemize{
-\item \code{gene_count} (genome x gene counts)\cr
+\item \code{gene_count} (sparse long genome-gene counts)\cr
 \item \code{gene_names}\cr
-\item \code{gene_struct} (structural variants)\cr
+\item \code{gene_struct} (sparse long struct variants)\cr
 \item \code{gene_ref_seq}, \code{genome_gene_protein}
 }
 \item \strong{CD-HIT} via \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}} -> writes:
 \itemize{
-\item \code{protein_count} (genome x protein-cluster counts)\cr
+\item \code{protein_count} (sparse long genome-protein-cluster counts)\cr
 \item \code{protein_names}\cr
 \item \code{protein_cluster_seq} (representative sequences)\cr
 \item \code{protein_members}
 }
-\item \strong{HMMER} via the configured HMMER databases -> writes:
+\item \strong{HMMER} via \code{\link[=HMMER2duckdb]{HMMER2duckdb()}} -> writes:
 \itemize{
 \item \verb{protein_<database>} annotation tables\cr
 \item \verb{protein_<database>_count} genome-by-annotation count tables
@@ -217,8 +260,8 @@ been altered or deleted since the failed run.
 Parquet files to \code{output_path}, and builds a \strong{Parquet-backed DuckDB}
 (\verb{*_parquet.duckdb}) with views over those Parquets.
 
-\item \strong{Dyad feature mapping} via \code{\link[=buildDyadFeatureMap]{buildDyadFeatureMap()}} -> writes the
-protein-gene dyad feature network used for downstream graph analysis.
+\item \strong{Dyad feature mapping} via \code{\link[=buildDyadFeatureMap]{buildDyadFeatureMap()}} -> writes a compact
+\code{dyads.parquet} and registers virtual graph views in the ORB DuckDB.
 }
 }
 
@@ -238,5 +281,5 @@ runDataProcessing(
 }
 \seealso{
 \code{\link[=prepareGenomes]{prepareGenomes()}}, \code{\link[=runPanaroo2Duckdb]{runPanaroo2Duckdb()}}, \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}}, \code{\link[=cleanMetaData]{cleanMetaData()}},
-\code{\link[=cleanData]{cleanData()}}
+\code{\link[=cleanData]{cleanData()}}, \code{\link[=writeMetadataReports]{writeMetadataReports()}}
 }

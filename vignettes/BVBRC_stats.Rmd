@@ -11,13 +11,6 @@ vignette: >
 
 This vignette summarizes the completeness of the bacterial metadata table served by BV-BRC. It pulls the full bacterial-genome metadata dump from BV-BRC via the project's CLI Docker image, normalizes character columns (UTF-8 fixes, whitespace trimming, mapping placeholder strings like `"NA"`, `"unknown"`, and `"not reported"` to actual `NA`s), and reports per-column missingness plus block-level presence/absence for host and geographic fields. The goal is to help decide which BV-BRC columns are worth featurizing downstream.
 
-```{r setup, include=FALSE}
-library(dplyr)
-library(stringr)
-library(purrr)
-library(tibble)
-```
-
 ## Helper functions
 
 The chunk below defines all helpers used in the rest of the vignette:
@@ -360,7 +353,7 @@ bvbrc <- fetchCompleteBVBRCMetadataAPI()
 bvbrc_clean <- clean_all_char_cols(bvbrc)
 list_cols <- names(bvbrc_clean)[sapply(bvbrc_clean, is.list)]
 bvbrc_clean <- bvbrc_clean |>
-  mutate(
+  dplyr::mutate(
     across(all_of(list_cols), clean_list_col)
   )
 
@@ -474,3 +467,59 @@ Column-by-column missingness for just the host and geographic fields, so you can
 cat("\n--- Diagnostics for host + geo columns ---\n")
 print(diag_table, n = Inf)
 ```
+
+## Potential Species for amReh
+```{r priority-pathogens}
+species_counts_for_amreh <- bvbrc_clean |>
+  dplyr::distinct(
+    species,
+    antimicrobial_resistance,
+    genome_id,
+    antimicrobial_resistance_evidence,
+    genome_quality,
+    genome_status,
+    checkm_completeness
+  ) |>
+  dplyr::filter(
+    antimicrobial_resistance_evidence == "AMR Panel",
+    genome_quality == "Good",
+    genome_status %in% c("WGS", "Complete"),
+    as.numeric(checkm_completeness) > 98,
+    !is.na(species),
+    !is.na(antimicrobial_resistance)
+  ) |>
+  dplyr::distinct(species, genome_id) |>
+  dplyr::count(species, name = "genome_count") |>
+  dplyr::filter(
+    genome_count > 20,
+    genome_count < 1000
+  ) |>
+  dplyr::arrange(genome_count)
+
+species_counts_named <- stats::setNames(
+  species_counts_for_amreh$genome_count,
+  species_counts_for_amreh$species
+)
+
+save(
+  species_counts_named,
+  file = "data/species_counts_for_amreh.rda"
+)
+
+
+
+species_for_amreh <- species_counts_for_amreh |>
+  dplyr::pull(species)
+
+cat(
+  "The recommended list of bacteria to be included in Zenodo are:\n",
+  paste(
+    species_counts_for_amreh$species,
+    species_counts_for_amreh$genome_count,
+    sep = ": ",
+    collapse = "\n"
+  ),
+  "\n"
+)
+```
+

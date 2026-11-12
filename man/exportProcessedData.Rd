@@ -2,10 +2,10 @@
 % Please edit documentation in R/data_processing.R
 \name{exportProcessedData}
 \alias{exportProcessedData}
-\title{Export processed tables from DuckDB database}
+\title{Export processed data from an amRdata ORB}
 \usage{
 exportProcessedData(
-  duckdb_path,
+  duckdb_path = NULL,
   output_path = NULL,
   amr_phenotype_mode = c("separate", "append"),
   export_formats = c("csv"),
@@ -17,29 +17,28 @@ exportProcessedData(
 )
 }
 \arguments{
-\item{duckdb_path}{Character. Path to the DuckDB database created by the
-workflow (for example, \code{Sar.duckdb}).}
+\item{duckdb_path}{Character or NULL. Path to an amRdata ORB directory,
+ORB DuckDB, or working DuckDB associated with a completed ORB. If NULL,
+available ORBs are discovered automatically.}
 
-\item{output_path}{Character or NULL. Directory for exports. Defaults to
-file.path(dirname(duckdb_path), "processed_exports").}
+\item{output_path}{Character or NULL. Directory for exports. Defaults to the
+dataset \verb{exports/} directory.}
 
 \item{amr_phenotype_mode}{Character. One of "separate" or "append".
 "separate" exports the AMR labels as a separate wide table.
-"append" joins those labels onto the main feature tables before export.}
+"append" also joins those labels onto genome-level feature count tables.}
 
 \item{export_formats}{Character vector. Any of "csv", "tsv", "parquet", "xlsx".}
 
 \item{export_sequences}{Logical. If TRUE, also exports gene and protein
-sequence tables and the genome-to-gene-to-protein mapping. Default FALSE.}
+sequence and mapping relations detected in the ORB. Default FALSE.}
 
 \item{export_dyads}{Logical. If TRUE, exports the optional dyad annotation
 table. Each row represents a protein-gene dyad with semicolon-separated
-mapped feature values for structural annotations and the HMMER databases
-recorded in the dataset manifest. The export uses \code{export_formats}.
-Default FALSE.}
+mapped feature values. The export uses \code{export_formats}. Default FALSE.}
 
-\item{tables}{Character vector or NULL. Tables to export. If NULL, exports
-the standard processed tables plus HMMER tables recorded in the manifest.}
+\item{tables}{Character vector or NULL. Relations to export. If NULL,
+exportable relations are discovered automatically from the ORB.}
 
 \item{export_tables}{Logical. If TRUE, write the selected tables to disk.
 Default TRUE.}
@@ -47,11 +46,17 @@ Default TRUE.}
 \item{verbose}{Logical. If TRUE, prints progress messages.}
 }
 \value{
-Invisibly returns a list containing the export path, table names, and mode.
+Invisibly returns a list containing the ORB path, export path,
+exported table names, and export settings.
 }
 \description{
-Reads tables from the DuckDB database produced by the \code{runDataProcessing()} workflow
-and exports them as CSV, TSV, Parquet, and/or XLSX. This is an optional step
-that allows users to take their processed data outside our amR workflow for
-use in their own custom analyses. This is not required to run \code{amRml}!
+Exports processed relations from the resource bundle (ORB) produced by
+\code{\link[=runDataProcessing]{runDataProcessing()}} as CSV, TSV, Parquet, and/or XLSX. This is an optional
+step that allows users to take their processed data outside our amR workflow
+for use in their own custom analyses. This is not required to run \code{amRml}!
+}
+\details{
+If \code{duckdb_path} is \code{NULL}, available ORBs are discovered automatically. A
+single ORB is selected automatically; when multiple ORBs are available in an
+interactive session, a selection menu is shown.
 }
