@@ -4,9 +4,9 @@
 
 - Exported (external) names: lowerCamelCase, no leading dot.
 - Internal names: leading dot plus lowerCamelCase. The dot is kept (it hides helpers from `ls()` and tab completion, and most internals already use it).
-- Function names follow verbNoun (e.g. `.fetchBvbrcData`, `.buildPanarooGeneTable`, `.getHmmerVersion`). `is` predicates (e.g. `.isCompleteSet`) are accepted.
+- Function names follow verbNoun (e.g. `.fetchBVBRCData`, `.buildPanarooGeneTable`, `.getHmmerVersion`). `is` predicates (e.g. `.isCompleteSet`) are accepted.
 - Exceptions: the `.manifest*`, `.bfc*` and `.cli*` families keep their shared prefix instead of a leading verb, but use camelCase.
-- Acronyms and initialisms are upper-case, like the existing `.checkIDs`, `.extractAMRtable` and `.buildDBpath`: `ID`, `AMR`, `DB`, `QC`, `API`, `GFF`, `GTO`, `TSV`, `FASTA`, `ORB`, `HMMER`, `CDHIT`, `BVBRC`. `DuckDB` follows the product's own spelling. Words like `Metadata`, `Panaroo` stay in camelCase. The verbNoun rule takes priority over `2`/`To` names: `.panaroo2duckdb` becomes `.writePanarooTables`, not `.panarooToDuckDB`. Where a `To` is still needed inside a verbNoun name, write `To`, not `2` (e.g. `.convertToContainerPath`).
+- Acronyms and initialisms are in uppercase, like the existing `.checkIDs`, `.extractAMRtable` and `.buildDBpath`: `ID`, `AMR`, `DB`, `QC`, `API`, `GFF`, `GTO`, `TSV`, `FASTA`, `ORB`, `HMMER`, `CDHIT`, `BVBRC`. `DuckDB` follows the product's own spelling. Words like `Metadata`, `Panaroo` stay in camelCase. We like `convertA2B`, but the verbNoun rule takes priority over `2`/`To` names: `.panaroo2duckdb` becomes `.writePanarooTables`, not `.panarooToDuckDB`.
 - "—" means no change.
 
 ## All functions
@@ -26,15 +26,15 @@
 | `.extractGenomeDataApi` | `.extractGenomeDataFromAPI` | bvbrc_api.R | Internal |
 | `.amr_lab_methods` | `.getLabMethods` | data_curation.R | Internal |
 | `.create_amr_tagged_view` | `.createAMRTaggedView` | data_curation.R | Internal |
-| `.ftps_download_one` | `.downloadFtpsOne` | data_curation.R | Internal |
-| `.ftps_download_two_pass` | `.downloadFtpsTwoPass` | data_curation.R | Internal |
-| `.fetchBVBRCdata` | — | data_curation.R | Internal |
+| `.ftps_download_one` | `.downloadFTPOne` | data_curation.R | Internal |
+| `.ftps_download_two_pass` | `.downloadFTPTwoPass` | data_curation.R | Internal |
+| `.fetchBVBRCdata` | `.fetchBVBRCData` | data_curation.R | Internal |
 | `.parse_bvbrc_tsv` | `.parseBVBRCTSV` | data_curation.R | Internal |
 | `.apply_metadata_qc` | `.applyMetadataQC` | data_curation.R | Internal |
 | `.purge_genome_files` | `.purgeGenomeFiles` | data_curation.R | Internal |
-| `.updateBVBRCdata` | - | data_curation.R | Internal |
+| `.updateBVBRCdata` | — | data_curation.R | Internal |
 | `.retrieveCustomQuery` | — | data_curation.R | Internal |
-| `.generateDBname` | - | data_curation.R | Internal |
+| `.generateDBname` | — | data_curation.R | Internal |
 | `.amr_status` | `.reportStatus` | helpers.R | Internal |
 | `.amr_progress_available` | `.isProgressAvailable` | helpers.R | Internal |
 | `.amr_progress_handler` | `.getProgressHandler` | helpers.R | Internal |
@@ -43,12 +43,12 @@
 | `.amr_progressor` | `.createProgressor` | helpers.R | Internal |
 | `.amr_progress_step` | `.runProgressStep` | helpers.R | Internal |
 | `.amr_dataset_paths` | `.getDatasetPaths` | helpers.R | Internal |
-| `.amr_paths_from_duckdb` | `.getPathsFromDuckDB` | helpers.R | Internal |
-| `.amr_paths_from_dataset_db` | `.getPathsFromDatasetDB` | helpers.R | Internal |
+| `.amr_paths_from_duckdb` | `.getDuckDBPaths` | helpers.R | Internal |
+| `.amr_paths_from_dataset_db` | `.getDatasetDBPaths` | helpers.R | Internal |
 | `.amr_connect_dataset_db` | `.connectDatasetDB` | helpers.R | Internal |
-| `.buildDBpath` | - | helpers.R | Internal |
+| `.buildDBpath` | — | helpers.R | Internal |
 | `.retrieveQueryIDs` | — | data_curation.R | Internal |
-| `.extractAMRtable` | - | data_curation.R | Internal |
+| `.extractAMRtable` | — | data_curation.R | Internal |
 | `.extractGenomeData` | — | data_curation.R | Internal |
 | `retrieveMetadata` | — | data_curation.R | External |
 | `.filterGenomes` | — | data_curation.R | Internal |
@@ -59,28 +59,28 @@
 | `retrieveGenomes` | — | data_curation.R | External |
 | `genomeList` | `.buildGenomeList` | data_curation.R | Internal |
 | `prepareGenomes` | — | data_curation.R | External |
-| `exportTables` | - | data_curation.R | External |
+| `exportTables` | — | data_curation.R | External |
 | `checkDataAvailability` | — | data_curation.R | External |
 | `removeLocalDatabases` | — | data_processing.R | External |
 | `.processPanaroo` | `.launchPanaroo` | data_processing.R | Internal |
 | `.runPanaroo` | `.orchestratePanaroo` | data_processing.R | Internal |
-| `.mergePanaroo` | - | data_processing.R | Internal |
+| `.mergePanaroo` | — | data_processing.R | Internal |
 | `.panaroo2geneTable` | `.buildPanarooGeneTable` | data_processing.R | Internal |
 | `.panaroo2geneNames` | `.buildPanarooGeneNames` | data_processing.R | Internal |
 | `.panaroo2StructTable` | `.buildPanarooStructTable` | data_processing.R | Internal |
-| `.panaroo2OtherTables` | `.buildPanarooOtherTables` | data_processing.R | Internal |
+| `.panaroo2OtherTables` | `.buildPanarooOtherTable` | data_processing.R | Internal |
 | `.panaroo2duckdb` | `.writePanarooTables` | data_processing.R | Internal |
 | `.runCDHIT` | `.launchCDHIT` | data_processing.R | Internal |
 | `runPanaroo2Duckdb` | `extractPangenomeFeatures` | data_processing.R | External |
 | `.parseProteinClusters` | — | data_processing.R | Internal |
 | `.extractMembersInClusters` | — | data_processing.R | Internal |
-| `.buildProtMatrices` | `.buildProteinMatrices` | data_processing.R | Internal |
-| `buildMatrices` | remove (back-compat wrapper for `.buildProtMatrices`) | data_processing.R | Internal |
-| `.clusterNames` | `.getClusterNames` | data_processing.R | Internal |
+| `.buildProtMatrices` | `.buildProteinMatrix` | data_processing.R | Internal |
+| `buildMatrices` | remove (back-compat wrapper for `.buildProteinMatrix`) | data_processing.R | Internal |
+| `.clusterNames` | `.getClusterName` | data_processing.R | Internal |
 | `CDHIT2duckdb` | `extractProteinFeatures` | data_processing.R | External |
 | `.prepareHmmerDatabases` | — | data_processing.R | Internal |
 | `.runHmmerJob` | `.launchHMMERJob` | data_processing.R | Internal |
-| `.runHMMER` | `.searchHMMERDatabases` | data_processing.R | Internal |
+| `.runHMMER` | `.searchHMMERDBs` | data_processing.R | Internal |
 | `.proteinAnnotations2Duckdb` | `.writeProteinAnnotations` | data_processing.R | Internal |
 | `.defenseHMMER` | `.searchDefenseCas` | data_processing.R | Internal |
 | `HMMER2duckdb` | `annotateProteins` | data_processing.R | External |
@@ -124,18 +124,18 @@
 | `.manifest_event` | `.manifestEvent` | helpers.R | Internal |
 | `.manifest_finish` | `.manifestFinish` | helpers.R | Internal |
 | `.log_write` | `.writeLog` | helpers.R | Internal |
-| `.log_tool_output` | `.writeToolLog` | helpers.R | Internal |
+| `.log_tool_output` | `.logTools` | helpers.R | Internal |
 | `.log_or_message` | `.logOrMessage` | helpers.R | Internal |
 | `.manifest_prior_stage` | `.manifestPriorStage` | helpers.R | Internal |
 | `.resume_plan` | `.resumePlan` | helpers.R | Internal |
 | `.manifest_find_latest` | `.manifestFindLatest` | helpers.R | Internal |
 | `.manifest_resume` | `.manifestResume` | helpers.R | Internal |
-| `.to_container` | `.convertToContainerPath` | helpers.R | Internal |
+| `.to_container` | `.convert2ContainerPath` | helpers.R | Internal |
 | `.stripPseudogeneGFFs` | `.stripPseudogeneGFF` | helpers.R | Internal |
 | `.exportDyadAnnotations` | — | helpers.R | Internal |
 | `.amr_resolve_export_orb` | `.resolveExportORB` | helpers.R | Internal |
-| `.readOrbMetadata` | — | helpers.R | Internal |
-| `.isValidHmmFile` | — | helpers.R | Internal |
+| `.readOrbMetadata` | `.readORBMetadata` | helpers.R | Internal |
+| `.isValidHmmFile` | `.isValidHMMFile` | helpers.R | Internal |
 | `.parse_hmmer_profiles` | `.parseHMMERProfiles` | helpers.R | Internal |
 | `.parseHMMEROutput` | — | helpers.R | Internal |
 | `.write_compressed_parquet` | `.writeCompressedParquet` | helpers.R | Internal |
