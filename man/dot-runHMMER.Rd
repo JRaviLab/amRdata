@@ -16,7 +16,8 @@
   verbose = TRUE,
   log_path = NULL,
   progress = TRUE,
-  container_config = .createContainerConfig()
+  container_config = .createContainerConfig(),
+  reuse_registered = is.null(hmmer_db_dir)
 )
 }
 \arguments{
@@ -53,6 +54,9 @@ tool output logging.}
 
 \item{progress}{Logical. Show temporary completed-chunk progress.
 Default: \code{TRUE}.}
+
+\item{reuse_registered}{Logical. Reuse valid registered HMM paths when a
+database is absent locally. Explicit directory choices default to \code{FALSE}.}
 }
 \value{
 Invisibly returns a list containing the prepared database paths

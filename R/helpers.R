@@ -150,9 +150,17 @@
 #' @param progress Logical. Show download progress while transferring the file.
 #'   Default: `TRUE`.
 #'
+#' @param label Optional resource name shown before the download progress bar.
+#' @param log_path Optional file receiving the resource name and source URL.
+#' @param verbose Show the resource label even when progress is disabled.
 #' @return Invisibly returns `destfile`.
 #' @keywords internal
-.amr_download_file <- function(url, destfile, progress = TRUE) {
+.amr_download_file <- function(url, destfile, progress = TRUE,
+                               label = NULL, log_path = NULL, verbose = FALSE) {
+  if (!is.null(label)) {
+    .amr_status("Downloading ", label, ": ", url,
+                verbose = isTRUE(verbose) || isTRUE(progress), log_path = log_path)
+  }
   req <- httr2::request(url) |>
     httr2::req_retry(
       max_tries = 3L,
@@ -852,6 +860,18 @@
     hmm = hmm_path,
     pressed = pressed
   ))
+}
+
+# Resolve a registered HMM without moving it or assuming its old path is valid.
+# Pressed indexes and profile sidecars are checked/rebuilt during preparation.
+.findRegisteredHMMERDatabase <- function(database, component = NULL) {
+  hit <- .amr_bfc_find(.amr_bfc(), .amr_bfc_hmmer_rname(database, component))
+  if (is.null(hit)) return(NULL)
+  path <- hit$rpath[[1]]
+  if (is.na(path) || !file.exists(path) || dir.exists(path) || file.info(path)$size == 0) return(NULL)
+  header <- tryCatch(readLines(path, n = 1L, warn = FALSE), error = function(e) character())
+  if (length(header) != 1L || !grepl("^HMMER3/", header)) return(NULL)
+  normalizePath(path, mustWork = TRUE)
 }
 
 # List HMMER databases known to the shared amR BFC

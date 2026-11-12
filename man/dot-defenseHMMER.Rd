@@ -13,7 +13,8 @@
   verbose = TRUE,
   log_path = NULL,
   progress = TRUE,
-  container_config = .createContainerConfig()
+  container_config = .createContainerConfig(),
+  reuse_registered = FALSE
 )
 }
 \arguments{
@@ -37,6 +38,9 @@ Default: \code{TRUE}.}
 
 \item{progress}{Logical. Show download progress when DefenseFinder or
 CasFinder model archives must be retrieved. Default: \code{TRUE}.}
+
+\item{reuse_registered}{Logical. Reuse valid registered HMM paths when a
+database is absent locally. Explicit directory choices default to \code{FALSE}.}
 }
 \value{
 Invisibly returns a list containing prepared DefenseFinder and

@@ -4,7 +4,14 @@
 \alias{.amr_download_file}
 \title{How much time left on that big download? This will tell you}
 \usage{
-.amr_download_file(url, destfile, progress = TRUE)
+.amr_download_file(
+  url,
+  destfile,
+  progress = TRUE,
+  label = NULL,
+  log_path = NULL,
+  verbose = FALSE
+)
 }
 \arguments{
 \item{url}{Character. URL of the file to download.}
@@ -14,6 +21,12 @@ written.}
 
 \item{progress}{Logical. Show download progress while transferring the file.
 Default: \code{TRUE}.}
+
+\item{label}{Optional resource name shown before the download progress bar.}
+
+\item{log_path}{Optional file receiving the resource name and source URL.}
+
+\item{verbose}{Show the resource label even when progress is disabled.}
 }
 \value{
 Invisibly returns \code{destfile}.

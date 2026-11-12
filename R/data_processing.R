@@ -1341,7 +1341,10 @@ CDHIT2duckdb <- function(duckdb_path,
 
 #' Download and prepare HMMER databases for generating new file types.
 #'
-#' @param hmmer_db_dir Character. Directory where HMMER databases are cached.
+#' @param hmmer_db_dir Character or `NULL`. Directory where HMMER databases are
+#'   cached. `NULL` enables discovery of registered databases through BiocFileCache.
+#' @param reuse_registered Logical. Reuse valid registered HMM paths when a
+#'   database is absent locally. Explicit directory choices default to `FALSE`.
 #' @param databases Character vector of database names to prepare. Supported
 #'   built-in databases are `Pfam`, `COG`, and `AMRFinder`; `DefenseCas` is
 #'   prepared separately by the DefenseFinder/CasFinder workflow.
@@ -1363,15 +1366,17 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   source metadata, and BiocFileCache identifiers.
 #' @keywords internal
 .prepareHmmerDatabases <- function(
-    hmmer_db_dir,
+    hmmer_db_dir = NULL,
     databases = c("Pfam", "COG", "AMRFinder"),
     docker_image = "staphb/hmmer",
     hmmer_db_url = NULL,
     verbose = TRUE,
     log_path = NULL,
-    progress = TRUE
-,
+    progress = TRUE,
+    reuse_registered = is.null(hmmer_db_dir),
     container_config = .createContainerConfig()) {
+  reuse_registered <- isTRUE(reuse_registered)
+  if (is.null(hmmer_db_dir)) hmmer_db_dir <- .defaultHmmerDbDir()
   container_config <- .prepareContainerImages(container_config, docker_image)
 
 
@@ -1473,15 +1478,20 @@ CDHIT2duckdb <- function(duckdb_path,
       ignore.case = TRUE
     )
 
-    if (length(hmm_files) == 0) {
-
-      if (verbose) {
-        message("Downloading ", db_name)
+    registered_hmm <- NULL
+    if (!length(hmm_files) && reuse_registered && db_name %in% c("Pfam", "COG", "AMRFinder")) {
+      registered_hmm <- .findRegisteredHMMERDatabase(db_name)
+      if (!is.null(registered_hmm)) {
+        hmm_files <- registered_hmm
+        .amr_status("Reusing ", db_name, " HMM database from BiocFileCache: ",
+                    registered_hmm, verbose = verbose, log_path = log_path)
       }
+    }
 
+    if (length(hmm_files) == 0) {
       tmp <- tempfile()
-
-      .amr_download_file(db$url, tmp, progress = progress)
+      .amr_download_file(db$url, tmp, progress = progress,
+        label = paste(db_name, "HMM database"), log_path = log_path, verbose = verbose)
 
       switch(
         db$type,
@@ -1611,7 +1621,9 @@ CDHIT2duckdb <- function(duckdb_path,
       c(".h3m", ".h3i", ".h3f", ".h3p")
     )
 
-    if (!all(file.exists(pressed_files))) {
+    if (!all(file.exists(pressed_files)) ||
+        any(file.info(pressed_files)$size == 0, na.rm = TRUE) ||
+        any(file.info(pressed_files)$mtime < file.info(hmm_file)$mtime, na.rm = TRUE)) {
 
       if (verbose) {
         message(
@@ -1629,7 +1641,7 @@ CDHIT2duckdb <- function(duckdb_path,
               "-v",
               paste0(dirname(hmm_file), ":/db"),
               docker_image,
-              "hmmpress",
+              "hmmpress", "-f",
               file.path("/db", basename(hmm_file))
             ),
             stdout = TRUE,
@@ -1847,6 +1859,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   (`databases`) and the unfiltered hit Parquet file of each database
 #'   (`hits`). Hit cutoffs are applied afterwards by [.filterHMMER()].
 #'
+#' @inheritParams .prepareHmmerDatabases
 #' @keywords internal
 .runHMMER <- function(duckdb_path,
                       output_path = NULL,
@@ -1859,8 +1872,10 @@ CDHIT2duckdb <- function(duckdb_path,
                       verbose = TRUE,
                       log_path = NULL,
                       progress = TRUE,
-                      container_config = .createContainerConfig())
+                      container_config = .createContainerConfig(),
+                      reuse_registered = is.null(hmmer_db_dir))
   {
+  reuse_registered <- isTRUE(reuse_registered)
   container_config <- .prepareContainerImages(container_config, docker_image)
 
   threads <- .resolve_workers(requested = threads)
@@ -1904,6 +1919,7 @@ CDHIT2duckdb <- function(duckdb_path,
   .log_or_message(log_path, verbose, "Preparing HMM databases")
   db_paths <- .prepareHmmerDatabases(
     hmmer_db_dir = hmmer_db_dir,
+    reuse_registered = reuse_registered,
     databases = databases,
     docker_image = docker_image,
     verbose = verbose,
@@ -2201,6 +2217,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @return Invisibly returns a list containing prepared DefenseFinder and
 #'   CasFinder HMM/profile-cache metadata (`databases`) and their unfiltered
 #'   hit Parquet files (`hits`).
+#' @inheritParams .prepareHmmerDatabases
 #' @keywords internal
 .defenseHMMER <- function(
     defense_db_dir,
@@ -2210,9 +2227,8 @@ CDHIT2duckdb <- function(duckdb_path,
     threads = 8L,
     verbose = TRUE,
     log_path = NULL,
-    progress = TRUE
-,
-    container_config = .createContainerConfig()) {
+    progress = TRUE,
+    container_config = .createContainerConfig(), reuse_registered = FALSE) {
   container_config <- .prepareContainerImages(container_config, docker_image)
 
 
@@ -2235,16 +2251,20 @@ CDHIT2duckdb <- function(duckdb_path,
   defense_dir <- file.path(defense_db_dir, "DefenseFinder")
 
   cas_dir <- file.path(defense_db_dir, "CasFinder")
+  registered_hmms <- stats::setNames(lapply(c("DefenseFinder", "CasFinder"), function(component) {
+    if (!isTRUE(reuse_registered) || file.exists(file.path(defense_db_dir, component, paste0(component, ".hmm")))) return(NULL)
+    .findRegisteredHMMERDatabase("DefenseCas", component)
+  }), c("DefenseFinder", "CasFinder"))
 
-  if (!dir.exists(defense_dir)) {
 
-    .log_or_message(log_path, verbose, "Downloading DefenseFinder models")
+  if (!dir.exists(defense_dir) && is.null(registered_hmms$DefenseFinder)) {
 
     tmp <- tempfile(fileext = ".zip")
 
     .amr_download_file(
       url = "https://github.com/mdmparis/defense-finder-models/archive/refs/heads/master.zip",
       destfile = tmp,
+      label = "DefenseFinder models", log_path = log_path, verbose = verbose,
       progress = progress
     )
 
@@ -2256,15 +2276,13 @@ CDHIT2duckdb <- function(duckdb_path,
     unlink(tmp)
   }
 
-  if (!dir.exists(cas_dir)) {
-
-    .log_or_message(log_path, verbose, "Downloading CasFinder models")
+  if (!dir.exists(cas_dir) && is.null(registered_hmms$CasFinder)) {
 
     tmp <- tempfile(fileext = ".zip")
 
     .amr_download_file(url = "https://github.com/macsy-models/CasFinder/archive/refs/heads/main.zip",
       tmp,
-      progress = progress)
+      progress = progress, label = "CasFinder models", log_path = log_path, verbose = verbose)
 
     utils::unzip(
       tmp,
@@ -2280,7 +2298,7 @@ CDHIT2duckdb <- function(duckdb_path,
 
   build_database <- function(
     repo_dir,
-    db_name
+    db_name, registered_hmm = NULL
   ) {
 
     combined_hmm <- file.path(
@@ -2290,6 +2308,12 @@ CDHIT2duckdb <- function(duckdb_path,
         ".hmm"
       )
     )
+
+    if (!is.null(registered_hmm)) {
+      combined_hmm <- registered_hmm
+      .amr_status("Reusing ", db_name, " HMM database from BiocFileCache: ",
+                  registered_hmm, verbose = verbose, log_path = log_path)
+    }
 
     pressed_files <- paste0(
       combined_hmm,
@@ -2303,81 +2327,85 @@ CDHIT2duckdb <- function(duckdb_path,
 
     prepared <- file.exists(combined_hmm) &&
       all(file.exists(pressed_files)) &&
+      all(file.info(pressed_files)$size > 0) &&
       all(file.info(pressed_files)$mtime >= file.info(combined_hmm)$mtime)
 
     if (prepared) {
       return(combined_hmm)
     }
 
-    profile_dirs <- list.dirs(
-      repo_dir,
-      recursive = TRUE,
-      full.names = TRUE
-    )
-
-    profile_dirs <- profile_dirs[
-      basename(profile_dirs) == "profiles"
-    ]
-
-    hmm_files <- profile_dirs |>
-      purrr::map(\(x) list.files(x,
-                                 pattern = "\\.hmm$",
-                                 recursive = TRUE,
-                                 full.names = TRUE,
-                                 ignore.case = TRUE)) |>
-      purrr::flatten_chr() |>
-      unique()
-
-    if (length(hmm_files) == 0) {
-
-      stop(
-        "No HMM files found for ",
-        db_name
+    if (is.null(registered_hmm)) {
+      profile_dirs <- list.dirs(
+        repo_dir,
+        recursive = TRUE,
+        full.names = TRUE
       )
-    }
 
-    valid_hmms <- purrr::map_lgl(
-      hmm_files,
-      .isValidHmmFile
-    )
+      profile_dirs <- profile_dirs[
+        basename(profile_dirs) == "profiles"
+      ]
 
-    if (any(!valid_hmms)) {
-      bad_files <- basename(hmm_files[!valid_hmms])
+      hmm_files <- profile_dirs |>
+        purrr::map(\(x) list.files(x,
+                                   pattern = "\\.hmm$",
+                                   recursive = TRUE,
+                                   full.names = TRUE,
+                                   ignore.case = TRUE)) |>
+        purrr::flatten_chr() |>
+        unique()
 
-      if (isTRUE(verbose)) {
-        warning(
-          "Ignoring ",
-          length(bad_files),
-          " invalid HMM file(s):\n",
-          paste(bad_files, collapse = "\n"),
-          call. = FALSE
+      if (length(hmm_files) == 0) {
+
+        stop(
+          "No HMM files found for ",
+          db_name
         )
       }
 
-      hmm_files <- hmm_files[valid_hmms]
-    }
-
-    if (length(hmm_files) == 0) {
-      stop(
-        "No valid HMM files found for ",
-        db_name
+      valid_hmms <- purrr::map_lgl(
+        hmm_files,
+        .isValidHmmFile
       )
-    }
 
-    # Rebuild combined HMMs and all pressed indexes as one cached unit
-    unlink(
-      c(combined_hmm, pressed_files),
-      force = TRUE
-    )
+      if (any(!valid_hmms)) {
+        bad_files <- basename(hmm_files[!valid_hmms])
 
-    file.create(combined_hmm)
+        if (isTRUE(verbose)) {
+          warning(
+            "Ignoring ",
+            length(bad_files),
+            " invalid HMM file(s):\n",
+            paste(bad_files, collapse = "\n"),
+            call. = FALSE
+          )
+        }
 
-    for (f in sort(hmm_files)) {
+        hmm_files <- hmm_files[valid_hmms]
+      }
 
-      file.append(
-        combined_hmm,
-        f
+      if (length(hmm_files) == 0) {
+        stop(
+          "No valid HMM files found for ",
+          db_name
+        )
+      }
+
+      # Rebuild combined HMMs and all pressed indexes as one cached unit
+      unlink(
+        c(combined_hmm, pressed_files),
+        force = TRUE
       )
+
+      file.create(combined_hmm)
+
+      for (f in sort(hmm_files)) {
+
+        file.append(
+          combined_hmm,
+          f
+        )
+      }
+
     }
 
     .log_or_message(
@@ -2412,7 +2440,7 @@ CDHIT2duckdb <- function(duckdb_path,
           "-v",
           paste0(dirname(combined_hmm), ":/db"),
           docker_image,
-          "hmmpress",
+          "hmmpress", "-f",
           file.path("/db", basename(combined_hmm))
         ),
         stdout = FALSE,
@@ -2472,7 +2500,7 @@ CDHIT2duckdb <- function(duckdb_path,
   "Preparing DefenseFinder HMM database",
   build_database(
     defense_dir,
-    "DefenseFinder"
+    "DefenseFinder", registered_hmm = registered_hmms$DefenseFinder
   ),
   progress = progress,
   verbose = verbose,
@@ -2483,7 +2511,7 @@ cas_hmm <- .amr_progress_step(
   "Preparing CasFinder HMM database",
   build_database(
     cas_dir,
-    "CasFinder"
+    "CasFinder", registered_hmm = registered_hmms$CasFinder
   ),
   progress = progress,
   verbose = verbose,
@@ -3482,8 +3510,9 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' @param hmmer_databases Character vector. HMMER annotation databases to run.
 #'   Default: `c("Pfam", "COG", "AMRFinder", "DefenseCas")`.
 #' @param hmmer_db_dir Character. Directory containing the prepared HMMER
-#'   databases. If `NULL`, the default BiocFileCache-managed HMMER directory
-#'   is used.
+#'   databases. If `NULL`, reuse locally available databases or discover existing
+#'   databases through BiocFileCache; download missing ones into the default
+#'   cache directory. An explicit directory is used without registry fallback.
 #' @param hmmer_docker_image Character. Docker image containing HMMER.
 #'   Default: `"staphb/hmmer"`.
 #' @param hmmer_num_splits Integer. Number of protein-sequence chunks for HMMER.
@@ -3526,7 +3555,7 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' This check also runs when `panaroo_strip_pseudogenes = FALSE`.
 #'
 #' **Docker & Platform Notes**
-#' * Panaroo, CD-HIT, and HMMER run inside Docker containers.
+#' * Panaroo, CD-HIT, and HMMER use the selected container backend.
 #' * HMMER databases are stored separately from individual bug directories and
 #'   are reused across datasets unless a custom `hmmer_db_dir` is supplied.
 #' * Ensure Docker Desktop is running and has sufficient memory and CPU resources.
@@ -3717,6 +3746,7 @@ runDataProcessing <- function(
   } else {
     NULL
   }
+  reuse_registered_hmmer <- is.null(hmmer_db_dir)
   if (is.null(hmmer_db_dir)) hmmer_db_dir <- .defaultHmmerDbDir()
   dir.create(hmmer_db_dir, recursive = TRUE, showWarnings = FALSE)
   hmmer_db_dir <- normalizePath(hmmer_db_dir, mustWork = TRUE)
@@ -3983,6 +4013,7 @@ runDataProcessing <- function(
         output_path = paths$hmmer,
         threads = threads,
         hmmer_db_dir = hmmer_db_dir,
+        reuse_registered = reuse_registered_hmmer,
         databases = generic_databases,
         docker_image = hmmer_docker_image,
         num_of_splits = hmmer_num_splits,
@@ -3996,6 +4027,7 @@ runDataProcessing <- function(
 
     if ("DefenseCas" %in% hmmer_databases) {
   defense_result <- .defenseHMMER(
+    reuse_registered = reuse_registered_hmmer,
     defense_db_dir = file.path(
       hmmer_db_dir,
       "DefenseCas"

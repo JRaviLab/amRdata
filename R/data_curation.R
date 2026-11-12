@@ -1736,50 +1736,59 @@ retrieveMetadata <- function(user_bacs,
 #' @keywords internal
 .cli_dump_fastas_gto_chunk <- function(image, out_dir, genome_ids, tag, tries = 3L,
     container_config = .createContainerConfig()) {
-  container_config <- .prepareContainerImages(container_config, image)
-
-  out_dir <- normalizePath(out_dir, mustWork = FALSE)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  out_dir <- normalizePath(out_dir, mustWork = TRUE)
+  .isDownloadComplete <- function(gid) {
+    files <- file.path(out_dir, paste0(gid, c(".fna", ".PATRIC.faa", ".gto")))
+    all(file.exists(files)) && all(file.info(files)$size > 100)
+  }
+  genome_ids <- genome_ids[!vapply(genome_ids, .isDownloadComplete, logical(1))]
+  if (!length(genome_ids)) return(TRUE)
+  container_config <- .prepareContainerImages(container_config, image)
   ids_file <- file.path(out_dir, paste0("ids_", tag, ".txt"))
   writeLines(genome_ids, ids_file)
-
+  log_file <- file.path(out_dir, paste0("download_chunk_", tag, ".log"))
   shell <- .pick_shell(image, container_config = container_config)
   mount <- .docker_path(out_dir)
 
-  # Safety against Windows-specific CRLF lines before `p3-dump-genomes`
-  sh_cmd <- sprintf(
-    'tr -d "\\r" < /out/%s | p3-dump-genomes --outDir /out --fasta --prot --gto -',
-    basename(ids_file)
+  # IDs are written without a header. Tell the CLI explicitly so the first
+  # genome of every chunk is not silently discarded as a column heading.
+  sh_cmd <- paste0(
+    if (shell == "bash") "set -o pipefail; " else "",
+    'tr -d "\\r" < /out/', basename(ids_file),
+    ' | p3-dump-genomes --nohead --col 1 --outDir /out --fasta --prot --gto -'
   )
-
   args <- c("run", "--rm", "-v", paste0(mount, ":/out"), image, shell, "-lc", sh_cmd)
   res <- suppressWarnings(.runContainerCommand(container_config, args = args, stdout = TRUE, stderr = TRUE))
+  .log_tool_output(log_file, "BV-BRC download", res)
   st <- attr(res, "status")
   if (is.null(st)) st <- 0L
 
-  if (st != 0L && tries > 1L) {
-    Sys.sleep(1)
-    return(.cli_dump_fastas_gto_chunk(image, out_dir, genome_ids, tag, tries - 1L, container_config = container_config))
-  }
-
-  # Normalize filenames for this chunk (ensure .fna & PATRIC.faa)
   for (gid in genome_ids) {
-    fa <- file.path(out_dir, paste0(gid, ".fa"))
-    if (file.exists(fa)) file.rename(fa, file.path(out_dir, paste0(gid, ".fna")))
-    fasta <- file.path(out_dir, paste0(gid, ".fasta"))
-    if (file.exists(fasta)) file.rename(fasta, file.path(out_dir, paste0(gid, ".fna")))
+    for (suffix in c(".fa", ".fasta")) {
+      source <- file.path(out_dir, paste0(gid, suffix))
+      if (file.exists(source)) file.rename(source, file.path(out_dir, paste0(gid, ".fna")))
+    }
     faa <- file.path(out_dir, paste0(gid, ".faa"))
     if (file.exists(faa)) file.rename(faa, file.path(out_dir, paste0(gid, ".PATRIC.faa")))
-  }
-
-  # Apply sanitizer to FASTA files
-  for (gid in genome_ids) {
     fna <- file.path(out_dir, paste0(gid, ".fna"))
     if (file.exists(fna)) .strip_fasta_preamble(fna)
   }
-
-  st == 0L
+  missing <- genome_ids[!vapply(genome_ids, .isDownloadComplete, logical(1))]
+  if (st != 0L || length(missing)) {
+    if (tries > 1L) {
+      Sys.sleep(1)
+      return(.cli_dump_fastas_gto_chunk(image, out_dir,
+        if (length(missing)) missing else genome_ids, tag, tries - 1L,
+        container_config = container_config))
+    }
+    stop("BV-BRC download failed for chunk ", tag, " (exit status ", st,
+         "). Missing/incomplete genomes: ", paste(missing, collapse = ", "),
+         ". See ", log_file, call. = FALSE)
+  }
+  TRUE
 }
+
 
 #' Exports GFF files from the downloaded GTO per genome in each chunk
 #' @keywords internal
@@ -1787,11 +1796,13 @@ retrieveMetadata <- function(user_bacs,
     container_config = .createContainerConfig()) {
   container_config <- .prepareContainerImages(container_config, image)
 
-  out_dir <- normalizePath(out_dir, mustWork = FALSE)
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  out_dir <- normalizePath(out_dir, mustWork = TRUE)
   ids_file <- file.path(out_dir, paste0("ids_", tag, ".txt"))
   writeLines(genome_ids, ids_file)
 
   exporter <- "/usr/bin/rast-export-genome"
+  log_file <- file.path(out_dir, paste0("gff_chunk_", tag, ".log"))
   shell <- .pick_shell(image, container_config = container_config)
   mount <- .docker_path(out_dir)
   stderr_file <- file.path(out_dir, paste0("gff_chunk_", tag, ".stderr.txt"))
@@ -1799,12 +1810,12 @@ retrieveMetadata <- function(user_bacs,
   # GFFs from BV-BRC .gto export are not directly compatible in Panaroo
   # This block reformats the contig IDs and ensures .gff/.fna pairs work together
   sh_cmd <- paste0(
-    "set -euo pipefail; ",
+    if (shell == "bash") "set -euo pipefail; " else "set -eu; ",
     "fail_n=0; : > /out/", basename(stderr_file), "; ",
     'while IFS= read -r b || [ -n "$b" ]; do ',
     '  b=${b%$\'\\r\'}; [ -n "$b" ] || continue; ',
     '  gto="/out/${b}.gto"; gff="/out/${b}.PATRIC.gff"; map="/out/${b}.orig2id.tsv"; ',
-    '  if [ ! -s "$gto" ]; then echo "MISSING_GTO $b" >>/out/', basename(stderr_file), "; continue; fi; ",
+    '  if [ ! -s "$gto" ]; then echo "MISSING_GTO $b" >>/out/', basename(stderr_file), "; fail_n=$((fail_n+1)); continue; fi; ",
 
     # Export GFF
     '  [ -s "$gff" ] || ', exporter, ' -i "$gto" -o "$gff" gff ',
@@ -1831,21 +1842,28 @@ retrieveMetadata <- function(user_bacs,
   "       /^#/ { print; next } ",
   '       { key=$1; sub(/^accn\\|/, "", key); if (key in m) $1=m[key]; print }\' "$map" "$gff" > "${gff}.tmp" && mv "${gff}.tmp" "$gff"; ',
   "done < /out/", basename(ids_file), "; ",
-  "exit 0"
+  '[ "$fail_n" -eq 0 ]'
   )
 
   args <- c("run", "--rm", "-v", paste0(mount, ":/out"), image, shell, "-lc", sh_cmd)
   res <- suppressWarnings(.runContainerCommand(container_config, args = args, stdout = TRUE, stderr = TRUE))
+  .log_tool_output(log_file, "BV-BRC GFF export", res)
   st <- attr(res, "status")
   if (is.null(st)) st <- 0L
 
-  if (st != 0L && tries > 1L) {
-    Sys.sleep(1)
-    return(.cli_export_gff_chunk(image, out_dir, genome_ids, tag, tries - 1L, container_config = container_config))
-
-    if (st != 0L) {
-  return(FALSE)
-}
+  missing <- genome_ids[!vapply(genome_ids, function(gid) {
+    file <- file.path(out_dir, paste0(gid, ".PATRIC.gff"))
+    file.exists(file) && file.info(file)$size > 0
+  }, logical(1))]
+  if (st != 0L || length(missing)) {
+    if (tries > 1L) {
+      Sys.sleep(1)
+      return(.cli_export_gff_chunk(image, out_dir, genome_ids, tag, tries - 1L,
+        container_config = container_config))
+    }
+    stop("BV-BRC GFF export failed for chunk ", tag, " (exit status ", st,
+         "). Missing/empty GFFs: ", paste(missing, collapse = ", "),
+         ". See ", log_file, " and ", stderr_file, call. = FALSE)
   }
 
   # Apply sanitizer for GFFs after they've been extracted

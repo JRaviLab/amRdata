@@ -111,8 +111,9 @@ Default: \code{"cdhit_out"}.}
 Default: \code{c("Pfam", "COG", "AMRFinder", "DefenseCas")}.}
 
 \item{hmmer_db_dir}{Character. Directory containing the prepared HMMER
-databases. If \code{NULL}, the default BiocFileCache-managed HMMER directory
-is used.}
+databases. If \code{NULL}, reuse locally available databases or discover existing
+databases through BiocFileCache; download missing ones into the default
+cache directory. An explicit directory is used without registry fallback.}
 
 \item{hmmer_docker_image}{Character. Docker image containing HMMER.
 Default: \code{"staphb/hmmer"}.}
@@ -195,7 +196,7 @@ This check also runs when \code{panaroo_strip_pseudogenes = FALSE}.
 
 \strong{Docker & Platform Notes}
 \itemize{
-\item Panaroo, CD-HIT, and HMMER run inside Docker containers.
+\item Panaroo, CD-HIT, and HMMER use the selected container backend.
 \item HMMER databases are stored separately from individual bug directories and
 are reused across datasets unless a custom \code{hmmer_db_dir} is supplied.
 \item Ensure Docker Desktop is running and has sufficient memory and CPU resources.
