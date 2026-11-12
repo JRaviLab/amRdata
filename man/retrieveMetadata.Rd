@@ -21,7 +21,10 @@ retrieveMetadata(
   debug = FALSE,
   export_tables = FALSE,
   load_tables = FALSE,
-  verbose = TRUE
+  verbose = TRUE,
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
 }
 \arguments{
@@ -62,7 +65,23 @@ capped to available CPUs and the number of metadata batches. Default: 8.}
 
 \item{debug}{Logical. If TRUE, retain \code{metadata_full} and QC columns for inspection.}
 
+\item{export_tables}{Logical. If TRUE, export the per-selection DuckDB tables
+via \code{exportTables()} after genome curation. Default FALSE.}
+
+\item{load_tables}{Logical. If TRUE, also load the exported tables into R and
+return them in \code{data}. Default FALSE.}
+
 \item{verbose}{Logical. If TRUE, print progress messages.}
+
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
 }
 \value{
 A list with:

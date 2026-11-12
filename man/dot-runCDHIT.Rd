@@ -14,7 +14,8 @@
   memory = 0,
   extra_args = c("-g", "1"),
   verbose = TRUE,
-  log_path = NULL
+  log_path = NULL,
+  container_config = .createContainerConfig()
 )
 }
 \arguments{

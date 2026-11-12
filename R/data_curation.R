@@ -335,38 +335,24 @@
 #'
 #' @return A tibble with bacterial genome metadata (BV-BRC column names intact).
 #' @keywords internal
-.fetchBVBRCdata <- function(image = "danylmb/bvbrc:5.3", verbose = TRUE) {
-  # Check Docker availability
-  docker_path <- Sys.which("docker")
-  if (!nzchar(docker_path)) {
-    stop("Docker is not available on your PATH, but is required to be installed.
-         Please install or load Docker before running this package.")
-  }
+.fetchBVBRCdata <- function(image = "danylmb/bvbrc:5.3", verbose = TRUE,
+    container_config = .createContainerConfig()) {
 
   if (isTRUE(verbose)) {
     message("Please wait. Fetching BV-BRC bacterial genome metadata.")
   }
 
-  # Construct the BV-BRC CLI command
-  cmd <- glue::glue(
-    "docker run --rm {image} p3-all-genomes ",
-    "--in superkingdom,Bacteria ",
-    "--eq genome_quality,Good ",
-    "--in genome_status,WGS,Complete ",
-    "--attr genome_id,genome_name,genome_quality,genome_status,",
-    "taxon_id,species,strain,_version_,",
-    "collection_year,state_province,latitude,longitude,",
-    "antimicrobial_resistance_evidence,assembly_accession,isolation_country,",
-    "isolation_source,disease,host_common_name"
-  )
-
-  # Suppress CLI noise
-  raw_data <- tryCatch(
-    system(cmd, intern = TRUE, ignore.stderr = TRUE),
-    error = function(e) {
-      stop("BV-BRC CLI call failed.\n", conditionMessage(e))
-    }
-  )
+  raw_data <- .runContainerCommand(container_config, args = c(
+    "run", "--rm", image, "p3-all-genomes",
+    "--in", "superkingdom,Bacteria", "--eq", "genome_quality,Good",
+    "--in", "genome_status,WGS,Complete", "--attr",
+    paste0("genome_id,genome_name,genome_quality,genome_status,",
+           "taxon_id,species,strain,_version_,",
+           "collection_year,state_province,latitude,longitude,",
+           "antimicrobial_resistance_evidence,assembly_accession,isolation_country,",
+           "isolation_source,disease,host_common_name")
+  ), stdout = TRUE, stderr = FALSE)
+  if (!is.null(attr(raw_data, "status"))) stop("BV-BRC CLI call failed.", call. = FALSE)
   # If BV-BRC server is down
   if (length(raw_data) == 0L) {
     stop("BV-BRC returned no data. The service may be unavailable.")
@@ -691,11 +677,17 @@
 #' @param verbose Logical. If TRUE, prints informative messages. Default: TRUE.
 #'
 #' @return A tibble containing BV-BRC bacterial genome metadata.
+#' @inheritParams prepareGenomes
 #' @export
 .updateBVBRCdata <- function(base_dir = ".",
                              max_age_days = 30L,
                              image = "danylmb/bvbrc:5.3",
-                             verbose = TRUE) {
+                             verbose = TRUE,
+                             container_backend = "auto",
+                             container_images = NULL,
+                             container_cache = NULL) {
+  container_config <- .createContainerConfig(container_backend, container_images, container_cache)
+
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
   logs_dir <- file.path(base_dir, "data", "logs")
@@ -760,7 +752,7 @@
 
   if (needs_refresh) {
     if (isTRUE(verbose)) message("Fetching fresh BV-BRC metadata.")
-    bvbrc_bacs <- .fetchBVBRCdata(image = image, verbose = verbose)
+    bvbrc_bacs <- .fetchBVBRCdata(image = image, verbose = verbose, container_config = container_config)
 
     if (isTRUE(verbose)) message("Writing table to DuckDB.")
     DBI::dbWriteTable(con, table_name, bvbrc_bacs, overwrite = TRUE)
@@ -806,11 +798,12 @@
 #' @keywords internal
 .retrieveCustomQuery <- function(base_dir = ".",
                                  user_bacs = c("90371", "Bacillus subtilis"),
-                                 verbose = TRUE) {
+                                 verbose = TRUE,
+                                 container_config = .createContainerConfig()) {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
   # Ensure global BV-BRC metadata exists/updated at <base_dir>/data/bvbrc/...
-  bvbrc_bacs <- .updateBVBRCdata(base_dir = base_dir, verbose = verbose)
+  bvbrc_bacs <- .updateBVBRCdata(base_dir = base_dir, verbose = verbose, container_backend = container_config)
 
   bac_input_data <- tibble::tibble(
     genome.taxon_id = character(),
@@ -908,11 +901,12 @@
 #' @return A character vector of distinct `genome.genome_id`, or NULL if none found.
 .retrieveQueryIDs <- function(base_dir = ".",
                               user_bacs,
-                              verbose = TRUE) {
+                              verbose = TRUE,
+                              container_config = .createContainerConfig()) {
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
   if (isTRUE(verbose)) message("Resolving input taxa.")
-  bac_input_data <- .retrieveCustomQuery(base_dir = base_dir, user_bacs = user_bacs, verbose = verbose)
+  bac_input_data <- .retrieveCustomQuery(base_dir = base_dir, user_bacs = user_bacs, verbose = verbose, container_config = container_config)
 
   if (is.null(bac_input_data) || nrow(bac_input_data) == 0) {
     message("No valid input provided or no matches found.")
@@ -1014,13 +1008,21 @@
 #' print(result)
 #' }
 #'
+#' @inheritParams prepareGenomes
 #' @export
 .extractAMRtable <- function(base_dir,
                              batch_genome_IDs,
                              abx_filter,
                              drug_fields,
                              image = "danylmb/bvbrc:5.3",
-                             verbose = TRUE) {
+                             verbose = TRUE,
+                             container_backend = "auto",
+                             container_images = NULL,
+                             container_cache = NULL) {
+  container_config <- .createContainerConfig(container_backend, container_images, container_cache)
+
+  container_config <- .prepareContainerImages(container_config, image)
+
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
   data_dir <- file.path(base_dir, "data")
   tmp_dir <- file.path(data_dir, "tmp")
@@ -1030,19 +1032,15 @@
     message("Preparing AMR query input for ", length(batch_genome_IDs), " genomes.")
   }
 
-  docker_path <- Sys.which("docker")
-  if (!nzchar(docker_path)) {
-    stop("Docker is not available on your PATH but is required.")
-  }
 
   # Generate genome list with p3-echo
   echo_args <- c(
     "run", "--rm",
     image, "p3-echo",
-    "--title=genome_drug.genome_id", paste(batch_genome_IDs, collapse = " ")
+    "--title=genome_drug.genome_id", batch_genome_IDs
   )
   genome_ids_output <- suppressWarnings(
-    system2("docker", args = echo_args, stdout = TRUE, stderr = TRUE)
+    .runContainerCommand(container_config, args = echo_args, stdout = TRUE, stderr = TRUE)
   )
 
   # Write a temporary file in data/tmp/
@@ -1071,7 +1069,7 @@
   if (isTRUE(verbose)) {
     message("Running AMR query.")
   }
-  drug_data <- suppressWarnings(system2("docker", args = drug_args, stdout = TRUE, stderr = TRUE))
+  drug_data <- suppressWarnings(.runContainerCommand(container_config, args = drug_args, stdout = TRUE, stderr = TRUE))
 
   # Clean up after yourself
   try(unlink(tmp_in), silent = TRUE)
@@ -1097,7 +1095,10 @@
                                amr_fields,
                                microtrait_fields,
                                image = "danylmb/bvbrc:5.3",
-                               verbose = TRUE) {
+                               verbose = TRUE,
+                               container_config = .createContainerConfig()) {
+  container_config <- .prepareContainerImages(container_config, image)
+
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
   data_dir <- file.path(base_dir, "data")
   tmp_dir <- file.path(data_dir, "tmp")
@@ -1107,19 +1108,15 @@
     message("Preparing genome metadata input for ", length(batch_genome_IDs), " genomes.")
   }
 
-  docker_path <- Sys.which("docker")
-  if (!nzchar(docker_path)) {
-    stop("Docker is not available on your PATH but is required.")
-  }
 
   # Generate genome list with p3-echo
   echo_args <- c(
     "run", "--rm",
     image, "p3-echo",
-    "--title=genome.genome_id", paste(batch_genome_IDs, collapse = " ")
+    "--title=genome.genome_id", batch_genome_IDs
   )
   genome_ids_output <- suppressWarnings(
-    system2("docker", args = echo_args, stdout = TRUE, stderr = TRUE)
+    .runContainerCommand(container_config, args = echo_args, stdout = TRUE, stderr = TRUE)
   )
 
   tmp_in <- tempfile(tmpdir = tmp_dir, pattern = "genome_ids_", fileext = ".tsv")
@@ -1140,7 +1137,7 @@
   if (isTRUE(verbose)) {
     message("Running genome metadata query.")
   }
-  genome_data <- suppressWarnings(system2("docker", args = get_args, stdout = TRUE, stderr = TRUE))
+  genome_data <- suppressWarnings(.runContainerCommand(container_config, args = get_args, stdout = TRUE, stderr = TRUE))
 
   # Cleaning up
   try(unlink(tmp_in), silent = TRUE)
@@ -1208,6 +1205,7 @@
 #' @return A list with:
 #'   - duckdb_path: path to the created DuckDB
 #'   - table_name: "metadata"
+#' @inheritParams prepareGenomes
 #' @export
 retrieveMetadata <- function(user_bacs,
                              genome_id_file = NULL,
@@ -1225,9 +1223,15 @@ retrieveMetadata <- function(user_bacs,
                              debug = FALSE,
                              export_tables = FALSE,
                              load_tables = FALSE,
-                             verbose = TRUE) {
+                             verbose = TRUE,
+                             container_backend = "auto",
+                             container_images = NULL,
+                             container_cache = NULL) {
+  container_config <- .createContainerConfig(container_backend, container_images, container_cache)
+
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
   metadata_method <- match.arg(metadata_method)
+  if (metadata_method == "cli") container_config <- .prepareContainerImages(container_config, image)
 
   if (!is.null(genome_id_file)) {
     if (!file.exists(genome_id_file)) {
@@ -1252,7 +1256,8 @@ retrieveMetadata <- function(user_bacs,
     genome_ids <- .retrieveQueryIDs(
       base_dir = base_dir,
       user_bacs = user_bacs,
-      verbose = verbose
+      verbose = verbose,
+      container_config = container_config
     )
   }
 
@@ -1374,7 +1379,8 @@ retrieveMetadata <- function(user_bacs,
           abx_filter = abx_filter,
           drug_fields = drug_fields,
           image = image,
-          verbose = FALSE
+          verbose = FALSE,
+          container_backend = container_config
         )
         .parse_bvbrc_tsv(raw)
       },
@@ -1393,7 +1399,8 @@ retrieveMetadata <- function(user_bacs,
           amr_fields = amr_fields,
           microtrait_fields = microtrait_fields,
           image = image,
-          verbose = FALSE
+          verbose = FALSE,
+          container_config = container_config
         )
         .parse_bvbrc_tsv(raw)
       },
@@ -1727,13 +1734,16 @@ retrieveMetadata <- function(user_bacs,
 ### BV-BRC CLI downloader [slower by comparison, but does not need FTP server]
 #' Using p3-dump-genomes in CLI to fetch FASTA and .gto files
 #' @keywords internal
-.cli_dump_fastas_gto_chunk <- function(image, out_dir, genome_ids, tag, tries = 3L) {
+.cli_dump_fastas_gto_chunk <- function(image, out_dir, genome_ids, tag, tries = 3L,
+    container_config = .createContainerConfig()) {
+  container_config <- .prepareContainerImages(container_config, image)
+
   out_dir <- normalizePath(out_dir, mustWork = FALSE)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   ids_file <- file.path(out_dir, paste0("ids_", tag, ".txt"))
   writeLines(genome_ids, ids_file)
 
-  shell <- .pick_shell(image)
+  shell <- .pick_shell(image, container_config = container_config)
   mount <- .docker_path(out_dir)
 
   # Safety against Windows-specific CRLF lines before `p3-dump-genomes`
@@ -1742,14 +1752,14 @@ retrieveMetadata <- function(user_bacs,
     basename(ids_file)
   )
 
-  args <- c("run", "--rm", "-v", paste0(mount, ":/out"), image, shell, "-lc", shQuote(sh_cmd))
-  res <- suppressWarnings(system2("docker", args = args, stdout = TRUE, stderr = TRUE))
+  args <- c("run", "--rm", "-v", paste0(mount, ":/out"), image, shell, "-lc", sh_cmd)
+  res <- suppressWarnings(.runContainerCommand(container_config, args = args, stdout = TRUE, stderr = TRUE))
   st <- attr(res, "status")
   if (is.null(st)) st <- 0L
 
   if (st != 0L && tries > 1L) {
     Sys.sleep(1)
-    return(.cli_dump_fastas_gto_chunk(image, out_dir, genome_ids, tag, tries - 1L))
+    return(.cli_dump_fastas_gto_chunk(image, out_dir, genome_ids, tag, tries - 1L, container_config = container_config))
   }
 
   # Normalize filenames for this chunk (ensure .fna & PATRIC.faa)
@@ -1773,13 +1783,16 @@ retrieveMetadata <- function(user_bacs,
 
 #' Exports GFF files from the downloaded GTO per genome in each chunk
 #' @keywords internal
-.cli_export_gff_chunk <- function(image, out_dir, genome_ids, tag, tries = 3L) {
+.cli_export_gff_chunk <- function(image, out_dir, genome_ids, tag, tries = 3L,
+    container_config = .createContainerConfig()) {
+  container_config <- .prepareContainerImages(container_config, image)
+
   out_dir <- normalizePath(out_dir, mustWork = FALSE)
   ids_file <- file.path(out_dir, paste0("ids_", tag, ".txt"))
   writeLines(genome_ids, ids_file)
 
   exporter <- "/usr/bin/rast-export-genome"
-  shell <- .pick_shell(image)
+  shell <- .pick_shell(image, container_config = container_config)
   mount <- .docker_path(out_dir)
   stderr_file <- file.path(out_dir, paste0("gff_chunk_", tag, ".stderr.txt"))
 
@@ -1821,14 +1834,14 @@ retrieveMetadata <- function(user_bacs,
   "exit 0"
   )
 
-  args <- c("run", "--rm", "-v", paste0(mount, ":/out"), image, shell, "-lc", shQuote(sh_cmd))
-  res <- suppressWarnings(system2("docker", args = args, stdout = TRUE, stderr = TRUE))
+  args <- c("run", "--rm", "-v", paste0(mount, ":/out"), image, shell, "-lc", sh_cmd)
+  res <- suppressWarnings(.runContainerCommand(container_config, args = args, stdout = TRUE, stderr = TRUE))
   st <- attr(res, "status")
   if (is.null(st)) st <- 0L
 
   if (st != 0L && tries > 1L) {
     Sys.sleep(1)
-    return(.cli_export_gff_chunk(image, out_dir, genome_ids, tag, tries - 1L))
+    return(.cli_export_gff_chunk(image, out_dir, genome_ids, tag, tries - 1L, container_config = container_config))
 
     if (st != 0L) {
   return(FALSE)
@@ -1867,6 +1880,7 @@ retrieveMetadata <- function(user_bacs,
 #' @param progress Logical. Show temporary progress for parallel genome or
 #'   chunk retrieval. Default: `TRUE`.
 #' @return Character vector of genome IDs with complete file sets on disk.
+#' @inheritParams prepareGenomes
 #' @export
 retrieveGenomes <- function(base_dir = ".",
                             user_bacs,
@@ -1880,7 +1894,12 @@ retrieveGenomes <- function(base_dir = ".",
                             chunk_size = 10L,
                             evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
                             verbose = TRUE,
-                            progress = TRUE) {
+                            progress = TRUE,
+                            container_backend = "auto",
+                            container_images = NULL,
+                            container_cache = NULL) {
+  container_config <- .createContainerConfig(container_backend, container_images, container_cache)
+
   metadata_method = match.arg(metadata_method)
   method <- match.arg(method)
   evidence_mode <- match.arg(evidence_mode)
@@ -1915,7 +1934,8 @@ retrieveGenomes <- function(base_dir = ".",
       base_dir = base_dir,
       metadata_method = metadata_method,
       image = image,
-      verbose = verbose
+      verbose = verbose,
+      container_backend = container_config
     )
 
     if (is.null(meta_out)) {
@@ -2017,6 +2037,8 @@ retrieveGenomes <- function(base_dir = ".",
     return(.list_complete(genome_path, all_ids))
   }
 
+  container_config <- .prepareContainerImages(container_config, image)
+
   # CLI for FASTA, FAA, and GTO, then GFF from GTO
   chunks <- split(ids, ceiling(seq_along(ids) / chunk_size))
 
@@ -2064,7 +2086,7 @@ retrieveGenomes <- function(base_dir = ".",
       tags = paste0("fa", seq_along(chunks)),
       workers = cli_fasta_workers,
       fun = function(vec, tag)
-        .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag),
+        .cli_dump_fastas_gto_chunk(image, genome_path, vec, tag, container_config = container_config),
       message = "Downloading genome chunks"
     )
   fa_ok <- purrr::map_lgl(fa_res, identity)
@@ -2082,7 +2104,7 @@ retrieveGenomes <- function(base_dir = ".",
       tags = paste0("gff", seq_along(chunks)),
       workers = cli_gff_workers,
       fun = function(vec, tag)
-        .cli_export_gff_chunk(image, genome_path, vec, tag),
+        .cli_export_gff_chunk(image, genome_path, vec, tag, container_config = container_config),
       message = "Extracting GFF chunks"
     )
   g_ok <- purrr::map_lgl(g_res, identity)
@@ -2245,6 +2267,13 @@ genomeList <- function(base_dir = ".",
 #'   - `duckdb_path`  Path to the per-bug DuckDB
 #'   - `table_name`        `"files"`
 #'
+#' @param container_backend Container runtime: `"auto"`, `"docker"`,
+#'   `"apptainer"`, or `"singularity"`. Automatic selection prompts when both
+#'   Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.
+#' @param container_images Optional named character vector of image overrides.
+#'   Names may be `bvbrc`, `panaroo`, `cdhit`, `hmmer`, or exact image references.
+#'   Apptainer/Singularity also accept local `.sif` paths.
+#' @param container_cache Directory for persistent, reusable SIF images.
 #' @export
 prepareGenomes <- function(user_bacs,
                            genome_id_file = NULL,
@@ -2265,10 +2294,18 @@ prepareGenomes <- function(user_bacs,
                            load_tables = FALSE,
                            debug = FALSE,
                            verbose = FALSE,
-                           progress = getOption("amRdata.progress", TRUE)) {
+                           progress = getOption("amRdata.progress", TRUE),
+                           container_backend = "auto",
+                           container_images = NULL,
+                           container_cache = NULL) {
+  container_config <- .createContainerConfig(container_backend, container_images, container_cache)
+
   method <- match.arg(method)
   metadata_method <- match.arg(metadata_method)
   evidence_mode <- match.arg(evidence_mode)
+  if (method == "cli" || metadata_method == "cli") {
+    container_config <- .prepareContainerImages(container_config, image)
+  }
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
   .amr_status(
@@ -2297,6 +2334,9 @@ prepareGenomes <- function(user_bacs,
     ),
     hash_files = FALSE
   )
+
+  container_config$log_dir <- file.path(paths$orb, "container-logs",
+    manifest$manifest$runs[[manifest$run_index]]$run_id)
 
   manifest <- .manifest_event(
     manifest,
@@ -2336,7 +2376,8 @@ prepareGenomes <- function(user_bacs,
       tool = list(
         name = "BV-BRC",
         interface = "p3-all-genomes"
-      )
+      ),
+      container_config = container_config
     )
 
   } else {
@@ -2348,7 +2389,8 @@ prepareGenomes <- function(user_bacs,
       tool = list(
         name = "BV-BRC",
         interface = "Data API"
-      )
+      ),
+      container_config = container_config
     )
   }
 
@@ -2372,7 +2414,8 @@ prepareGenomes <- function(user_bacs,
     tool = list(
       name = "BV-BRC",
       docker_image = image
-    )
+    ),
+    container_config = container_config
   )
 
   meta_out <- .amr_progress_step(
@@ -2392,7 +2435,8 @@ prepareGenomes <- function(user_bacs,
     length_deviations = length_deviations,
     cds_deviations = cds_deviations,
     debug = debug,
-    verbose = verbose
+    verbose = verbose,
+    container_backend = container_config
   ),
   progress = progress,
   verbose = verbose
@@ -2423,7 +2467,8 @@ if (is.null(meta_out)) {
       list(name = "BV-BRC", interface = "Data API")
       } else {
         list(name = "BV-BRC", interface = "BV-BRC CLI", docker_image = image)
-      }
+      },
+      container_config = container_config
   )
 
   f_out <- .amr_progress_step(
@@ -2490,7 +2535,8 @@ if (is.null(meta_out)) {
   chunk_size = chunk_size,
   evidence_mode = evidence_mode,
   verbose = verbose,
-  progress = progress
+  progress = progress,
+  container_backend = container_config
 )
   if (length(ids) == 0L) {
     message("No genomes downloaded.")
@@ -2507,10 +2553,12 @@ if (is.null(meta_out)) {
       evidence_mode = evidence_mode,
       overwrite = overwrite
     ),
+    tool = if (method == "cli") list(name = "BV-BRC", docker_image = image) else list(name = "FTP"),
     outputs = paths$genomes,
     metrics = list(
       genomes_downloaded = length(ids)
-    )
+    ),
+    container_config = container_config
   )
 
   out <- .amr_progress_step(
@@ -2532,7 +2580,8 @@ if (is.null(meta_out)) {
     outputs = c(paths$working_duckdb, paths$panaroo_input),
     metrics = list(
       genomes = length(ids)
-    )
+    ),
+    container_config = container_config
   )
 
   .amr_status("Data ready.", verbose = verbose)
@@ -2866,6 +2915,7 @@ exportTables <- function(duckdb_path,
 #' )
 #' }
 #'
+#' @inheritParams prepareGenomes
 #' @export
 checkDataAvailability <- function(
     user_bacs,
@@ -2876,9 +2926,16 @@ checkDataAvailability <- function(
     gc_deviations = NULL,
     length_deviations = NULL,
     cds_deviations = NULL,
-    verbose = FALSE
+    verbose = FALSE,
+    container_backend = "auto",
+    container_images = NULL,
+    container_cache = NULL
 ) {
+  container_config <- .createContainerConfig(container_backend, container_images, container_cache)
   metadata_method <- match.arg(metadata_method)
+  if (metadata_method == "cli") {
+    container_config <- .prepareContainerImages(container_config, "danylmb/bvbrc:5.3")
+  }
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
   if (missing(user_bacs) || length(user_bacs) == 0L) {
@@ -2911,7 +2968,8 @@ checkDataAvailability <- function(
       gc_deviations = gc_deviations,
       length_deviations = length_deviations,
       cds_deviations = cds_deviations,
-      verbose = verbose
+      verbose = verbose,
+      container_config = container_config
     )
   )
 }

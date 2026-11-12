@@ -10,10 +10,15 @@
   abx_filter,
   drug_fields,
   image = "danylmb/bvbrc:5.3",
-  verbose = TRUE
+  verbose = TRUE,
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
 }
 \arguments{
+\item{base_dir}{Character. Project root directory. Default \code{"."}.}
+
 \item{batch_genome_IDs}{A character vector containing genome IDs to query.}
 
 \item{abx_filter}{A string specifying the antibiotic filter criteria. This can be in the form
@@ -25,6 +30,16 @@ This corresponds to the attributes retrieved by the \code{p3-get-genome-drugs} t
 \item{image}{Character. Docker image. Default "danylmb/bvbrc:5.3".}
 
 \item{verbose}{Logical. If TRUE, prints concise messages.}
+
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
 }
 \value{
 A character vector with the output data from \code{p3-get-genome-drugs}, typically in tabular format.

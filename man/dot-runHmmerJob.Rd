@@ -14,7 +14,8 @@
   docker_image = "staphb/hmmer",
   threads = 8L,
   n_workers = 8L,
-  log_path = NULL
+  log_path = NULL,
+  container_config = .createContainerConfig()
 )
 }
 \arguments{

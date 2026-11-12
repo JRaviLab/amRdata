@@ -4,7 +4,7 @@
 \alias{.pick_shell}
 \title{Helps run a shell inside a container, and prefers bash (don't we all?)}
 \usage{
-.pick_shell(image)
+.pick_shell(image, container_config = .createContainerConfig())
 }
 \description{
 Helps run a shell inside a container, and prefers bash (don't we all?)

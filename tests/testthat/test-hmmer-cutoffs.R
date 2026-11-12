@@ -301,7 +301,7 @@ test_that("HMMER job requests score-based reporting and saves high-E-value candi
   captured <- NULL
   run <- .runHmmerJob
   boundary <- new.env(parent = environment(run))
-  boundary$system2 <- function(command, args, ...) {
+  boundary$.runContainerCommand <- function(config, args, ...) {
     captured <<- args
     writeLines(paste(
       "p1 - 300 PF1 - 100 50 40 0 1 1 50 50 40 0",

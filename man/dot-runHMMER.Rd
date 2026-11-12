@@ -15,7 +15,8 @@
   n_workers = 8L,
   verbose = TRUE,
   log_path = NULL,
-  progress = TRUE
+  progress = TRUE,
+  container_config = .createContainerConfig()
 )
 }
 \arguments{

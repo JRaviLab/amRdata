@@ -33,7 +33,10 @@ runDataProcessing(
   verbose = FALSE,
   progress = getOption("amRdata.progress", TRUE),
   hmmer_fallback_evalue = 0.001,
-  hmmer_fallback_coverage = 0.5
+  hmmer_fallback_coverage = 0.5,
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
 }
 \arguments{
@@ -140,6 +143,16 @@ for profiles without GA/TC. Provisional default: \code{1e-3}.}
 
 \item{hmmer_fallback_coverage}{Minimum profile coverage for profiles without
 GA/TC. Provisional default: \code{0.5}.}
+
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
 
 \item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo,
 CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to

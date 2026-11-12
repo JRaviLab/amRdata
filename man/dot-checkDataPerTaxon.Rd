@@ -14,7 +14,8 @@
   length_deviations = NULL,
   cds_deviations = NULL,
   verbose = TRUE,
-  write_bac_data = FALSE
+  write_bac_data = FALSE,
+  container_config = .createContainerConfig()
 )
 }
 \arguments{
