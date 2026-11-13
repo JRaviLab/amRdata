@@ -125,7 +125,7 @@ and modeling steps in \code{amRdata} and \code{amRml}.
 \dontrun{
 # Basic usage:
 runPanaroo2Duckdb(
-  duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
+  duckdb_path = "data/Shigella_flexneri/work/Sfl.duckdb",
   output_path = "data/Shigella_flexneri",
   threads     = 8,
   split_jobs  = FALSE

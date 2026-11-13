@@ -691,7 +691,7 @@
 #' @param verbose Logical. If TRUE, prints informative messages. Default: TRUE.
 #'
 #' @return A tibble containing BV-BRC bacterial genome metadata.
-#' @export
+#' @keywords internal
 .updateBVBRCdata <- function(base_dir = ".",
                              max_age_days = 30L,
                              image = "danylmb/bvbrc:5.3",
@@ -1014,7 +1014,7 @@
 #' print(result)
 #' }
 #'
-#' @export
+#' @keywords internal
 .extractAMRtable <- function(base_dir,
                              batch_genome_IDs,
                              abx_filter,

@@ -10,3 +10,6 @@ inst/doc
 /data/tmp
 dev/out/
 docs/*.html
+
+/.quarto/
+**/*.quarto_ipynb

@@ -154,6 +154,8 @@ Invisibly returns a list with:
 \item \code{log_path} - path to a plain-text progress log, appended to as each
 stage starts and finishes. Tail it (e.g. \verb{tail -f <log_path>}) to watch
 progress without parsing the full JSON provenance manifest.
+\item \code{report_files} - paths of the metadata summary report and exploratory
+plots written to the ORB (empty if they could not be written)
 }
 }
 \description{
@@ -203,6 +205,10 @@ upstream curation workflow.
 over the generated Parquet files.
 \item Records processing parameters, software versions, database selections, and
 other provenance information in the dataset manifest.
+\item Writes a metadata summary report (\code{amr_metadata_summary.md}) and an
+exploratory plot PDF (\code{amRdata_exploratory_plots.pdf}) to the ORB, via
+\code{\link[=writeMetadataReports]{writeMetadataReports()}}. A failure to write either only
+warns; it does not fail the run.
 \item Creates the protein-gene dyad feature map for downstream graph analysis.
 \item If \code{export_tabular_data = TRUE}, exports features in human-readable CSVs.
 Additional export options are available by calling \code{exportProcessedData()}
@@ -244,7 +250,7 @@ may have been altered or deleted since the failed run.
 \item \code{protein_cluster_seq} (representative sequences)\cr
 \item \code{protein_members}
 }
-\item \strong{HMMER} via the configured HMMER databases -> writes:
+\item \strong{HMMER} via \code{\link[=HMMER2duckdb]{HMMER2duckdb()}} -> writes:
 \itemize{
 \item \verb{protein_<database>} annotation tables\cr
 \item \verb{protein_<database>_count} genome-by-annotation count tables
@@ -262,18 +268,17 @@ Parquet files to \code{output_path}, and builds a \strong{Parquet-backed DuckDB}
 \examples{
 \dontrun{
 runDataProcessing(
-  duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
-  output_path   = "data/Shigella_flexneri",
+  duckdb_path   = "data/Shigella_flexneri/work/Sfl.duckdb",
   threads       = 8
 )
 
 # After completion:
-# data/Shigella_flexneri/Sfl_parquet.duckdb
+# data/Shigella_flexneri/orb/Sfl_parquet.duckdb
 # will contain views over the Parquet files for downstream ML.
 }
 
 }
 \seealso{
 \code{\link[=prepareGenomes]{prepareGenomes()}}, \code{\link[=runPanaroo2Duckdb]{runPanaroo2Duckdb()}}, \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}}, \code{\link[=cleanMetaData]{cleanMetaData()}},
-\code{\link[=cleanData]{cleanData()}}
+\code{\link[=cleanData]{cleanData()}}, \code{\link[=writeMetadataReports]{writeMetadataReports()}}
 }

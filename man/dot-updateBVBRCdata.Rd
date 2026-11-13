@@ -40,3 +40,4 @@ The cached DuckDB can be removed with
 \code{removeLocalDatabases("BV-BRC")}. It will be recreated automatically the next
 time the CLI metadata backend is used.
 }
+\keyword{internal}
