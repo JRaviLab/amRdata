@@ -268,13 +268,12 @@ Parquet files to \code{output_path}, and builds a \strong{Parquet-backed DuckDB}
 \examples{
 \dontrun{
 runDataProcessing(
-  duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
-  output_path   = "data/Shigella_flexneri",
+  duckdb_path   = "data/Shigella_flexneri/work/Sfl.duckdb",
   threads       = 8
 )
 
 # After completion:
-# data/Shigella_flexneri/Sfl_parquet.duckdb
+# data/Shigella_flexneri/orb/Sfl_parquet.duckdb
 # will contain views over the Parquet files for downstream ML.
 }
 

@@ -951,7 +951,7 @@ if (!is.null(status) && status != 0L) {
 #' \dontrun{
 #' # Basic usage:
 #' runPanaroo2Duckdb(
-#'   duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
+#'   duckdb_path = "data/Shigella_flexneri/work/Sfl.duckdb",
 #'   output_path = "data/Shigella_flexneri",
 #'   threads     = 8,
 #'   split_jobs  = FALSE
@@ -3717,13 +3717,12 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #' @examples
 #' \dontrun{
 #' runDataProcessing(
-#'   duckdb_path   = "data/Shigella_flexneri/Sfl.duckdb",
-#'   output_path   = "data/Shigella_flexneri",
+#'   duckdb_path   = "data/Shigella_flexneri/work/Sfl.duckdb",
 #'   threads       = 8
 #' )
 #'
 #' # After completion:
-#' # data/Shigella_flexneri/Sfl_parquet.duckdb
+#' # data/Shigella_flexneri/orb/Sfl_parquet.duckdb
 #' # will contain views over the Parquet files for downstream ML.
 #' }
 #'

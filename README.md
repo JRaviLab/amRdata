@@ -78,13 +78,12 @@ prepareGenomes(
 
 # Step 3: Run full feature extraction (Panaroo → CD-HIT → HMMER → metadata cleaning)
 runDataProcessing(
-  duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
-  output_path = "data/Shigella_flexneri",
+  duckdb_path = "data/Shigella_flexneri/work/Sfl.duckdb",
   threads     = 16
 )
 
 # A final Parquet-backed DuckDB is created:
-#   data/Shigella_flexneri/Sfl_parquet.duckdb
+#   data/Shigella_flexneri/orb/Sfl_parquet.duckdb
 ```
 
 This DuckDB database contains data for feature presence/absence and
@@ -96,13 +95,13 @@ available sample metadata. These feature matrices are then used in
 # Optional — Step 4: Export your data in tabular format
 # For basic stats and metadata
 exportTables(
-  duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
+  duckdb_path = "data/Shigella_flexneri/work/Sfl.duckdb",
   export_formats = "csv"
 )
 
 # For all features and phenotypes after data processing
 exportProcessedData(
-  duckdb_path = "data/Shigella_flexneri/Sfl.duckdb",
+  duckdb_path = "data/Shigella_flexneri/work/Sfl.duckdb",
   amr_phenotype_mode = "separate",
   export_formats = c("csv", "parquet", "xlsx"),
   export_sequences = TRUE
@@ -128,11 +127,11 @@ Users can query and fetch data through the functions:
     checkDataAvailability()
     prepareGenomes()
 
-`prepareGenomes()` is a wrapper for the functions:
+`prepareGenomes()` is a wrapper around these two steps, which can also
+be called on their own:
 
     retrieveMetadata()
     retrieveGenomes()
-    genomeList()
 
 If the BV-BRC CLI is used instead of the default API, BV-BRC metadata is
 cached automatically using
@@ -156,20 +155,24 @@ accessibility:
 
 Through a single user-friendly runner function `runDataProcessing()`,
 features are extracted from downloaded genomes over multiple
-complementary molecular scales:
+complementary molecular scales. Use `resume = TRUE` to skip Panaroo,
+CD-HIT, and/or HMMER stages that already completed successfully in a
+previous run, and `export_tabular_data = TRUE` to export human-readable
+tables automatically when processing finishes:
 
 #### 1. Gene clusters
 
 Panaroo is executed inside a Docker container,
 [staphb/panaroo:1.7.0](https://hub.docker.com/r/staphb/panaroo/tags)
-using `.runPanaroo()`.
+using `runPanaroo2Duckdb()` (run on its own, or as part of
+`runDataProcessing()`).
 
 Our pangenome creation approach:
 
 -   Allows end-to-end single pangenome runs
 -   Offers parallelized multi-batch pangenomes for large isolate sets
     (&gt;5,000 genomes)
-    -   Supports automated pangenome merging through `.mergePanaroo()`
+    -   Merges batches automatically (`panaroo_split_jobs = TRUE`)
 -   Generates gene presence/absence and count matrices per isolate
 -   Identifies structural variants (gene triplets indicating genome
     rearrangements)
@@ -178,7 +181,8 @@ Our pangenome creation approach:
 
 CD-HIT is executed inside a Docker container,
 [weizhongli1987/cdhit:4.8.1](https://hub.docker.com/r/weizhongli1987/cdhit/tags)
-using `.runCDHIT()`.
+using `CDHIT2duckdb()` (run on its own, or as part of
+`runDataProcessing()`).
 
 Our protein clustering approach:
 
@@ -190,7 +194,7 @@ Our protein clustering approach:
 
 HMMER is executed inside a Docker container,
 [staphb/hmmer](https://hub.docker.com/r/staphb/hmmer/tags) using
-`.runHMMER()`.
+`HMMER2duckdb()` (run on its own, or as part of `runDataProcessing()`).
 
 Our protein feature annotation approach:
 
@@ -200,9 +204,17 @@ Our protein feature annotation approach:
     -   Antimicrobial resistance gene (ARG) homology (NCBIfam-AMRFinder)
     -   Bacterial defense system homology (DefenseFinder and CasFinder
         models)
--   Runs parallelized and containerized annotations  
--   Maps HMMER feature presence/absence and counts to genomes and
-    proteins
+-   Runs parallelized and containerized annotations
+-   Filters hits with the cutoffs each profile’s curators define
+    -   Pfam, AMRFinder, DefenseFinder, and CasFinder: curated bit score
+        cutoffs (`GA`, or `TC` for AMRFinder)
+    -   Profiles without a curated cutoff: fallback E-value and profile
+        coverage (`hmmer_fallback_evalue`, `hmmer_fallback_coverage`)
+    -   COG: E-value ≤ `cog_evalue` (default 1e-4, as used by NCBI), keeping
+        the best hit per protein region
+    -   Unfiltered hits are saved, so cutoffs can be changed without
+        rerunning HMMER
+-   Maps HMMER feature presence/absence and counts to genomes and proteins
 -   Provides multiple functional annotation layers
 
 #### 4. Data cleaning and storage
@@ -215,11 +227,18 @@ Our final data storage script:
 -   Harmonizes drug names, classes, and countries in BV-BRC metadata
 -   Generates temporal bins to stratify analysis across time
 -   Summarizes AMR information across the dataset
+    -   Metadata summary reports and plots can be regenerated at any time
+        with `writeMetadataReports()`
+-   Builds protein-gene dyads (`buildDyadFeatureMap()`) linking each
+    CD-HIT protein cluster to its Panaroo gene cluster
+    -   Unpaired (orphan) clusters are kept and flagged by `dyad_type`
+    -   Dyads can be rebuilt for an existing dataset with `resumeDyads()`
+        without rerunning feature extraction
+    -   Export them with `exportProcessedData(export_dyads = TRUE)`
 -   Writes all data into highly compressed data structures
     -   **Parquet**: Binary, columnar storage for large matrices
-        -   These can be made human-readable by calling
-            `arrow::read_parquet` or by using `exportTables()` and
-            `exportProcessedData()`
+        -   These can be made human-readable by calling `arrow::read_parquet`
+            or by using `exportTables()` and `exportProcessedData()`
     -   **DuckDB**: SQL-queryable database for rapid filtering of linked
         Parquets
 
@@ -235,13 +254,13 @@ metadata.
     prepareGenomes(user_bacs = "Shigella flexneri")
 
     # 2. Run multi-scale feature extraction
-    runDataProcessing(duckdb_path = "data/Shigella_flexneri/Sfl.duckdb")
+    runDataProcessing(duckdb_path = "data/Shigella_flexneri/work/Sfl.duckdb")
 
     # This completes an amRdata analysis! 
     # Data are saved and ready for use. 
     # For example, to view final metadata and features in human-readable format: 
 
-    exportProcessedData(duckdb_path = "data/Shigella_flexneri/Sfl.duckdb", 
+    exportProcessedData(duckdb_path = "data/Shigella_flexneri/work/Sfl.duckdb", 
                         export_formats = c("tsv", "xlsx", "parquet"))
 
 ### A cautionary note about BV-BRC accession IDs
@@ -262,10 +281,10 @@ human-readable. See below.
     library(arrow)
 
     # To read gene cluster counts recorded per isolate
-    Sfl_gene_counts <- arrow::read_parquet("data/Shigella_flexneri/exported_data/gene_count.parquet")
+    Sfl_gene_counts <- arrow::read_parquet("data/Shigella_flexneri/exports/gene_count.parquet")
       
     # To connect gene cluster IDs to their annotated names
-    Sfl_gene_names <- arrow::read_parquet("data/Shigella_flexneri/exported_data/gene_names.parquet")
+    Sfl_gene_names <- arrow::read_parquet("data/Shigella_flexneri/exports/gene_names.parquet")
 
 Some newer IDEs like Positron support loading human-readable Parquet
 files by default.
@@ -293,16 +312,14 @@ The package requires:
 
 -   An internet connection to access BV-BRC data and metadata
 -   A local Docker installation
-    -   Containers for internal tools are pulled automatically and do
-        not require configuration
+    -   Containers for internal tools are pulled automatically and do not
+        require configuration
     -   Make sure Docker is running before you start processing data!
 -   Sufficient storage for databases, downloaded files, and processed
     output (we recommend 50GB+)
     -   These analyses can produce very large amounts of data
-    -   For taxa with &gt;5,000 genomes, disk space can easily exceed
-        100GB!
--   Multicore processing and sufficient (16GB+) RAM are highly
-    recommended
+    -   For taxa with &gt;5,000 genomes, disk space can easily exceed 100GB!
+-   Multicore processing and sufficient (16GB+) RAM are highly recommended
     -   Species with many isolates may run poorly or fail to complete on
         older hardware
 
@@ -337,26 +354,25 @@ Processing times vary by species and isolate count:
 -   Parallelization significantly reduces processing time when multiple
     cores are available.
 
--   If a `future::multisession` error occurs mid-run (e.g. while testing
-    via `devtools::load_all()` before installing the package), restart
-    your R session fully before retrying. An orphaned background worker
-    process can leave a stale lock on the local DuckDB caches in your
-    [BiocFileCache](https://bioconductor.org/packages/BiocFileCache/)
-    directory (find it with `BiocFileCache::bfccache()`), which can
-    produce inconsistent results on the next run that look like a data
-    or QC bug but are actually just leftover session state.
+-   If a `future::multisession` error occurs mid-run (e.g. after
+    reinstalling the package or while developing it), restart your R
+  session fully before retrying. An orphaned background worker process
+  can leave a stale lock on the local DuckDB caches in your
+  [BiocFileCache](https://bioconductor.org/packages/BiocFileCache/)
+  directory (find it with `BiocFileCache::bfccache()`), which can
+  produce inconsistent results on the next run that look like a data or
+  QC bug but are actually just leftover session state.
 
 -   `runDataProcessing()`/`runPanaroo2Duckdb()` default
     `panaroo_refind_mode` to `"off"` rather than Panaroo’s own default.
-    Refinding recovers gene calls that annotation tools missed, but its
-    search can take substantially longer (or in rare cases fail to
-    complete within 6+ hours) when a genome carries a cluster of CDS
-    with internal stop codons — a condition existing genome-quality
-    metadata (CheckM completeness/contamination, consistency scores,
-    quality flags) does not flag. This default trades some gene-recovery
-    accuracy for predictable runtime; set
-    `panaroo_refind_mode = "default"` to restore Panaroo’s normal
-    behavior.
+  Refinding recovers gene calls that annotation tools missed, but its
+  search can take substantially longer (or in rare cases fail to
+  complete within 6+ hours) when a genome carries a cluster of CDS with
+  internal stop codons — a condition existing genome-quality metadata
+  (CheckM completeness/contamination, consistency scores, quality flags)
+  does not flag. This default trades some gene-recovery accuracy for
+  predictable runtime; set `panaroo_refind_mode = "default"` to restore
+  Panaroo’s normal behavior.
 
 ### Integration with amR suite
 
@@ -369,13 +385,12 @@ library(amRviz)
 
 # 1. Curate data
 prepareGenomes("Shigella flexneri")
-runDataProcessing("amRdata/data/Shigella_flexneri/Sfl.duckdb")
+runDataProcessing("amRdata/data/Shigella_flexneri/work/Sfl.duckdb")
 
 # 2. Train models
 runModelingPipeline()
 
-# 3. Visualize ### To add
-launch_dashboard()
+# 3. Visualize (amRviz; coming soon)
 ```
 
 ## Related packages
