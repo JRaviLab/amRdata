@@ -1349,7 +1349,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   built-in databases are `Pfam`, `COG`, and `AMRFinder`; `DefenseCas` is
 #'   prepared separately by the DefenseFinder/CasFinder workflow.
 #' @param docker_image Character. Docker image containing HMMER tools used to
-#'   press the prepared databases. Default: `"staphb/hmmer"`.
+#'   press the prepared databases. Default: `"staphb/hmmer:3.4"`.
 #' @param hmmer_db_url EXPERIMENTAL. Character or `NULL`. URL used to download
 #'   a custom HMMER database when `databases` contains a name outside the
 #'   built-in database definitions. Custom database support has NOT YET BEEN
@@ -1368,7 +1368,7 @@ CDHIT2duckdb <- function(duckdb_path,
 .prepareHmmerDatabases <- function(
     hmmer_db_dir = NULL,
     databases = c("Pfam", "COG", "AMRFinder"),
-    docker_image = "staphb/hmmer",
+    docker_image = "staphb/hmmer:3.4",
     hmmer_db_url = NULL,
     verbose = TRUE,
     log_path = NULL,
@@ -1734,7 +1734,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @keywords internal
 .runHmmerJob <- function(JOB_NAME, FASTA, DB, total_proteins,
                          output_path = NULL, db_paths,
-                         docker_image = "staphb/hmmer", threads = 8L,
+                         docker_image = "staphb/hmmer:3.4", threads = 8L,
                          n_workers = 8L,
                          log_path = NULL
 ,
