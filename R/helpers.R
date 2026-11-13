@@ -3870,7 +3870,7 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   )
 }
 
-.hmmer_version <- function(docker_image = "staphb/hmmer",
+.hmmer_version <- function(docker_image = "staphb/hmmer:3.4",
     container_config = .createContainerConfig()) {
   output <- .runContainerCommand(container_config,
     args = c(

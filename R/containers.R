@@ -54,7 +54,7 @@
 
 .resolveContainerImage <- function(config, image) {
   keys <- c("staphb/panaroo:1.7.0" = "panaroo", "weizhongli1987/cdhit:4.8.1" = "cdhit",
-            "staphb/hmmer" = "hmmer", "danylmb/bvbrc:5.3" = "bvbrc")
+            "staphb/hmmer:3.4" = "hmmer", "danylmb/bvbrc:5.3" = "bvbrc")
   key <- unname(keys[image])
   if (image %in% names(config$images)) return(unname(config$images[[image]]))
   if (!is.na(key) && key %in% names(config$images)) return(unname(config$images[[key]]))

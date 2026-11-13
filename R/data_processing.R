@@ -1723,7 +1723,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   HMMER intermediate and Parquet outputs should be written.
 #' @param db_paths List. Prepared HMM database metadata indexed by database name.
 #' @param docker_image Character. Docker image containing HMMER.
-#'   Default: `"staphb/hmmer"`.
+#'   Default: `"staphb/hmmer:3.4"`.
 #' @param threads Integer. Total CPU budget available to HMMER. Default: `8`.
 #' @param n_workers Integer. Number of HMMER jobs running concurrently. Used to
 #'   divide the CPU budget among jobs. Default: `8`.
@@ -1841,7 +1841,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #'   databases. If `NULL`, the default `amRdata` HMMER database cache is used.
 #' @param databases Character vector of HMMER databases to run.
 #' @param docker_image Character. Docker image containing HMMER. Default:
-#'   `"staphb/hmmer"`.
+#'   `"staphb/hmmer:3.4"`.
 #' @param num_of_splits Integer. Number of chunks into which the protein
 #'   sequences should be divided. Must be a positive integer. The requested
 #'   value is automatically reduced when fewer protein sequences are available.
@@ -1866,7 +1866,7 @@ CDHIT2duckdb <- function(duckdb_path,
                       threads = 8L,
                       hmmer_db_dir = NULL,
                       databases = c("Pfam", "COG", "AMRFinder"),
-                      docker_image = "staphb/hmmer",
+                      docker_image = "staphb/hmmer:3.4",
                       num_of_splits = 8L,
                       n_workers = 8L,
                       verbose = TRUE,
@@ -2203,7 +2203,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @param defense_db_dir Character. Directory used to cache DefenseFinder and
 #'   CasFinder model files.
 #' @param docker_image Character. Docker image containing HMMER.
-#'   Default: `"staphb/hmmer"`.
+#'   Default: `"staphb/hmmer:3.4"`.
 #' @param duckdb_path Character. Path to the working dataset DuckDB.
 #' @param output_path Character or `NULL`. Directory for HMMER outputs. If
 #'   `NULL`, the dataset HMMER directory is used.
@@ -2221,7 +2221,7 @@ CDHIT2duckdb <- function(duckdb_path,
 #' @keywords internal
 .defenseHMMER <- function(
     defense_db_dir,
-    docker_image = "staphb/hmmer",
+    docker_image = "staphb/hmmer:3.4",
     duckdb_path,
     output_path = NULL,
     threads = 8L,
@@ -3514,7 +3514,7 @@ cleanData <- function(duckdb_path, path = NULL, verbose = TRUE) {
 #'   databases through BiocFileCache; download missing ones into the default
 #'   cache directory. An explicit directory is used without registry fallback.
 #' @param hmmer_docker_image Character. Docker image containing HMMER.
-#'   Default: `"staphb/hmmer"`.
+#'   Default: `"staphb/hmmer:3.4"`.
 #' @param hmmer_num_splits Integer. Number of protein-sequence chunks for HMMER.
 #'   Default: `8`.
 #' @param hmmer_workers Integer. Number of parallel HMMER workers. Default: `8`.
@@ -3644,7 +3644,7 @@ runDataProcessing <- function(
       "DefenseCas"
     ),
     hmmer_db_dir = NULL,
-    hmmer_docker_image = "staphb/hmmer",
+    hmmer_docker_image = "staphb/hmmer:3.4",
     hmmer_num_splits = 8L,
     hmmer_workers = 8L,
     cog_evalue = 1e-4,

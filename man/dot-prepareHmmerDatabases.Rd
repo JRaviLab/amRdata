@@ -7,7 +7,7 @@
 .prepareHmmerDatabases(
   hmmer_db_dir = NULL,
   databases = c("Pfam", "COG", "AMRFinder"),
-  docker_image = "staphb/hmmer",
+  docker_image = "staphb/hmmer:3.4",
   hmmer_db_url = NULL,
   verbose = TRUE,
   log_path = NULL,
@@ -25,7 +25,7 @@ built-in databases are \code{Pfam}, \code{COG}, and \code{AMRFinder}; \code{Defe
 prepared separately by the DefenseFinder/CasFinder workflow.}
 
 \item{docker_image}{Character. Docker image containing HMMER tools used to
-press the prepared databases. Default: \code{"staphb/hmmer"}.}
+press the prepared databases. Default: \code{"staphb/hmmer:3.4"}.}
 
 \item{hmmer_db_url}{EXPERIMENTAL. Character or \code{NULL}. URL used to download
 a custom HMMER database when \code{databases} contains a name outside the

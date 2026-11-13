@@ -10,7 +10,7 @@
   threads = 8L,
   hmmer_db_dir = NULL,
   databases = c("Pfam", "COG", "AMRFinder"),
-  docker_image = "staphb/hmmer",
+  docker_image = "staphb/hmmer:3.4",
   num_of_splits = 8L,
   n_workers = 8L,
   verbose = TRUE,
@@ -35,7 +35,7 @@ databases. If \code{NULL}, the default \code{amRdata} HMMER database cache is us
 \item{databases}{Character vector of HMMER databases to run.}
 
 \item{docker_image}{Character. Docker image containing HMMER. Default:
-\code{"staphb/hmmer"}.}
+\code{"staphb/hmmer:3.4"}.}
 
 \item{num_of_splits}{Integer. Number of chunks into which the protein
 sequences should be divided. Must be a positive integer. The requested

@@ -6,7 +6,7 @@
 \usage{
 .defenseHMMER(
   defense_db_dir,
-  docker_image = "staphb/hmmer",
+  docker_image = "staphb/hmmer:3.4",
   duckdb_path,
   output_path = NULL,
   threads = 8L,
@@ -22,7 +22,7 @@
 CasFinder model files.}
 
 \item{docker_image}{Character. Docker image containing HMMER.
-Default: \code{"staphb/hmmer"}.}
+Default: \code{"staphb/hmmer:3.4"}.}
 
 \item{duckdb_path}{Character. Path to the working dataset DuckDB.}
 

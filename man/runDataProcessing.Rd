@@ -26,7 +26,7 @@ runDataProcessing(
   cdhit_output_prefix = "cdhit_out",
   hmmer_databases = c("Pfam", "COG", "AMRFinder", "DefenseCas"),
   hmmer_db_dir = NULL,
-  hmmer_docker_image = "staphb/hmmer",
+  hmmer_docker_image = "staphb/hmmer:3.4",
   hmmer_num_splits = 8L,
   hmmer_workers = 8L,
   cog_evalue = 1e-04,
@@ -116,7 +116,7 @@ databases through BiocFileCache; download missing ones into the default
 cache directory. An explicit directory is used without registry fallback.}
 
 \item{hmmer_docker_image}{Character. Docker image containing HMMER.
-Default: \code{"staphb/hmmer"}.}
+Default: \code{"staphb/hmmer:3.4"}.}
 
 \item{hmmer_num_splits}{Integer. Number of protein-sequence chunks for HMMER.
 Default: \code{8}.}
