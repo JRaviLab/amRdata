@@ -150,9 +150,17 @@
 #' @param progress Logical. Show download progress while transferring the file.
 #'   Default: `TRUE`.
 #'
+#' @param label Optional resource name shown before the download progress bar.
+#' @param log_path Optional file receiving the resource name and source URL.
+#' @param verbose Show the resource label even when progress is disabled.
 #' @return Invisibly returns `destfile`.
 #' @keywords internal
-.amr_download_file <- function(url, destfile, progress = TRUE) {
+.amr_download_file <- function(url, destfile, progress = TRUE,
+                               label = NULL, log_path = NULL, verbose = FALSE) {
+  if (!is.null(label)) {
+    .amr_status("Downloading ", label, ": ", url,
+                verbose = isTRUE(verbose) || isTRUE(progress), log_path = log_path)
+  }
   req <- httr2::request(url) |>
     httr2::req_retry(
       max_tries = 3L,
@@ -854,6 +862,18 @@
   ))
 }
 
+# Resolve a registered HMM without moving it or assuming its old path is valid.
+# Pressed indexes and profile sidecars are checked/rebuilt during preparation.
+.findRegisteredHMMERDatabase <- function(database, component = NULL) {
+  hit <- .amr_bfc_find(.amr_bfc(), .amr_bfc_hmmer_rname(database, component))
+  if (is.null(hit)) return(NULL)
+  path <- hit$rpath[[1]]
+  if (is.na(path) || !file.exists(path) || dir.exists(path) || file.info(path)$size == 0) return(NULL)
+  header <- tryCatch(readLines(path, n = 1L, warn = FALSE), error = function(e) character())
+  if (length(header) != 1L || !grepl("^HMMER3/", header)) return(NULL)
+  normalizePath(path, mustWork = TRUE)
+}
+
 # List HMMER databases known to the shared amR BFC
 .amr_bfc_hmmer_resources <- function() {
   bfc <- .amr_bfc()
@@ -1322,8 +1342,9 @@
 
 #' Helps run a shell inside a container, and prefers bash (don't we all?)
 #' @keywords internal
-.pick_shell <- function(image) {
-  chk <- suppressWarnings(system2("docker",
+.pick_shell <- function(image,
+    container_config = .createContainerConfig()) {
+  chk <- suppressWarnings(.runContainerCommand(container_config,
                                   c(
                                     "run", "--rm", image, "sh", "-lc",
                                     "command -v bash >/dev/null || echo NOBASH"
@@ -1426,8 +1447,8 @@
     length_deviations = NULL,
     cds_deviations = NULL,
     verbose = TRUE,
-    write_bac_data = FALSE
-) {
+    write_bac_data = FALSE,
+    container_config = .createContainerConfig()) {
   metadata_method <- match.arg(metadata_method)
   base_dir <- normalizePath(base_dir, mustWork = FALSE)
 
@@ -1491,7 +1512,8 @@
     bac_input_data <- .retrieveCustomQuery(
       base_dir = base_dir,
       user_bacs = user_bac,
-      verbose = verbose
+      verbose = verbose,
+      container_config = container_config
     )
 
     if (is.null(bac_input_data) || nrow(bac_input_data) == 0L) {
@@ -1587,7 +1609,8 @@
       filter_type = "AMR",
       amr_fields = genome_fields,
       microtrait_fields = genome_fields,
-      verbose = verbose
+      verbose = verbose,
+      container_config = container_config
     )
 
     .parse_bvbrc_tsv(raw)
@@ -1655,7 +1678,8 @@
       batch_genome_IDs = genome_ids,
       abx_filter = "--required antibiotic",
       drug_fields = drug_fields,
-      verbose = verbose
+      verbose = verbose,
+      container_backend = container_config
     )
 
     .parse_bvbrc_tsv(raw)
@@ -2263,11 +2287,15 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
     outputs = character(),
     tool = list(),
     metrics = list(),
-    message = NULL
+    message = NULL,
+    container_config = NULL
 ) {
   if (!inherits(manifest_state, "amr_manifest")) {
     stop("Invalid manifest state.")
   }
+
+  provenance <- .getContainerProvenance(container_config, tool$docker_image)
+  if (!is.null(provenance) && !is.null(tool$docker_image)) tool$container <- provenance
 
   stage_index <- which(
     purrr::map_lgl(
@@ -2523,7 +2551,7 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
 #' @return Named logical vector (named by `stage_order`) marking which
 #'   stages are safe to skip.
 #' @keywords internal
-.resume_plan <- function(prev_run, stage_order, parameters = NULL) {
+.resume_plan <- function(prev_run, stage_order, parameters = NULL, container_config = NULL) {
   completed <- stats::setNames(rep(FALSE, length(stage_order)), stage_order)
 
   for (name in stage_order) {
@@ -2546,6 +2574,8 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
       })
       if (!all(same)) break
     }
+
+    if (!.isContainerStageReusable(stage, container_config)) break
 
     out_paths <- purrr::map_chr(stage$outputs, "path")
 
@@ -3840,9 +3870,9 @@ observed_drugs <- if (!is.na(antibiotic_col)) {
   )
 }
 
-.hmmer_version <- function(docker_image = "staphb/hmmer") {
-  output <- system2(
-    "docker",
+.hmmer_version <- function(docker_image = "staphb/hmmer:3.4",
+    container_config = .createContainerConfig()) {
+  output <- .runContainerCommand(container_config,
     args = c(
       "run",
       "--rm",

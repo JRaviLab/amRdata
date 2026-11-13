@@ -26,14 +26,17 @@ runDataProcessing(
   cdhit_output_prefix = "cdhit_out",
   hmmer_databases = c("Pfam", "COG", "AMRFinder", "DefenseCas"),
   hmmer_db_dir = NULL,
-  hmmer_docker_image = "staphb/hmmer",
+  hmmer_docker_image = "staphb/hmmer:3.4",
   hmmer_num_splits = 8L,
   hmmer_workers = 8L,
   cog_evalue = 1e-04,
   verbose = FALSE,
   progress = getOption("amRdata.progress", TRUE),
   hmmer_fallback_evalue = 0.001,
-  hmmer_fallback_coverage = 0.5
+  hmmer_fallback_coverage = 0.5,
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
 }
 \arguments{
@@ -108,11 +111,12 @@ Default: \code{"cdhit_out"}.}
 Default: \code{c("Pfam", "COG", "AMRFinder", "DefenseCas")}.}
 
 \item{hmmer_db_dir}{Character. Directory containing the prepared HMMER
-databases. If \code{NULL}, the default BiocFileCache-managed HMMER directory
-is used.}
+databases. If \code{NULL}, reuse locally available databases or discover existing
+databases through BiocFileCache; download missing ones into the default
+cache directory. An explicit directory is used without registry fallback.}
 
 \item{hmmer_docker_image}{Character. Docker image containing HMMER.
-Default: \code{"staphb/hmmer"}.}
+Default: \code{"staphb/hmmer:3.4"}.}
 
 \item{hmmer_num_splits}{Integer. Number of protein-sequence chunks for HMMER.
 Default: \code{8}.}
@@ -140,6 +144,16 @@ for profiles without GA/TC. Provisional default: \code{1e-3}.}
 
 \item{hmmer_fallback_coverage}{Minimum profile coverage for profiles without
 GA/TC. Provisional default: \code{0.5}.}
+
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
 
 \item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo,
 CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
@@ -182,7 +196,7 @@ This check also runs when \code{panaroo_strip_pseudogenes = FALSE}.
 
 \strong{Docker & Platform Notes}
 \itemize{
-\item Panaroo, CD-HIT, and HMMER run inside Docker containers.
+\item Panaroo, CD-HIT, and HMMER use the selected container backend.
 \item HMMER databases are stored separately from individual bug directories and
 are reused across datasets unless a custom \code{hmmer_db_dir} is supplied.
 \item Ensure Docker Desktop is running and has sufficient memory and CPU resources.

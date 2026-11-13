@@ -24,7 +24,10 @@ prepareGenomes(
   load_tables = FALSE,
   debug = FALSE,
   verbose = FALSE,
-  progress = getOption("amRdata.progress", TRUE)
+  progress = getOption("amRdata.progress", TRUE),
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
 }
 \arguments{
@@ -85,6 +88,16 @@ long-running steps without permanently printing them to the console when
 the \code{progressr} package is available. Set to \code{FALSE} to disable progress
 updates. Defaults to \code{TRUE}, unless overridden by the \code{amRdata.progress}
 option.}
+
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
 }
 \value{
 A list (the output of \code{genomeList()}), containing:

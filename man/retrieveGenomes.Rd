@@ -17,7 +17,10 @@ retrieveGenomes(
   chunk_size = 10L,
   evidence_mode = c("lab_only", "lab_or_comp", "comp_only", "any"),
   verbose = TRUE,
-  progress = TRUE
+  progress = TRUE,
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
 }
 \arguments{
@@ -49,6 +52,16 @@ retrieval. Default: \code{TRUE}.}
 
 \item{progress}{Logical. Show temporary progress for parallel genome or
 chunk retrieval. Default: \code{TRUE}.}
+
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
 }
 \value{
 Character vector of genome IDs with complete file sets on disk.

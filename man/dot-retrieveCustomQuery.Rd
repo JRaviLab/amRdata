@@ -7,7 +7,8 @@
 .retrieveCustomQuery(
   base_dir = ".",
   user_bacs = c("90371", "Bacillus subtilis"),
-  verbose = TRUE
+  verbose = TRUE,
+  container_config = .createContainerConfig()
 )
 }
 \arguments{

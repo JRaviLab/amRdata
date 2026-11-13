@@ -7,6 +7,8 @@
 
 test_that("prepareGenomes() forwards genome_id_file to retrieveMetadata()", {
   captured <- new.env()
+  base_dir <- tempfile("prepare-pass-through-")
+  on.exit(unlink(base_dir, recursive = TRUE), add = TRUE)
   gfile <- tempfile(fileext = ".txt")
   writeLines(c("511145.12", "83333.111"), gfile)
   on.exit(unlink(gfile), add = TRUE)
@@ -20,11 +22,13 @@ test_that("prepareGenomes() forwards genome_id_file to retrieveMetadata()", {
       invisible(NULL)
     },
     .filterGenomes = function(...) NULL,
+    .manifest_git_info = function(...) list(available = FALSE),
     .package = "amRdata"
   )
 
   res <- prepareGenomes(
     user_bacs = "Shigella flexneri",
+    base_dir = base_dir,
     genome_id_file = gfile,
     verbose = FALSE
   )

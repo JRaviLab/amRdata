@@ -13,7 +13,10 @@ checkDataAvailability(
   gc_deviations = NULL,
   length_deviations = NULL,
   cds_deviations = NULL,
-  verbose = FALSE
+  verbose = FALSE,
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
 }
 \arguments{
@@ -41,6 +44,16 @@ length. Optional. Default \code{NULL}.}
 Optional. Default \code{NULL}.}
 
 \item{verbose}{Logical. If TRUE, print progress messages. Default \code{FALSE}.}
+
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
 }
 \value{
 A tibble with one row per requested taxon containing summary

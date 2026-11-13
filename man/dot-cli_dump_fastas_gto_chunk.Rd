@@ -4,7 +4,14 @@
 \alias{.cli_dump_fastas_gto_chunk}
 \title{Using p3-dump-genomes in CLI to fetch FASTA and .gto files}
 \usage{
-.cli_dump_fastas_gto_chunk(image, out_dir, genome_ids, tag, tries = 3L)
+.cli_dump_fastas_gto_chunk(
+  image,
+  out_dir,
+  genome_ids,
+  tag,
+  tries = 3L,
+  container_config = .createContainerConfig()
+)
 }
 \description{
 Using p3-dump-genomes in CLI to fetch FASTA and .gto files
