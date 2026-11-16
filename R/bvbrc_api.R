@@ -95,6 +95,27 @@
 }
 
 # --- AMR phenotype (genome_amr) -> genome_drug.* ------------------------------
+#' Extract AMR phenotype table via the BV-BRC Data API
+#'
+#' Queries the BV-BRC `genome_amr` collection for the given genomes (in
+#' chunks, optionally in parallel) and returns the result in the same
+#' `genome_drug.*` column layout produced by the Docker/p3 parser, so both
+#' extraction paths are interchangeable.
+#'
+#' @param genome_ids Character vector of BV-BRC genome IDs.
+#' @param abx Character vector of antibiotic names to keep, or `"All"`
+#'   (default) for no antibiotic filter.
+#' @param chunk_size Integer. Number of genome IDs per API request; keeps
+#'   `in(...)` URLs within length limits.
+#' @param num_workers Integer. Number of parallel workers used to fetch chunks.
+#' @param verbose Logical. If `TRUE`, print progress messages.
+#'
+#' @returns A tibble with one row per genome-antibiotic record and
+#'   character columns prefixed `genome_drug.` (e.g. `genome_drug.genome_id`,
+#'   `genome_drug.antibiotic`, `genome_drug.resistant_phenotype`). Missing
+#'   values are encoded as `""`, and `genome_drug.source` is always empty.
+#'
+#' @keywords internal
 .extractAMRtableApi <- function(genome_ids, abx = "All",
                                 chunk_size = 500L, num_workers = 8L,
                                 verbose = TRUE) {
