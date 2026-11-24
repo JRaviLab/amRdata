@@ -4,7 +4,11 @@
 \alias{.fetchBVBRCdata}
 \title{Fetch BV-BRC bacterial genome data}
 \usage{
-.fetchBVBRCdata(image = "danylmb/bvbrc:5.3", verbose = TRUE)
+.fetchBVBRCdata(
+  image = "danylmb/bvbrc:5.3",
+  verbose = TRUE,
+  container_config = .createContainerConfig()
+)
 }
 \arguments{
 \item{image}{Character scalar. Docker image with BV-BRC CLI preinstalled.

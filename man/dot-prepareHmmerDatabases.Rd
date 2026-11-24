@@ -5,24 +5,27 @@
 \title{Download and prepare HMMER databases for generating new file types.}
 \usage{
 .prepareHmmerDatabases(
-  hmmer_db_dir,
+  hmmer_db_dir = NULL,
   databases = c("Pfam", "COG", "AMRFinder"),
-  docker_image = "staphb/hmmer",
+  docker_image = "staphb/hmmer:3.4",
   hmmer_db_url = NULL,
   verbose = TRUE,
   log_path = NULL,
-  progress = TRUE
+  progress = TRUE,
+  reuse_registered = is.null(hmmer_db_dir),
+  container_config = .createContainerConfig()
 )
 }
 \arguments{
-\item{hmmer_db_dir}{Character. Directory where HMMER databases are cached.}
+\item{hmmer_db_dir}{Character or \code{NULL}. Directory where HMMER databases are
+cached. \code{NULL} enables discovery of registered databases through BiocFileCache.}
 
 \item{databases}{Character vector of database names to prepare. Supported
 built-in databases are \code{Pfam}, \code{COG}, and \code{AMRFinder}; \code{DefenseCas} is
 prepared separately by the DefenseFinder/CasFinder workflow.}
 
 \item{docker_image}{Character. Docker image containing HMMER tools used to
-press the prepared databases. Default: \code{"staphb/hmmer"}.}
+press the prepared databases. Default: \code{"staphb/hmmer:3.4"}.}
 
 \item{hmmer_db_url}{EXPERIMENTAL. Character or \code{NULL}. URL used to download
 a custom HMMER database when \code{databases} contains a name outside the
@@ -37,6 +40,9 @@ and external-tool logging.}
 
 \item{progress}{Logical. Show download progress when HMM database archives
 must be retrieved. Default: \code{TRUE}.}
+
+\item{reuse_registered}{Logical. Reuse valid registered HMM paths when a
+database is absent locally. Explicit directory choices default to \code{FALSE}.}
 }
 \value{
 A named list for each requested database containing the prepared

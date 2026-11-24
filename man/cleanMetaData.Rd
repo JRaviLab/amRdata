@@ -23,3 +23,8 @@ disagrees with the manifest is an error.}
 \description{
 Clean BV-BRC metadata, then save as Parquet files
 }
+\details{
+Analysis metadata and \code{selected_genomes.parquet} include only selected genomes
+present in the complete input-file index. \code{genome_file_qc.parquet} records
+selected genomes omitted by this check. Original retrieval metadata are retained.
+}

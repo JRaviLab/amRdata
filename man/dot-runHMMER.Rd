@@ -10,12 +10,14 @@
   threads = 8L,
   hmmer_db_dir = NULL,
   databases = c("Pfam", "COG", "AMRFinder"),
-  docker_image = "staphb/hmmer",
+  docker_image = "staphb/hmmer:3.4",
   num_of_splits = 8L,
   n_workers = 8L,
   verbose = TRUE,
   log_path = NULL,
-  progress = TRUE
+  progress = TRUE,
+  container_config = .createContainerConfig(),
+  reuse_registered = is.null(hmmer_db_dir)
 )
 }
 \arguments{
@@ -33,7 +35,7 @@ databases. If \code{NULL}, the default \code{amRdata} HMMER database cache is us
 \item{databases}{Character vector of HMMER databases to run.}
 
 \item{docker_image}{Character. Docker image containing HMMER. Default:
-\code{"staphb/hmmer"}.}
+\code{"staphb/hmmer:3.4"}.}
 
 \item{num_of_splits}{Integer. Number of chunks into which the protein
 sequences should be divided. Must be a positive integer. The requested
@@ -52,6 +54,9 @@ tool output logging.}
 
 \item{progress}{Logical. Show temporary completed-chunk progress.
 Default: \code{TRUE}.}
+
+\item{reuse_registered}{Logical. Reuse valid registered HMM paths when a
+database is absent locally. Explicit directory choices default to \code{FALSE}.}
 }
 \value{
 Invisibly returns a list containing the prepared database paths

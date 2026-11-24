@@ -11,7 +11,8 @@
   amr_fields,
   microtrait_fields,
   image = "danylmb/bvbrc:5.3",
-  verbose = TRUE
+  verbose = TRUE,
+  container_config = .createContainerConfig()
 )
 }
 \arguments{

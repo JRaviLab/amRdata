@@ -98,7 +98,7 @@ prepareGenomes(
 Internally runs: 
 1. `runPanaroo2Duckdb()` -\> run Panaroo (optional panaroo-merge) to generate pangenome and create genomes by genes table 
 2. `CDHIT2duckdb()` -\> run CDHIT to cluster proteins and create genomes by proteins table 
-3. `domainFromIPR()` -\> run IPRScan to annotate proteins to domains and create genomes by domains table 
+3. `HMMER2duckdb()` -\> run HMMER (Pfam, COG, AMRFinder, DefenseFinder/CasFinder) on the protein clusters, apply the hit cutoffs, and create genomes by annotations tables 
 4. `cleanData()` -\> Clean metadata and export the feature tables to Parquet + Parquet-backed DuckDB
 
 ```{r}
@@ -136,10 +136,7 @@ runDataProcessing(
 Simple stats and plots to explore metadata
 
 ```{r }
-generateSummary("data/metadata_parquet",
-  out_path = "data/"
-)
-generatePlots("data/metadata_parquet",
-  out_path = "data/"
-)
+# Reads the cleaned metadata from the ORB(s) found via the dataset manifests;
+# pass `duckdb_path` (e.g. "data/Shigella_flexneri/orb") to pick one explicitly.
+writeMetadataReports()
 ```

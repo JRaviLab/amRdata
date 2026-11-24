@@ -26,14 +26,17 @@ runDataProcessing(
   cdhit_output_prefix = "cdhit_out",
   hmmer_databases = c("Pfam", "COG", "AMRFinder", "DefenseCas"),
   hmmer_db_dir = NULL,
-  hmmer_docker_image = "staphb/hmmer",
+  hmmer_docker_image = "staphb/hmmer:3.4",
   hmmer_num_splits = 8L,
   hmmer_workers = 8L,
   cog_evalue = 1e-04,
   verbose = FALSE,
   progress = getOption("amRdata.progress", TRUE),
   hmmer_fallback_evalue = 0.001,
-  hmmer_fallback_coverage = 0.5
+  hmmer_fallback_coverage = 0.5,
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
 }
 \arguments{
@@ -108,11 +111,12 @@ Default: \code{"cdhit_out"}.}
 Default: \code{c("Pfam", "COG", "AMRFinder", "DefenseCas")}.}
 
 \item{hmmer_db_dir}{Character. Directory containing the prepared HMMER
-databases. If \code{NULL}, the default BiocFileCache-managed HMMER directory
-is used.}
+databases. If \code{NULL}, reuse locally available databases or discover existing
+databases through BiocFileCache; download missing ones into the default
+cache directory. An explicit directory is used without registry fallback.}
 
 \item{hmmer_docker_image}{Character. Docker image containing HMMER.
-Default: \code{"staphb/hmmer"}.}
+Default: \code{"staphb/hmmer:3.4"}.}
 
 \item{hmmer_num_splits}{Integer. Number of protein-sequence chunks for HMMER.
 Default: \code{8}.}
@@ -141,6 +145,16 @@ for profiles without GA/TC. Provisional default: \code{1e-3}.}
 \item{hmmer_fallback_coverage}{Minimum profile coverage for profiles without
 GA/TC. Provisional default: \code{0.5}.}
 
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
+
 \item{output_path}{Character or \code{NULL}. Base directory for writing Panaroo,
 CD-HIT, HMMER, and final Parquet outputs. If \code{NULL}, defaults to
 \code{dirname(duckdb_path)}.}
@@ -154,6 +168,8 @@ Invisibly returns a list with:
 \item \code{log_path} - path to a plain-text progress log, appended to as each
 stage starts and finishes. Tail it (e.g. \verb{tail -f <log_path>}) to watch
 progress without parsing the full JSON provenance manifest.
+\item \code{report_files} - paths of the metadata summary report and exploratory
+plots written to the ORB (empty if they could not be written)
 }
 }
 \description{
@@ -182,7 +198,7 @@ This check also runs when \code{panaroo_strip_pseudogenes = FALSE}.
 
 \strong{Docker & Platform Notes}
 \itemize{
-\item Panaroo, CD-HIT, and HMMER run inside Docker containers.
+\item Panaroo, CD-HIT, and HMMER use the selected container backend.
 \item HMMER databases are stored separately from individual bug directories and
 are reused across datasets unless a custom \code{hmmer_db_dir} is supplied.
 \item Ensure Docker Desktop is running and has sufficient memory and CPU resources.
@@ -203,6 +219,10 @@ upstream curation workflow.
 over the generated Parquet files.
 \item Records processing parameters, software versions, database selections, and
 other provenance information in the dataset manifest.
+\item Writes a metadata summary report (\code{amr_metadata_summary.md}) and an
+exploratory plot PDF (\code{amRdata_exploratory_plots.pdf}) to the ORB, via
+\code{\link[=writeMetadataReports]{writeMetadataReports()}}. A failure to write either only
+warns; it does not fail the run.
 \item Creates the protein-gene dyad feature map for downstream graph analysis.
 \item If \code{export_tabular_data = TRUE}, exports features in human-readable CSVs.
 Additional export options are available by calling \code{exportProcessedData()}
@@ -244,7 +264,7 @@ may have been altered or deleted since the failed run.
 \item \code{protein_cluster_seq} (representative sequences)\cr
 \item \code{protein_members}
 }
-\item \strong{HMMER} via the configured HMMER databases -> writes:
+\item \strong{HMMER} via \code{\link[=HMMER2duckdb]{HMMER2duckdb()}} -> writes:
 \itemize{
 \item \verb{protein_<database>} annotation tables\cr
 \item \verb{protein_<database>_count} genome-by-annotation count tables
@@ -275,5 +295,5 @@ runDataProcessing(
 }
 \seealso{
 \code{\link[=prepareGenomes]{prepareGenomes()}}, \code{\link[=runPanaroo2Duckdb]{runPanaroo2Duckdb()}}, \code{\link[=CDHIT2duckdb]{CDHIT2duckdb()}}, \code{\link[=cleanMetaData]{cleanMetaData()}},
-\code{\link[=cleanData]{cleanData()}}
+\code{\link[=cleanData]{cleanData()}}, \code{\link[=writeMetadataReports]{writeMetadataReports()}}
 }

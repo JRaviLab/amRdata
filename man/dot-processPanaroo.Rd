@@ -14,7 +14,8 @@
   family_seq_identity,
   panaroo_threads_per_job,
   refind_mode = c("off", "default", "strict"),
-  log_path = NULL
+  log_path = NULL,
+  container_config = .createContainerConfig()
 )
 }
 \arguments{

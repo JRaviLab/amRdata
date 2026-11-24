@@ -4,7 +4,7 @@
 \alias{.resume_plan}
 \title{Determine which pipeline stages can be safely skipped when resuming}
 \usage{
-.resume_plan(prev_run, stage_order, parameters = NULL)
+.resume_plan(prev_run, stage_order, parameters = NULL, container_config = NULL)
 }
 \arguments{
 \item{prev_run}{A single run entry from a manifest's \code{runs} list, or \code{NULL}.}

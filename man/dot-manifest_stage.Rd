@@ -13,7 +13,8 @@
   outputs = character(),
   tool = list(),
   metrics = list(),
-  message = NULL
+  message = NULL,
+  container_config = NULL
 )
 }
 \arguments{

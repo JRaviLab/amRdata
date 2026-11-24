@@ -18,7 +18,8 @@
   pseudogene_clean_dir = "gff_clean",
   write_pseudogene_audit = TRUE,
   verbose = TRUE,
-  log_path = NULL
+  log_path = NULL,
+  container_config = .createContainerConfig()
 )
 }
 \arguments{

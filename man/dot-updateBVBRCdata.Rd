@@ -8,7 +8,10 @@
   base_dir = ".",
   max_age_days = 30L,
   image = "danylmb/bvbrc:5.3",
-  verbose = TRUE
+  verbose = TRUE,
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
 }
 \arguments{
@@ -20,6 +23,16 @@ overall amRdata workflow; the cache itself is managed by BiocFileCache.}
 \item{image}{Character. Docker image used by \code{.fetchBVBRCdata()}. Default: \code{"danylmb/bvbrc:5.3"}.}
 
 \item{verbose}{Logical. If TRUE, prints informative messages. Default: TRUE.}
+
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
 }
 \value{
 A tibble containing BV-BRC bacterial genome metadata.
@@ -40,3 +53,4 @@ The cached DuckDB can be removed with
 \code{removeLocalDatabases("BV-BRC")}. It will be recreated automatically the next
 time the CLI metadata backend is used.
 }
+\keyword{internal}

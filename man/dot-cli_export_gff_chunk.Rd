@@ -4,7 +4,14 @@
 \alias{.cli_export_gff_chunk}
 \title{Exports GFF files from the downloaded GTO per genome in each chunk}
 \usage{
-.cli_export_gff_chunk(image, out_dir, genome_ids, tag, tries = 3L)
+.cli_export_gff_chunk(
+  image,
+  out_dir,
+  genome_ids,
+  tag,
+  tries = 3L,
+  container_config = .createContainerConfig()
+)
 }
 \description{
 Exports GFF files from the downloaded GTO per genome in each chunk

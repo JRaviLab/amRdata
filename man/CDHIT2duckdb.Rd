@@ -14,8 +14,24 @@ CDHIT2duckdb(
   memory = 0,
   extra_args = c("-g", "1"),
   verbose = TRUE,
-  log_path = NULL
+  log_path = NULL,
+  container_backend = "auto",
+  container_images = NULL,
+  container_cache = NULL
 )
+}
+\arguments{
+\item{verbose}{Logical. Print persistent console status messages. Default FALSE.}
+
+\item{container_backend}{Container runtime: \code{"auto"}, \code{"docker"},
+\code{"apptainer"}, or \code{"singularity"}. Automatic selection prompts when both
+Docker and Apptainer/Singularity are available; batch jobs must choose explicitly.}
+
+\item{container_images}{Optional named character vector of image overrides.
+Names may be \code{bvbrc}, \code{panaroo}, \code{cdhit}, \code{hmmer}, or exact image references.
+Apptainer/Singularity also accept local \code{.sif} paths.}
+
+\item{container_cache}{Directory for persistent, reusable SIF images.}
 }
 \description{
 Cluster proteins with CD-HIT and write results to DuckDB

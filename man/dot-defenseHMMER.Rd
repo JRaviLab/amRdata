@@ -6,13 +6,15 @@
 \usage{
 .defenseHMMER(
   defense_db_dir,
-  docker_image = "staphb/hmmer",
+  docker_image = "staphb/hmmer:3.4",
   duckdb_path,
   output_path = NULL,
   threads = 8L,
   verbose = TRUE,
   log_path = NULL,
-  progress = TRUE
+  progress = TRUE,
+  container_config = .createContainerConfig(),
+  reuse_registered = FALSE
 )
 }
 \arguments{
@@ -20,7 +22,7 @@
 CasFinder model files.}
 
 \item{docker_image}{Character. Docker image containing HMMER.
-Default: \code{"staphb/hmmer"}.}
+Default: \code{"staphb/hmmer:3.4"}.}
 
 \item{duckdb_path}{Character. Path to the working dataset DuckDB.}
 
@@ -36,6 +38,9 @@ Default: \code{TRUE}.}
 
 \item{progress}{Logical. Show download progress when DefenseFinder or
 CasFinder model archives must be retrieved. Default: \code{TRUE}.}
+
+\item{reuse_registered}{Logical. Reuse valid registered HMM paths when a
+database is absent locally. Explicit directory choices default to \code{FALSE}.}
 }
 \value{
 Invisibly returns a list containing prepared DefenseFinder and

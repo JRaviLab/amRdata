@@ -11,10 +11,11 @@
   total_proteins,
   output_path = NULL,
   db_paths,
-  docker_image = "staphb/hmmer",
+  docker_image = "staphb/hmmer:3.4",
   threads = 8L,
   n_workers = 8L,
-  log_path = NULL
+  log_path = NULL,
+  container_config = .createContainerConfig()
 )
 }
 \arguments{
@@ -34,7 +35,7 @@ HMMER intermediate and Parquet outputs should be written.}
 \item{db_paths}{List. Prepared HMM database metadata indexed by database name.}
 
 \item{docker_image}{Character. Docker image containing HMMER.
-Default: \code{"staphb/hmmer"}.}
+Default: \code{"staphb/hmmer:3.4"}.}
 
 \item{threads}{Integer. Total CPU budget available to HMMER. Default: \code{8}.}
 

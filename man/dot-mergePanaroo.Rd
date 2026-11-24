@@ -11,7 +11,9 @@
   cluster_threshold = 0.95,
   family_seq_identity = 0.5,
   threads = 8,
-  log_path = NULL
+  log_path = NULL,
+  container_config = .createContainerConfig(),
+  batch_dirs = NULL
 )
 }
 \arguments{
