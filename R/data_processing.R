@@ -3092,12 +3092,46 @@ HMMER2duckdb <- function(duckdb_path,
 }
 
 
+# The complete-file index is established by genomeList(), before feature processing
+### Needed to establish that genome set downstream used includes only those that 
+### successfully produce full file sets!
+.readIndexedGenomeCohort <- function(con) {
+  if (!DBI::dbExistsTable(con, "files") ||
+      !"genome_id" %in% DBI::dbListFields(con, "files")) {
+    stop("ORB metadata export requires the complete genome file index ('files.genome_id').",
+         call. = FALSE)
+  }
+  selected <- DBI::dbReadTable(con, "filtered") |>
+    dplyr::transmute(genome_id = as.character(.data[["genome.genome_id"]])) |>
+    dplyr::filter(!is.na(genome_id), nzchar(genome_id)) |>
+    dplyr::distinct()
+  indexed <- DBI::dbGetQuery(con, "SELECT DISTINCT genome_id FROM files") |>
+    dplyr::transmute(genome_id = as.character(.data$genome_id)) |>
+    dplyr::filter(!is.na(genome_id), nzchar(genome_id))
+  audit <- selected |>
+    dplyr::mutate(
+      selected_for_download = TRUE,
+      complete_file_set = genome_id %in% indexed$genome_id,
+      reason = dplyr::if_else(complete_file_set, NA_character_, "not_in_complete_file_index")
+    ) |>
+    dplyr::arrange(genome_id)
+  cohort <- dplyr::semi_join(selected, indexed, by = "genome_id")
+  if (!nrow(cohort)) {
+    stop("No selected genome has a complete input file set; cannot export a modeling ORB.", call. = FALSE)
+  }
+  list(genomes = cohort, audit = audit)
+}
+
 #' Clean BV-BRC metadata, then save as Parquet files
 #'
 #' @param duckdb_path Path to the **per-selection DuckDB** produced by
 #'   [prepareGenomes()] (e.g., `"data/<Bug>/<Abbrev>.duckdb"`). This DB must
 #'   already contain the tables written by [prepareGenomes()] and the upstream
 #'   genome-processing steps.
+#' @details
+#' Analysis metadata and `selected_genomes.parquet` include only selected genomes
+#' present in the complete input-file index. `genome_file_qc.parquet` records
+#' selected genomes omitted by this check. Original retrieval metadata are retained.
 #' @param path the path to working directory
 #' @param evidence_mode Character or `NULL`. Which AMR evidence to keep:
 #'   `"lab_only"`, `"lab_or_comp"`, `"comp_only"`, or `"any"`. If `NULL`
@@ -3119,6 +3153,8 @@ cleanMetaData <- function(duckdb_path, path = NULL, evidence_mode = NULL) {
 
   con <- DBI::dbConnect(duckdb::duckdb(), duckdb_path)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+  cohort <- .readIndexedGenomeCohort(con)
+  DBI::dbWriteTable(con, "genome_file_qc", cohort$audit, overwrite = TRUE)
   # Only entries with a country code (short_name) are kept; any other raw entry
   # fails the join below and gets NA for its country.
   clean_countries <- cleaned_bvbrc_countries |>
@@ -3126,9 +3162,8 @@ cleanMetaData <- function(duckdb_path, path = NULL, evidence_mode = NULL) {
     dplyr::select("raw_entry", "clean_name", "short_name") |>
     dplyr::distinct()
 
-  dplyr::tbl(con, "filtered") |>
-    tibble::as_tibble() |>
-    dplyr::select("genome.genome_id") |>
+  cohort$genomes |>
+    dplyr::rename("genome.genome_id" = "genome_id") |>
     dplyr::left_join(dplyr::tbl(con, "metadata") |>
       tibble::as_tibble(), by = dplyr::join_by("genome.genome_id" == "genome_drug.genome_id")) |>
     .amr_filter_evidence(evidence_mode) |>
@@ -3217,6 +3252,7 @@ cleanMetaData <- function(duckdb_path, path = NULL, evidence_mode = NULL) {
   metadata_qc_parquet <- file.path(path, "metadata_qc.parquet")
   metadata_qc_rejections_parquet <- file.path(path, "metadata_qc_rejections.parquet")
   selected_genomes_parquet <- file.path(path,"selected_genomes.parquet")
+  genome_file_qc_parquet <- file.path(path, "genome_file_qc.parquet")
 
   db_name <- file.path(path, paste0(tools::file_path_sans_ext(basename(duckdb_path)), "_parquet.duckdb"))
 
@@ -3276,19 +3312,14 @@ cleanMetaData <- function(duckdb_path, path = NULL, evidence_mode = NULL) {
     )
   )
 
-  # Snapshot of selected genomes
-  selected_genomes <- DBI::dbReadTable(con, "filtered") |>
-    tibble::as_tibble()
-
-  if (!"genome.genome_id" %in% names(selected_genomes)) {
-    stop("Table 'filtered' does not contain 'genome.genome_id'.")
-  }
-
-  selected_genomes <- selected_genomes |>
-    dplyr::transmute(genome_id = as.character(.data[["genome.genome_id"]])) |>
-    dplyr::filter(!is.na(genome_id), nzchar(genome_id)) |>
-    dplyr::distinct() |>
+  # Snapshot the actual processing cohort, not the broader pre-download selection.
+  selected_genomes <- cohort$genomes |>
     dplyr::arrange(genome_id)
+  .write_compressed_parquet(cohort$audit, genome_file_qc_parquet)
+  DBI::dbExecute(con_new, sprintf(
+    "CREATE OR REPLACE VIEW genome_file_qc AS SELECT * FROM read_parquet('%s')",
+    basename(genome_file_qc_parquet)
+  ))
 
   .write_compressed_parquet(selected_genomes, selected_genomes_parquet)
 
@@ -4308,6 +4339,7 @@ runDataProcessing <- function(
     "original_metadata",
     "metadata_qc",
     "metadata_qc_rejections",
+    "genome_file_qc",
     "selected_genomes",
 
     "gene_count",
@@ -4405,6 +4437,7 @@ runDataProcessing <- function(
     file.path(paths$orb, "original_metadata.parquet"),
     file.path(paths$orb, "metadata_qc.parquet"),
     file.path(paths$orb, "metadata_qc_rejections.parquet"),
+    file.path(paths$orb, "genome_file_qc.parquet"),
     file.path(paths$orb, "selected_genomes.parquet"),
 
     # Core feature outputs
@@ -4493,6 +4526,7 @@ runDataProcessing <- function(
         "metadata_qc_rejections.parquet",
       selected_genomes_parquet =
         "selected_genomes.parquet",
+      genome_file_qc_parquet = "genome_file_qc.parquet",
       dyads_parquet = "dyads.parquet",
       dyad_representation = "virtual",
       dyad_feature_relation = "dyad_feature",
